@@ -1,0 +1,17 @@
+# Build output
+/dist/
+/footops
+
+# Test / coverage
+*.out
+*.test
+
+# Local config and secrets — never commit
+*.env
+.env*
+/config.local.*
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
