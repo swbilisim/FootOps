@@ -30,10 +30,11 @@ func ReadMemory() (Memory, error) {
 		return Memory{}, err
 	}
 	defer f.Close()
-	return parseMeminfo(f)
+	return ParseMeminfo(f)
 }
 
-func parseMeminfo(r io.Reader) (Memory, error) {
+// ParseMeminfo parses the contents of /proc/meminfo.
+func ParseMeminfo(r io.Reader) (Memory, error) {
 	var m Memory
 	fields := map[string]*uint64{
 		"MemTotal":     &m.Total,

@@ -38,6 +38,10 @@ type Result struct {
 func Run(ctx context.Context, steps []Step, out io.Writer) ([]Result, error) {
 	results := make([]Result, 0, len(steps))
 	for i, s := range steps {
+		if err := ctx.Err(); err != nil {
+			fmt.Fprintf(out, "Durduruldu; kalan adımlar yapılmadı. Tekrar çalıştırınca kaldığı yerden devam eder.\n")
+			return results, err
+		}
 		start := time.Now()
 		res := Result{Step: s.Name()}
 		fmt.Fprintf(out, "[%d/%d] %s: ", i+1, len(steps), s.Name())

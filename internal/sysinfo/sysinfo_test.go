@@ -12,7 +12,7 @@ MemAvailable:    2500000 kB
 SwapTotal:       2097148 kB
 SwapFree:        2097148 kB
 `
-	m, err := parseMeminfo(strings.NewReader(in))
+	m, err := ParseMeminfo(strings.NewReader(in))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ SwapFree:        2097148 kB
 }
 
 func TestParseMeminfoMissingTotal(t *testing.T) {
-	if _, err := parseMeminfo(strings.NewReader("MemFree: 1 kB\n")); err == nil {
+	if _, err := ParseMeminfo(strings.NewReader("MemFree: 1 kB\n")); err == nil {
 		t.Fatal("expected error when MemTotal is missing")
 	}
 }

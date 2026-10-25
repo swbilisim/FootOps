@@ -45,6 +45,32 @@ At the end it prints the panel URL, the generated panel password, recovery codes
 MongoDB root password **once**. Store them in your password manager; they are not kept in
 plain text on the server.
 
+### What the installer does (so far)
+
+| Step | Change |
+|---|---|
+| packages | `ca-certificates curl gnupg ufw fail2ban python3-systemd unattended-upgrades` |
+| upgrade | Installs pending updates, including ones that need new packages (kernel security fixes); never removes packages |
+| hostname | Sets the hostname and tells cloud-init to keep it across reboots |
+| timezone | e.g. `Europe/Istanbul` |
+| swap | Sized from RAM (≤6 GB RAM → 2 GB, more → 4 GB), `vm.swappiness=10` |
+| unattended-upgrades | Automatic security updates, optional reboot at a fixed time |
+| admin-user | Creates the admin user in `sudo`, installs your SSH keys; sudo with password (recommended) or without |
+| firewall | UFW: deny incoming, allow 22/80/443 |
+| fail2ban | sshd jail in aggressive mode (counts failed key logins), 5 tries in 10 min → 1 h ban |
+| ssh-hardening | No root login, no passwords, only the admin user — **applied last, after you confirm** key login works from a second terminal; the config is validated with `sshd -t`/`sshd -T` and rolled back if invalid or overridden |
+
+Every step checks the current state first, so the installer can be re-run at any time:
+completed steps are skipped and an interrupted run continues where it stopped.
+
+- `sudo footops install --dry-run` shows what would change without changing anything.
+- **Ctrl+C** while questions are asked quits immediately. Once the server is being
+  changed, the first Ctrl+C lets the running command (e.g. apt) finish and then stops; a
+  second Ctrl+C quits at once.
+- If the SSH connection drops, the installer keeps going and stops safely at the next
+  question it cannot ask. Details are always in `/var/log/footops-install.log`.
+- Answers (no secrets) are kept in `/etc/footops/install.json` for re-runs.
+
 ## Commands
 
 | Command | Purpose |
