@@ -304,7 +304,9 @@ var coreDirs = []struct {
 	{core.MongoDir, 0o755},
 	{core.MongoDataDir, 0o700},
 	{core.MongoConfigDir, 0o700},
-	{configDir, 0o700},
+	// The web process reads footops.json here (group footops, set by panel-config);
+	// secrets live one level down, root-only.
+	{configDir, 0o750},
 	{filepath.Dir(core.MongoSecretPath), 0o700},
 }
 
@@ -415,7 +417,10 @@ func randomPassword(n int) (string, error) {
 
 // ---- core stack ----
 
-type coreStackStep struct{ h Host }
+type coreStackStep struct {
+	h   Host
+	cfg core.Config
+}
 
 func (s coreStackStep) Name() string { return "core-stack" }
 func (s coreStackStep) Describe() string {
@@ -434,10 +439,11 @@ func (s coreStackStep) Check(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 	want := parseConfigHashes(out)
-	if len(want) != len(core.Services) {
+	services := core.Services(s.cfg)
+	if len(want) != len(services) {
 		return false, nil
 	}
-	for svc, container := range core.Services {
+	for svc, container := range services {
 		got, err := s.h.Run.Run(ctx, "docker", "inspect", "--format",
 			`{{index .Config.Labels "com.docker.compose.config-hash"}} {{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{end}}`,
 			container)
@@ -454,7 +460,7 @@ func (s coreStackStep) Check(ctx context.Context) (bool, error) {
 func (s coreStackStep) Apply(ctx context.Context) error {
 	_, err := s.h.Run.Run(ctx, "docker", s.compose("up", "--detach", "--remove-orphans", "--wait", "--wait-timeout", "300")...)
 	if err != nil {
-		return fmt.Errorf("%w (ayrıntı: docker logs %s / docker logs %s)", err, core.Services["caddy"], core.Services["mongo"])
+		return fmt.Errorf("%w (ayrıntı: docker compose -p %s logs)", err, core.ProjectName)
 	}
 	return nil
 }

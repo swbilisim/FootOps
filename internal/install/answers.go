@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/swbilisim/FootOps/internal/config"
 )
 
 // AnswersPath stores the wizard answers so a re-run can resume without asking again.
@@ -36,8 +38,15 @@ type Answers struct {
 	AutoReboot   bool     `json:"auto_reboot"`
 	RebootTime   string   `json:"reboot_time"`
 
-	// SudoPasswordValue is only held in memory for the run that sets it.
+	// Cloudflare Tunnel + Access for reaching the panel from outside. Without it the
+	// panel is reachable through an SSH tunnel only.
+	TunnelEnabled bool   `json:"tunnel_enabled"`
+	AccessTeam    string `json:"access_team,omitempty"`
+	AccessAUD     string `json:"access_aud,omitempty"`
+
+	// Secrets are only held in memory for the run that sets them.
 	SudoPasswordValue string `json:"-"`
+	TunnelToken       string `json:"-"`
 }
 
 func (a Answers) Marshal() (string, error) {
@@ -197,6 +206,36 @@ func (a Answers) Validate() error {
 	}
 	if !(a.MongoCacheGB >= 0.25 && a.MongoCacheGB <= 64) {
 		return errors.New("mongo_cache_gb: 0.25 ile 64 arasında olmalı")
+	}
+	if a.TunnelEnabled {
+		if err := config.ValidateTeam(a.AccessTeam); err != nil {
+			return fmt.Errorf("access_team: %w", err)
+		}
+		if err := config.ValidateAUD(a.AccessAUD); err != nil {
+			return fmt.Errorf("access_aud: %w", err)
+		}
+	}
+	return nil
+}
+
+// ValidateTunnelToken checks the shape of a Cloudflare Tunnel token: base64-encoded JSON
+// with the account tag ("a"), tunnel ID ("t") and secret ("s"). It catches truncated or
+// wrong pastes before cloudflared fails at runtime.
+func ValidateTunnelToken(s string) error {
+	raw, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		raw, err = base64.RawStdEncoding.DecodeString(s)
+	}
+	if err != nil {
+		return errors.New("token base64 değil; Cloudflare'deki token'ın tamamını kopyala")
+	}
+	var t struct {
+		A string `json:"a"`
+		T string `json:"t"`
+		S string `json:"s"`
+	}
+	if err := json.Unmarshal(raw, &t); err != nil || t.A == "" || t.T == "" || t.S == "" {
+		return errors.New("bu bir Cloudflare Tunnel token'ı gibi görünmüyor")
 	}
 	return nil
 }

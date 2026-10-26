@@ -1,0 +1,33 @@
+{{define "top"}}<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+{{if .Data.Refresh}}<meta http-equiv="refresh" content="{{.Data.Refresh}}">{{end}}
+<title>{{if .Title}}{{.Title}} · {{end}}FootOps {{.Server}}</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="bar">
+  <a class="brand" href="/">FootOps <span>{{.Server}}</span></a>
+  {{if .Session.ID}}
+  <nav>
+    <a href="/">Sunucu</a>
+    <a href="/audit">Denetim kaydı</a>
+    <form method="post" action="/logout" class="inline">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <button type="submit" class="link">Çıkış ({{.Session.User}})</button>
+    </form>
+  </nav>
+  {{end}}
+</header>
+<main>
+{{if .Flash}}<p class="flash">{{.Flash}}</p>{{end}}
+{{end}}
+
+{{define "bottom"}}
+</main>
+</body>
+</html>
+{{end}}

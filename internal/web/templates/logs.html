@@ -1,0 +1,15 @@
+{{template "top" .}}
+<section>
+  <h1>{{.Data.Name}} <span class="muted small">son {{.Data.Tail}} satır</span></h1>
+  <p class="links">
+    {{$n := .Data.Name}}
+    <a href="/containers/{{$n}}/logs?tail=100">100</a>
+    <a href="/containers/{{$n}}/logs?tail=500">500</a>
+    <a href="/containers/{{$n}}/logs?tail=1000">1000</a>
+    · <a href="/containers/{{$n}}/logs?tail={{.Data.Tail}}">Yenile</a>
+  </p>
+  {{with .Data.Err}}<p class="error">{{.}}</p>{{end}}
+  <pre class="logs">{{range .Data.Lines}}{{.}}
+{{end}}</pre>
+</section>
+{{template "bottom" .}}

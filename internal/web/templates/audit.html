@@ -1,0 +1,26 @@
+{{template "top" .}}
+<section>
+  <h1>Denetim kaydı <span class="muted small">son 200 olay</span></h1>
+  {{with .Data.Err}}<p class="error">{{.}}</p>{{end}}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Zaman</th><th>Kim</th><th>Nereden</th><th>İşlem</th><th>Hedef</th><th>Sonuç</th><th>Ayrıntı</th></tr></thead>
+    <tbody>
+    {{range .Data.Entries}}
+      <tr>
+        <td class="nowrap">{{ts .Time}}</td>
+        <td>{{.Actor.User}}</td>
+        <td>{{.Actor.IP}} <span class="muted small">{{.Actor.Via}}</span></td>
+        <td>{{.Action}}</td>
+        <td>{{.Target}}</td>
+        <td>{{if .OK}}<span class="ok">başarılı</span>{{else}}<span class="bad">başarısız</span>{{end}}</td>
+        <td class="small">{{.Detail}}</td>
+      </tr>
+    {{else}}
+      <tr><td colspan="7" class="muted">Kayıt yok.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+</section>
+{{template "bottom" .}}

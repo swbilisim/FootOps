@@ -1,0 +1,19 @@
+{{template "top" .}}
+<section class="login">
+  <h1>Giriş</h1>
+  {{with .Data.Error}}<p class="error">{{.}}</p>{{end}}
+  <form method="post" action="/login" autocomplete="on">
+    <input type="hidden" name="csrf" value="{{.Data.CSRF}}">
+    <label>Kullanıcı adı
+      <input name="username" autocomplete="username" required autofocus>
+    </label>
+    <label>Şifre
+      <input name="password" type="password" autocomplete="current-password" required>
+    </label>
+    <label>Doğrulama kodu
+      <input name="code" inputmode="numeric" autocomplete="one-time-code" required placeholder="6 haneli kod veya kurtarma kodu">
+    </label>
+    <button type="submit">Giriş yap</button>
+  </form>
+</section>
+{{template "bottom" .}}

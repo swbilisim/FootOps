@@ -1,0 +1,11 @@
+{{template "top" .}}
+<section class="confirm">
+  <h1>{{.Data.Name}} yeniden başlatılsın mı?</h1>
+  <p>Container durdurulup tekrar başlatılır; birkaç saniye erişilemeyebilir.</p>
+  <form method="post" action="/containers/{{.Data.Name}}/restart">
+    <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+    <button type="submit" class="danger">Evet, yeniden başlat</button>
+    <a href="/">Vazgeç</a>
+  </form>
+</section>
+{{template "bottom" .}}

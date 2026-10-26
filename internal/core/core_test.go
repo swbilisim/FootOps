@@ -53,3 +53,22 @@ func TestMongoSecretRoundTrip(t *testing.T) {
 		t.Error("password found in empty env")
 	}
 }
+
+func TestComposeTunnel(t *testing.T) {
+	without := Compose(Config{MongoCacheGB: 0.5})
+	if strings.Contains(without, "cloudflared") || len(Services(Config{})) != 2 {
+		t.Error("cloudflared present without tunnel")
+	}
+	with := Compose(Config{MongoCacheGB: 0.5, Tunnel: true})
+	for _, want := range []string{"image: " + CloudflaredImage, "network_mode: host", "env_file: " + TunnelSecretPath, "--no-autoupdate"} {
+		if !strings.Contains(with, want) {
+			t.Errorf("tunnel compose misses %q", want)
+		}
+	}
+	if Services(Config{Tunnel: true})["cloudflared"] != "footops-cloudflared" {
+		t.Error("cloudflared service not listed")
+	}
+	if TunnelTokenFromEnv(TunnelSecretEnv("abc")) != "abc" {
+		t.Error("token round trip")
+	}
+}

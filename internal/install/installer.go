@@ -6,9 +6,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/swbilisim/FootOps/internal/auth"
+	"github.com/swbilisim/FootOps/internal/config"
 	"github.com/swbilisim/FootOps/internal/core"
+	"github.com/swbilisim/FootOps/internal/qrterm"
 )
 
 const (
@@ -33,8 +38,16 @@ type Options struct {
 // The security baseline comes first and ends with SSH hardening, so root login is closed
 // before the long Docker downloads start. SSH hardening runs after the admin user,
 // firewall and fail2ban are in place and asks the operator to verify key login first.
-func Steps(h Host, a Answers, confirm ConfirmFunc, notes *Notes) []Step {
-	return []Step{
+func Steps(h Host, a Answers, d Deps) []Step {
+	coreCfg := core.Config{MongoCacheGB: a.MongoCacheGB, Tunnel: a.TunnelEnabled}
+	panelCfg := config.Panel{
+		ServerCode: a.ServerCode, PanelHost: a.PanelHost,
+		ListenTunnel: config.DefaultTunnel, ListenLocal: config.DefaultLocal,
+	}
+	if a.TunnelEnabled {
+		panelCfg.AccessTeam, panelCfg.AccessAUD = a.AccessTeam, a.AccessAUD
+	}
+	steps := []Step{
 		packagesStep{h},
 		upgradeStep{h},
 		hostnameStep{h, a.Hostname},
@@ -44,13 +57,31 @@ func Steps(h Host, a Answers, confirm ConfirmFunc, notes *Notes) []Step {
 		adminUserStep{h, a.AdminUser, a.SSHKeys, a.SudoMode, a.SudoPasswordValue},
 		firewallStep{h},
 		fail2banStep{h},
-		sshStep{h, a.AdminUser, confirm},
+		sshStep{h, a.AdminUser, d.Confirm},
 		dockerRepoStep{h},
 		dockerStep{h},
 		dockerDaemonStep{h},
-		coreFilesStep{h, core.Config{MongoCacheGB: a.MongoCacheGB}, notes},
-		coreStackStep{h},
 	}
+	if a.TunnelEnabled {
+		steps = append(steps, tunnelSecretStep{h, a.TunnelToken})
+	}
+	return append(steps,
+		coreFilesStep{h, coreCfg, d.Notes},
+		coreStackStep{h, coreCfg},
+		panelUserStep{h},
+		panelBinaryStep{h, d.Self},
+		panelConfigStep{h, panelCfg},
+		panelAccountStep{h, a.AdminUser, "FootOps " + a.ServerCode, d.Notes, d.TOTPSetup},
+		panelServicesStep{h},
+	)
+}
+
+// Deps are the interactive and environment-specific parts of the steps.
+type Deps struct {
+	Confirm   ConfirmFunc   // SSH hardening confirmation
+	TOTPSetup TOTPSetupFunc // panel 2FA enrolment
+	Notes     *Notes        // secrets to show at the end
+	Self      string        // path of the running footops binary
 }
 
 // Main runs preflight, the wizard (or resumes saved answers) and the steps.
@@ -66,7 +97,14 @@ func Main(ctx context.Context, o Options) error {
 	}
 
 	notes := &Notes{}
-	steps := Steps(o.Host, a, confirmKeyLogin(o), notes)
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if self, err = filepath.EvalSymlinks(self); err != nil {
+		return err
+	}
+	steps := Steps(o.Host, a, Deps{Confirm: confirmKeyLogin(o), TOTPSetup: enrolTOTP(o.Prompt), Notes: notes, Self: self})
 	if o.DryRun {
 		return Plan(ctx, steps, o.Out)
 	}
@@ -86,8 +124,7 @@ func Main(ctx context.Context, o Options) error {
 	if o.Host.Exists("/var/run/reboot-required") {
 		fmt.Fprintln(o.Out, "\nNot: güncellemeler yeniden başlatma istiyor. Kurulum bitince `sudo reboot` önerilir.")
 	}
-	fmt.Fprintln(o.Out, "\nSunucu hazırlığı tamamlandı: güvenlik ayarları, Docker, Caddy ve MongoDB hazır.")
-	fmt.Fprintln(o.Out, "Panel servisleri henüz yazılmadı.")
+	fmt.Fprintln(o.Out, "\nKurulum tamamlandı: güvenlik ayarları, Docker, Caddy, MongoDB ve panel hazır.")
 	printConnectionInfo(ctx, o, a)
 	return nil
 }
@@ -107,6 +144,13 @@ func printConnectionInfo(ctx context.Context, o Options, a Answers) {
 	p.Say("  SSH:     %s@%s, anahtarla (root ile SSH artık kapalı)", a.AdminUser, serverIP(ctx, o.Host))
 	p.Say("  MongoDB: localhost:27017, kullanıcı %s, auth veritabanı admin", core.MongoRootUser)
 	p.Say("  Şifre:   sudo grep PASSWORD %s", core.MongoSecretPath)
+	p.Say("")
+	p.Say("Panel:")
+	if a.TunnelEnabled {
+		p.Say("  https://%s  (Cloudflare Access → kullanıcı adı + şifre + 2FA kodu)", a.PanelHost)
+	}
+	p.Say("  SSH tüneliyle (her zaman çalışır): ssh -L 7701:127.0.0.1:7701 %s@%s", a.AdminUser, serverIP(ctx, o.Host))
+	p.Say("  sonra tarayıcıda http://localhost:7701")
 }
 
 func serverIP(ctx context.Context, h Host) string {
@@ -161,16 +205,59 @@ func loadOrCollect(ctx context.Context, o Options, ram uint64) (Answers, error) 
 // withResumedSecrets asks again for secrets that are never persisted, but only if the
 // step that needs them has not completed yet.
 func withResumedSecrets(ctx context.Context, o Options, a Answers) (Answers, error) {
-	if a.SudoMode != SudoPassword || o.DryRun {
+	if o.DryRun {
 		return a, nil
 	}
-	step := adminUserStep{h: o.Host, user: a.AdminUser, keys: a.SSHKeys, mode: a.SudoMode}
-	if step.passwordSet(ctx) {
-		return a, nil
+	if a.SudoMode == SudoPassword {
+		step := adminUserStep{h: o.Host, user: a.AdminUser, keys: a.SSHKeys, mode: a.SudoMode}
+		if !step.passwordSet(ctx) {
+			pw, err := o.Prompt.NewPassword("sudo şifresi ("+a.AdminUser+")", ValidateSudoPassword)
+			if err != nil {
+				return a, err
+			}
+			a.SudoPasswordValue = pw
+		}
 	}
-	pw, err := o.Prompt.NewPassword("sudo şifresi ("+a.AdminUser+")", ValidateSudoPassword)
-	a.SudoPasswordValue = pw
-	return a, err
+	if a.TunnelEnabled {
+		if done, _ := (tunnelSecretStep{h: o.Host}).Check(ctx); !done {
+			tok, err := o.Prompt.Secret("Cloudflare Tunnel token (ekranda görünmez)", ValidateTunnelToken)
+			if err != nil {
+				return a, err
+			}
+			a.TunnelToken = tok
+		}
+	}
+	return a, nil
+}
+
+// enrolTOTP shows the QR code and secret, then asks for a current code: the account is
+// only created once the operator's authenticator app is proven to work.
+func enrolTOTP(p *Prompter) TOTPSetupFunc {
+	return func(ctx context.Context, secret, uri string) error {
+		qr, err := qrterm.Render(uri)
+		if err != nil {
+			return err
+		}
+		p.Say("")
+		p.Say("Panel için iki adımlı doğrulama: telefonundaki authenticator uygulamasıyla")
+		p.Say("(Google Authenticator, Bitwarden, 1Password, Aegis...) bu QR kodunu okut:")
+		p.Say("")
+		p.Say("%s", qr)
+		p.Say("QR okutamıyorsan anahtarı elle gir: %s", secret)
+		p.Say("")
+		for i := 0; i < 3; i++ {
+			code, err := p.Ask("Uygulamanın gösterdiği 6 haneli kod", "", nil)
+			if err != nil {
+				return err
+			}
+			if _, ok := auth.VerifyTOTP(secret, code, time.Now(), 0); ok {
+				p.Say("  ✓ Doğrulandı.")
+				return nil
+			}
+			p.Say("  ✗ Kod tutmadı. Telefonun saatinin otomatik ayarlı olduğundan emin ol.")
+		}
+		return fmt.Errorf("%w: 2FA doğrulanamadı; kurulumu yeniden çalıştırınca yeni QR gösterilir", ErrAborted)
+	}
 }
 
 func gatherFacts(h Host, ram uint64) Facts {

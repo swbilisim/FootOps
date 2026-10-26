@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/swbilisim/FootOps/internal/config"
 	"github.com/swbilisim/FootOps/internal/sysinfo"
 )
 
@@ -82,6 +83,9 @@ func Collect(p *Prompter, f Facts) (Answers, error) {
 		return a, err
 	}
 	a.PanelHost = strings.ToLower(host)
+	if err := askTunnel(p, &a); err != nil {
+		return a, err
+	}
 
 	p.Say("")
 	p.Say("Güvenlik güncellemeleri otomatik kurulacak. Bazıları (çekirdek) yeniden başlatma ister;")
@@ -109,6 +113,44 @@ func Collect(p *Prompter, f Facts) (Answers, error) {
 		return a, ErrAborted
 	}
 	return a, nil
+}
+
+func askTunnel(p *Prompter, a *Answers) error {
+	p.Say("")
+	p.Say("Panele dışarıdan erişim: Cloudflare Tunnel + Cloudflare Access.")
+	p.Say("Hayır dersen panel sadece SSH tüneliyle açılır; tüneli sonra kurulumu tekrar çalıştırarak ekleyebilirsin.")
+	yes, err := p.YesNo("Cloudflare Tunnel şimdi kurulsun mu?", true)
+	if err != nil || !yes {
+		return err
+	}
+	p.Say("")
+	p.Say("Cloudflare Zero Trust panelinde:")
+	p.Say("  1. Networks → Tunnels → Create a tunnel (Cloudflared). Kurulum komutundaki token'ı kopyala.")
+	p.Say("  2. Tünelin Public hostname'i: %s → Service: HTTP, URL: 127.0.0.1:7700", a.PanelHost)
+	p.Say("  3. Access → Applications → Add (Self-hosted), aynı hostname; policy: sadece senin e-postan.")
+	p.Say("     Uygulamanın 'Application Audience (AUD) Tag' değerini kopyala.")
+	p.Say("  4. Takım adı: Settings → Custom Pages'te görünen <takım>.cloudflareaccess.com")
+	if a.TunnelToken, err = p.Secret("Tunnel token (ekranda görünmez)", ValidateTunnelToken); err != nil {
+		return err
+	}
+	team, err := p.Ask("Zero Trust takım adı", "", func(s string) error { return config.ValidateTeam(normalizeTeam(s)) })
+	if err != nil {
+		return err
+	}
+	aud, err := p.Ask("Access AUD etiketi", "", func(s string) error { return config.ValidateAUD(strings.ToLower(s)) })
+	if err != nil {
+		return err
+	}
+	a.TunnelEnabled, a.AccessTeam, a.AccessAUD = true, normalizeTeam(team), strings.ToLower(aud)
+	return nil
+}
+
+// normalizeTeam accepts "swbilisim", "swbilisim.cloudflareaccess.com" or a full URL.
+func normalizeTeam(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.TrimPrefix(strings.TrimPrefix(s, "https://"), "http://")
+	s = strings.TrimSuffix(s, "/")
+	return strings.TrimSuffix(s, ".cloudflareaccess.com")
 }
 
 func askKeys(p *Prompter, rootKeys []string) ([]string, error) {
@@ -224,13 +266,19 @@ func Summary(a Answers) string {
 	w("Swap", sysinfo.HumanBytes(a.SwapBytes))
 	w("MongoDB önbelleği", strconv.FormatFloat(a.MongoCacheGB, 'f', -1, 64)+" GB")
 	w("Panel adresi", a.PanelHost)
+	if a.TunnelEnabled {
+		w("Panel erişimi", "Cloudflare Tunnel + Access ("+a.AccessTeam+") ve SSH tüneli")
+	} else {
+		w("Panel erişimi", "sadece SSH tüneli")
+	}
 	if a.AutoReboot {
 		w("Otomatik reboot", "evet, "+a.RebootTime)
 	} else {
 		w("Otomatik reboot", "hayır")
 	}
 	b.WriteString("\nYapılacaklar: paket güncellemeleri, swap, saat dilimi, otomatik güvenlik güncellemeleri,\n")
-	b.WriteString("yönetici kullanıcı, güvenlik duvarı (22/80/443), fail2ban, SSH sertleştirme (en sonda, onayınla).\n")
+	b.WriteString("yönetici kullanıcı, güvenlik duvarı (22/80/443), fail2ban, SSH sertleştirme (onayınla),\n")
+	b.WriteString("Docker, Caddy, MongoDB, panel (2FA kurulumu QR kodla).\n")
 	return b.String()
 }
 

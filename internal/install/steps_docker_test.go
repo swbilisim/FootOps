@@ -203,7 +203,7 @@ func TestCoreFilesGeneratesSecretOnce(t *testing.T) {
 	if err != nil || st.Mode().Perm() != 0o600 {
 		t.Errorf("secret mode = %v, %v", st.Mode().Perm(), err)
 	}
-	for _, d := range []string{core.MongoDataDir, core.CaddyCertsDir, configDir, "/etc/footops/secrets"} {
+	for _, d := range []string{core.MongoDataDir, core.CaddyCertsDir, "/etc/footops/secrets"} {
 		st, err := os.Stat(h.Path(d))
 		if err != nil || st.Mode().Perm() != 0o700 {
 			t.Errorf("%s mode = %v, %v", d, st.Mode().Perm(), err)
@@ -297,7 +297,7 @@ func TestCoreStackCheck(t *testing.T) {
 		}
 		return "", nil
 	})
-	s := coreStackStep{h}
+	s := coreStackStep{h, core.Config{MongoCacheGB: 0.5}}
 	if done, _ := s.Check(ctx); !done {
 		t.Error("healthy, up-to-date stack reported as pending")
 	}

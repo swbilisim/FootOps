@@ -5,6 +5,9 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/swbilisim/FootOps/internal/auth"
 
 	"github.com/swbilisim/FootOps/internal/sysinfo"
 )
@@ -88,9 +91,14 @@ func TestCollectFullRun(t *testing.T) {
 		"",                      // swap default
 		"",                      // mongo cache default
 		"Panel-H1.Example.com",  // panel host, upper-case accepted and lowered
-		"",                      // auto reboot yes
-		"",                      // reboot time default
-		"e",                     // confirm
+		"e",                     // set up Cloudflare Tunnel
+		"not-a-token",           // rejected
+		testTunnelToken,
+		"https://SWBilisim.cloudflareaccess.com/", // team, normalised
+		strings.Repeat("AB", 32),                  // AUD, lowered
+		"",                                        // auto reboot yes
+		"",                                        // reboot time default
+		"e",                                       // confirm
 	}, "\n") + "\n"
 	p, out := prompter(input)
 	a, err := Collect(p, Facts{
@@ -117,13 +125,22 @@ func TestCollectFullRun(t *testing.T) {
 	if a.PanelHost != "panel-h1.example.com" {
 		t.Errorf("panel host = %q", a.PanelHost)
 	}
+	if !a.TunnelEnabled || a.TunnelToken != testTunnelToken || a.AccessTeam != "swbilisim" || a.AccessAUD != strings.Repeat("ab", 32) {
+		t.Errorf("tunnel answers = %v %q %q %q", a.TunnelEnabled, a.TunnelToken, a.AccessTeam, a.AccessAUD)
+	}
+	if strings.Contains(out.String(), testTunnelToken) {
+		t.Error("tunnel token echoed")
+	}
+	if saved, _ := a.Marshal(); strings.Contains(saved, testTunnelToken) {
+		t.Error("tunnel token persisted")
+	}
 	if strings.Contains(out.String(), "correct horse battery") {
 		t.Error("password echoed in output")
 	}
 }
 
 func TestCollectDeclinedAtSummary(t *testing.T) {
-	input := strings.Join([]string{"A", "", "", "", keyA, "", "h", "", "", "panel-a.example.com", "h", ""}, "\n") + "\n"
+	input := strings.Join([]string{"A", "", "", "", keyA, "", "h", "", "", "panel-a.example.com", "h", "h", ""}, "\n") + "\n"
 	p, out := prompter(input)
 	_, err := Collect(p, Facts{RAM: 8 << 30, ZoneinfoOK: func(string) bool { return true }})
 	if !errors.Is(err, ErrAborted) {
@@ -137,5 +154,34 @@ func TestCollectRejectsUnknownTimezone(t *testing.T) {
 	_, _ = Collect(p, Facts{RAM: 4 << 30, ZoneinfoOK: func(tz string) bool { return tz == "Europe/Istanbul" }})
 	if !strings.Contains(out.String(), "bulunamadı") {
 		t.Errorf("unknown timezone accepted:\n%s", out.String())
+	}
+}
+
+const testTunnelToken = "eyJhIjogImFjYzEyMyIsICJ0IjogInR1bm5lbC11dWlkIiwgInMiOiAiYzJWamNtVjAifQ=="
+
+func TestValidateTunnelToken(t *testing.T) {
+	if err := ValidateTunnelToken(testTunnelToken); err != nil {
+		t.Errorf("valid token rejected: %v", err)
+	}
+	for _, bad := range []string{"", "abc", testTunnelToken[:20], "eyJhIjoiIn0="} {
+		if ValidateTunnelToken(bad) == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
+
+func TestEnrolTOTP(t *testing.T) {
+	secret, _ := auth.NewTOTPSecret()
+	code, _ := auth.TOTPCode(secret, time.Now())
+	p, out := prompter("000000\n" + code + "\n")
+	if err := enrolTOTP(p)(ctx, secret, auth.TOTPURI(secret, "FootOps H1", "furkan")); err != nil {
+		t.Fatalf("enrol: %v", err)
+	}
+	if !strings.Contains(out.String(), secret) || !strings.Contains(out.String(), "\x1b[30;47m") {
+		t.Error("secret or QR not shown")
+	}
+	p, _ = prompter("1\n2\n3\n")
+	if err := enrolTOTP(p)(ctx, secret, "otpauth://x"); !errors.Is(err, ErrAborted) {
+		t.Errorf("three wrong codes: %v", err)
 	}
 }

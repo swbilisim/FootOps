@@ -136,6 +136,23 @@ func (p *Prompter) NewPassword(label string, validate func(string) error) (strin
 	}
 }
 
+// Secret asks for a single secret value without echo (e.g. an API token).
+func (p *Prompter) Secret(label string, validate func(string) error) (string, error) {
+	for {
+		fmt.Fprintf(p.out, "%s: ", label)
+		v, err := p.secret()
+		if err != nil {
+			return "", err
+		}
+		v = strings.TrimSpace(v) // tokens never contain spaces; pasting often adds them
+		if err := validate(v); err != nil {
+			p.Say("  ✗ %v", err)
+			continue
+		}
+		return v, nil
+	}
+}
+
 // secret reads a password. Surrounding spaces are kept: they are part of the password.
 func (p *Prompter) secret() (string, error) {
 	if p.readSecret == nil {

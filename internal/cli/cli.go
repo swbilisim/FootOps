@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/signal"
 	"runtime"
@@ -15,9 +16,11 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/swbilisim/FootOps/internal/agent"
 	"github.com/swbilisim/FootOps/internal/install"
 	"github.com/swbilisim/FootOps/internal/sysinfo"
 	"github.com/swbilisim/FootOps/internal/version"
+	"github.com/swbilisim/FootOps/internal/web"
 )
 
 const usage = `FootOps - lightweight, security-first server panel
@@ -67,7 +70,17 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "Kurulum durduruldu: %v\n", err)
 			return 1
 		}
-	case "web", "agent", "reset-password", "reset-2fa", "self-update":
+	case "agent":
+		err = runService(func(ctx context.Context, l *log.Logger) error {
+			return agent.Main(ctx, agent.Config{Socket: agent.DefaultSocket, AuditPath: agent.DefaultAuditPath, PanelUser: agent.PanelUser}, l)
+		})
+	case "web":
+		err = runService(web.Main)
+	case "reset-password":
+		err = runRecovery(install.ResetPassword, stdout)
+	case "reset-2fa":
+		err = runRecovery(install.Reset2FA, stdout)
+	case "self-update":
 		err = errNotImplemented
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n\n%s", args[0], usage)
@@ -169,4 +182,24 @@ func handleSignals(cancel context.CancelFunc, changing *atomic.Bool, restoreTerm
 			fmt.Fprintln(stderr, "\nDurduruluyor: çalışan komut bitince kurulum duracak. Hemen çıkmak için tekrar Ctrl+C.")
 		}
 	}()
+}
+
+// runService runs a long-lived systemd service until SIGTERM/SIGINT. Logs go to stderr,
+// which journald collects (and timestamps).
+func runService(run func(context.Context, *log.Logger) error) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return run(ctx, log.New(os.Stderr, "", 0))
+}
+
+func runRecovery(run func(context.Context, install.Host, *install.Prompter) error, stdout io.Writer) error {
+	var readSecret func() (string, error)
+	if fd := int(os.Stdin.Fd()); term.IsTerminal(fd) {
+		readSecret = func() (string, error) {
+			b, err := term.ReadPassword(fd)
+			return string(b), err
+		}
+	}
+	h := install.Host{Root: "/", Run: install.ExecRunner{}}
+	return run(context.Background(), h, install.NewPrompter(os.Stdin, stdout, readSecret))
 }

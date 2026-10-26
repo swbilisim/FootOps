@@ -81,7 +81,9 @@ func TestResumeAsksPasswordOnlyIfNotSet(t *testing.T) {
 }
 
 func TestStepsOrder(t *testing.T) {
-	steps := Steps(Host{}, validAnswers(), confirmWith(true), &Notes{})
+	a := validAnswers()
+	a.TunnelEnabled, a.AccessTeam, a.AccessAUD = true, "team", strings.Repeat("a", 64)
+	steps := Steps(Host{}, a, Deps{Confirm: confirmWith(true), Notes: &Notes{}})
 	pos := map[string]int{}
 	for i, s := range steps {
 		if _, dup := pos[s.Name()]; dup {
@@ -99,6 +101,15 @@ func TestStepsOrder(t *testing.T) {
 		{"docker", "docker-daemon"},
 		{"docker-daemon", "core-files"},
 		{"core-files", "core-stack"},
+		{"tunnel-secret", "core-files"},  // cloudflared reads the token at start
+		{"core-stack", "panel-services"}, // the agent talks to Docker
+		{"panel-user", "panel-config"},   // config is chowned to the panel user
+		{"panel-config", "panel-account"},
+		{"panel-binary", "panel-services"},
+		{"panel-account", "panel-services"},
+	}
+	if len(steps) != 21 {
+		t.Errorf("steps = %d, want 21", len(steps))
 	}
 	for _, b := range before {
 		if pos[b[0]] >= pos[b[1]] {

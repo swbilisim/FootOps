@@ -1,0 +1,69 @@
+{{template "top" .}}
+{{with .Data.Err}}<p class="error">Agent'a ulaşılamadı: {{.}}</p>{{end}}
+{{with .Data.O}}
+{{with .System}}
+<section class="cards">
+  <div class="card">
+    <h2>CPU</h2>
+    <p class="big {{level .CPUPercent}}">%{{f1 .CPUPercent}}</p>
+    <p class="muted">load {{f2 .Load1}} · {{f2 .Load5}} · {{f2 .Load15}}</p>
+  </div>
+  <div class="card">
+    <h2>RAM</h2>
+    {{$p := pct .MemUsed .MemTotal}}
+    <p class="big {{level $p}}">%{{f1 $p}}</p>
+    <p class="muted">{{bytes .MemUsed}} / {{bytes .MemTotal}}</p>
+  </div>
+  <div class="card">
+    <h2>Swap</h2>
+    {{$p := pct .SwapUsed .SwapTotal}}
+    <p class="big {{level $p}}">%{{f1 $p}}</p>
+    <p class="muted">{{bytes .SwapUsed}} / {{bytes .SwapTotal}}</p>
+  </div>
+  <div class="card">
+    <h2>Disk</h2>
+    {{$p := pct .DiskUsed .DiskTotal}}
+    <p class="big {{level $p}}">%{{f1 $p}}</p>
+    <p class="muted">{{bytes .DiskUsed}} / {{bytes .DiskTotal}}</p>
+  </div>
+  <div class="card">
+    <h2>Açık kalma</h2>
+    <p class="big">{{dur .Uptime}}</p>
+    <p class="muted">{{.Hostname}}</p>
+  </div>
+</section>
+{{end}}
+
+<section>
+  <h1>Container'lar <span class="muted small">güncelleme: {{since .SampledAt}}</span></h1>
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th></th><th>Ad</th><th>Proje</th><th>Durum</th><th>CPU</th><th>RAM</th><th>Restart</th><th>Başlama</th><th></th></tr>
+    </thead>
+    <tbody>
+    {{range .Containers}}
+      <tr>
+        <td><span class="dot {{status .}}" title="{{.State}} {{.Health}}"></span></td>
+        <td><strong>{{.Name}}</strong><br><span class="muted small">{{.Image}}</span></td>
+        <td>{{.Project}}</td>
+        <td>{{.State}}{{with .Health}} · {{.}}{{end}}{{if .OOMKilled}} · <span class="bad">OOM</span>{{end}}</td>
+        <td>{{if eq .State "running"}}%{{f1 .CPUPercent}}{{end}}</td>
+        <td>{{if eq .State "running"}}{{bytes .MemUsage}}{{if .MemLimit}} <span class="muted small">/ {{bytes .MemLimit}}</span>{{end}}{{end}}</td>
+        <td>{{.RestartCount}}</td>
+        <td>{{since .StartedAt}}</td>
+        <td class="actions">
+          <a href="/containers/{{.Name}}/logs">Loglar</a>
+          <a href="/containers/{{.Name}}/restart">Yeniden başlat</a>
+        </td>
+      </tr>
+    {{else}}
+      <tr><td colspan="9" class="muted">Container yok.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{range .Errors}}<p class="muted small">⚠ {{.}}</p>{{end}}
+</section>
+{{end}}
+{{template "bottom" .}}

@@ -6,7 +6,8 @@ One command turns a fresh Ubuntu server into a hardened Docker host (swap, SSH h
 firewall, Docker, Caddy, MongoDB) and installs a small web panel for adding, deploying and
 monitoring sites.
 
-> **Status:** early development. The installer and panel are not usable yet.
+> **Status:** early development. The installer and panel work end to end in tests;
+> they have not run on a production server yet.
 
 ## Design in short
 
@@ -94,14 +95,49 @@ completed steps are skipped and an interrupted run continues where it stopped.
   question it cannot ask. Details are always in `/var/log/footops-install.log`.
 - Answers (no secrets) are kept in `/etc/footops/install.json` for re-runs.
 
+## The panel
+
+After the core stack, the installer creates the `footops` system user (uid 800-899, so
+it never matches the uids container images write files as), installs the binary to
+`/usr/local/bin/footops`, enrols the admin's authenticator app (QR code in the terminal,
+confirmed with a live code) and starts two services:
+
+| Service | Runs as | Can do |
+|---|---|---|
+| `footops-agent` | root | A fixed, validated API on `/run/footops/agent.sock`: overview, container logs, restart, audit log. Accepts connections only from root and the `footops` uid, checked with `SO_PEERCRED`. |
+| `footops-web` | `footops`, no capabilities, seccomp, `ProtectSystem=strict` | Login and pages. Cannot see `/srv`, secrets, Docker's socket or data, or the audit log; asks the agent for everything. |
+
+Access:
+
+- **SSH tunnel (always):** `ssh -L 7701:127.0.0.1:7701 admin@server`, then
+  `http://localhost:7701`. Only `localhost` host names are answered (DNS-rebinding
+  protection).
+- **Cloudflare Tunnel (optional):** `cloudflared` runs in the core stack and forwards the
+  panel host name to `127.0.0.1:7700`. That listener accepts only requests carrying a
+  valid Cloudflare Access JWT for the configured team and application (RS256, issuer,
+  audience, expiry checked; keys fetched from Cloudflare), so a deleted or misconfigured
+  Access application does not expose the login page.
+
+Login is username + argon2id password + TOTP (RFC 6238, codes cannot be replayed) or a
+single-use recovery code. Five failed logins lock the account (5 min, doubling); logins
+are also rate-limited per IP and overall. Sessions are server-side, bound to the
+listener and Cloudflare identity, idle-expire after 30 minutes and end after 12 hours.
+Every form has a CSRF token and cross-site requests are refused. The UI ships no
+JavaScript, so the Content-Security-Policy is `default-src 'none'`.
+
+Every login, logout, restart and recovery command is written to
+`/var/lib/footops/audit.jsonl` and shown in the panel.
+
 ## Commands
 
 | Command | Purpose |
 |---|---|
 | `footops install` | Prepare the server and install FootOps (interactive, root) |
-| `footops doctor` | Check the server against the FootOps standard |
-| `footops reset-password` / `reset-2fa` | Recover panel access (root over SSH) |
-| `footops self-update` | Download, verify and install the latest release |
+| `footops reset-password` | New panel password, lifts a lockout (root over SSH) |
+| `footops reset-2fa` | Enrol a new authenticator, new recovery codes (root over SSH) |
+| `footops agent` / `footops web` | The services (started by systemd) |
+| `footops doctor` | Basic checks (more to come) |
+| `footops self-update` | Not implemented yet |
 | `footops version` | Print version |
 
 ## Development

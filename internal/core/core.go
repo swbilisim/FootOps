@@ -15,6 +15,8 @@ const (
 	// MongoDB 7.0 keeps compatibility with the older drivers (Mongoose 5 / Node 14)
 	// still used by some sites.
 	MongoImage = "mongo:7.0.45"
+	// cloudflared connects the panel to Cloudflare Tunnel (outbound only).
+	CloudflaredImage = "cloudflare/cloudflared:2026.10.3"
 )
 
 // Host paths.
@@ -36,17 +38,26 @@ const (
 	MongoConfigDir  = MongoDir + "/configdb"
 	MongoRootUser   = "root"
 	MongoSecretPath = "/etc/footops/secrets/mongo.env"
-)
 
-// Services maps compose service names to their fixed container names.
-var Services = map[string]string{
-	"caddy": "footops-caddy",
-	"mongo": "footops-mongo",
-}
+	TunnelSecretPath = "/etc/footops/secrets/cloudflared.env"
+)
 
 // Config holds the values that vary between servers.
 type Config struct {
 	MongoCacheGB float64
+	Tunnel       bool // run cloudflared for the panel
+}
+
+// Services maps compose service names to their fixed container names.
+func Services(c Config) map[string]string {
+	m := map[string]string{
+		"caddy": "footops-caddy",
+		"mongo": "footops-mongo",
+	}
+	if c.Tunnel {
+		m["cloudflared"] = "footops-cloudflared"
+	}
+	return m
 }
 
 // Caddyfile is the main Caddy config. Sites are separate files under sites/, so adding
@@ -123,10 +134,39 @@ services:
       start_period: 40s
 `,
 		ProjectName,
-		CaddyImage, Services["caddy"], CaddyEtcDir, CaddyDataDir, CaddyConfigDir,
-		MongoImage, Services["mongo"], cache, MongoSecretPath, MongoDataDir, MongoConfigDir,
+		CaddyImage, "footops-caddy", CaddyEtcDir, CaddyDataDir, CaddyConfigDir,
+		MongoImage, "footops-mongo", cache, MongoSecretPath, MongoDataDir, MongoConfigDir,
 	)
+	if c.Tunnel {
+		// Host networking: cloudflared must reach the panel on 127.0.0.1, and it only
+		// makes outbound connections, so no port is published.
+		fmt.Fprintf(&b, `
+  cloudflared:
+    image: %s
+    container_name: footops-cloudflared
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    env_file: %s
+    network_mode: host
+    cap_drop: [ALL]
+`, CloudflaredImage, TunnelSecretPath)
+	}
 	return b.String()
+}
+
+// TunnelSecretEnv renders the env file holding the tunnel token.
+func TunnelSecretEnv(token string) string {
+	return "# Managed by FootOps\nTUNNEL_TOKEN=" + token + "\n"
+}
+
+// TunnelTokenFromEnv extracts the token from the env file content.
+func TunnelTokenFromEnv(env string) string {
+	for _, l := range strings.Split(env, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(l), "TUNNEL_TOKEN="); ok {
+			return v
+		}
+	}
+	return ""
 }
 
 // MongoSecretEnv renders the env file holding the MongoDB root credentials. MongoDB reads
