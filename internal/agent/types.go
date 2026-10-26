@@ -4,7 +4,11 @@
 // so a bug in the web UI cannot be turned into arbitrary commands.
 package agent
 
-import "time"
+import (
+	"time"
+
+	"github.com/swbilisim/FootOps/internal/sites"
+)
 
 // Overview is the dashboard snapshot.
 type Overview struct {
@@ -69,5 +73,36 @@ type AuditEntry struct {
 }
 
 type errorResponse struct {
-	Error string `json:"error"`
+	Error    string   `json:"error"`
+	Problems []string `json:"problems,omitempty"`
+}
+
+// CreateSiteRequest carries the site definition and its environment. Env values may be
+// secrets: they are written to the site's compose file (0600) and never logged.
+type CreateSiteRequest struct {
+	Spec  sites.Spec        `json:"spec"`
+	Env   map[string]string `json:"env"`
+	Actor Actor             `json:"actor"`
+}
+
+type JobResponse struct {
+	JobID string `json:"job_id"`
+}
+
+// SiteStatus is a site with its container's state.
+type SiteStatus struct {
+	Spec      sites.Spec     `json:"spec"`
+	Container *ContainerInfo `json:"container,omitempty"`
+}
+
+type InstallCertRequest struct {
+	Cert  string `json:"cert"`
+	Key   string `json:"key"`
+	Actor Actor  `json:"actor"`
+}
+
+// ServerInfo is what the panel needs for DNS instructions.
+type ServerInfo struct {
+	IPv4 []string `json:"ipv4"`
+	IPv6 []string `json:"ipv6"`
 }

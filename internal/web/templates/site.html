@@ -1,0 +1,33 @@
+{{template "top" .}}
+{{$s := .Data.S.Spec}}
+<section>
+  <h1>{{$s.Name}} <span class="muted small">{{$s.Group}}</span></h1>
+  <p class="links">
+    <a href="/containers/{{$s.Name}}/logs">Loglar</a>
+    <a href="/containers/{{$s.Name}}/restart">Yeniden başlat</a>
+    <a href="/sites/{{$s.Name}}/redeploy">Yeniden dağıt (imajı güncelle)</a>
+    <a href="/sites/{{$s.Name}}/remove" class="bad">Kaldır</a>
+  </p>
+
+  <div class="table-wrap">
+  <table class="kv">
+    <tr><th>Alan adları</th><td>{{range $i, $d := $s.Domains}}{{if $i}}, {{end}}<a href="https://{{$d}}" rel="noreferrer">{{$d}}</a>{{end}}</td></tr>
+    <tr><th>İmaj</th><td class="mono">{{$s.Image}}</td></tr>
+    <tr><th>Port / bellek</th><td>{{$s.Port}} · {{$s.MemoryMB}} MB</td></tr>
+    <tr><th>Durum</th><td>{{with .Data.S.Container}}{{.State}}{{with .Health}} · {{.}}{{end}} · {{.RestartCount}} restart · başlama {{since .StartedAt}}{{else}}<span class="bad">container yok</span>{{end}}</td></tr>
+    <tr><th>Kalıcı klasör</th><td>{{if $s.DataMount}}<span class="mono">/srv/{{$s.Group}}/{{$s.Name}}/data → {{$s.DataMount}}</span>{{else}}yok{{end}}</td></tr>
+    <tr><th>Veritabanı</th><td>{{if $s.Database}}MongoDB <span class="mono">{{$s.Name}}</span> (kullanıcı <span class="mono">{{$s.Name}}</span>), adres <span class="mono">{{$s.DBVar}}</span> değişkeninde{{else}}yok{{end}}</td></tr>
+    <tr><th>Ortam değişkenleri</th><td class="mono small">{{range $i, $k := $s.EnvKeys}}{{if $i}}, {{end}}{{$k}}{{else}}—{{end}}</td></tr>
+    <tr><th>Oluşturma / güncelleme</th><td>{{ts $s.CreatedAt}} · {{ts $s.UpdatedAt}}</td></tr>
+  </table>
+  </div>
+
+  <h2 class="section">Cloudflare'de yapılacaklar</h2>
+  <ol class="steps">
+    <li>DNS: {{range $s.Domains}}<span class="mono">{{.}}</span> {{end}}için
+      {{with .Data.Server.IPv4}}<strong>A</strong> kaydı → <span class="mono">{{index . 0}}</span>{{else}}A kaydı → bu sunucunun IP'si{{end}},
+      <strong>Proxy açık</strong> (turuncu bulut).</li>
+    <li>SSL/TLS modu: <strong>Full (strict)</strong>. Zone genelinde değiştirmek diğer sunuculardaki siteleri etkileyecekse, sadece bu alan adları için bir Configuration Rule kullan.</li>
+  </ol>
+</section>
+{{template "bottom" .}}

@@ -39,7 +39,9 @@ func TestComposeIsDeterministic(t *testing.T) {
 
 func TestCaddyfileNeverRequestsCertificates(t *testing.T) {
 	c := Caddyfile()
-	if !strings.Contains(c, "auto_https off") || !strings.Contains(c, "import /etc/caddy/sites/*.caddy") {
+	if !strings.Contains(c, "auto_https off") || !strings.Contains(c, "import /etc/caddy/sites/*.caddy") ||
+		!strings.Contains(c, "trusted_proxies static 173.245.48.0/20") || !strings.Contains(c, "client_ip_headers CF-Connecting-IP") ||
+		!strings.Contains(c, "https:// {\n\tabort\n}") {
 		t.Errorf("Caddyfile = %s", c)
 	}
 }

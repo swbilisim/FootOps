@@ -218,6 +218,19 @@ func (a Answers) Validate() error {
 	return nil
 }
 
+// ExtractTunnelToken accepts either the bare token or a whole command copied from the
+// Cloudflare dashboard ("cloudflared tunnel run --token eyJ...", "... service install eyJ...")
+// and returns the token.
+func ExtractTunnelToken(s string) string {
+	f := strings.Fields(s)
+	for i := len(f) - 1; i >= 0; i-- {
+		if strings.HasPrefix(f[i], "eyJ") {
+			return f[i]
+		}
+	}
+	return strings.TrimSpace(s)
+}
+
 // ValidateTunnelToken checks the shape of a Cloudflare Tunnel token: base64-encoded JSON
 // with the account tag ("a"), tunnel ID ("t") and secret ("s"). It catches truncated or
 // wrong pastes before cloudflared fails at runtime.

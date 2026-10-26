@@ -128,6 +128,44 @@ JavaScript, so the Content-Security-Policy is `default-src 'none'`.
 Every login, logout, restart and recovery command is written to
 `/var/lib/footops/audit.jsonl` and shown in the panel.
 
+## Sites
+
+A site is a container image served under one or more domains. From the panel
+(**Sites → New site**):
+
+1. **Certificates** first: paste a Cloudflare Origin CA certificate and key for the
+   zone (`*.example.com` + `example.com`, 15 years). The panel checks that the key
+   matches and shows which names it covers.
+2. **New site**: name, group (`/srv/<group>/<name>`), domains, image (e.g. from GHCR),
+   app port, memory limit, optional persistent directory, optional MongoDB database,
+   environment variables.
+
+The agent then runs the steps as a background job (the page follows its progress) and
+undoes everything if any step fails:
+
+| Step | What happens |
+|---|---|
+| directory | `/srv/<group>/<name>/` with `footops.json` (no secrets) and `compose.yaml` (0600) |
+| network | a Docker network of its own; Caddy (and MongoDB, if used) are attached to it — sites cannot reach each other |
+| database | a MongoDB database and user of the site's name, `readWrite` on that database only; the connection string goes into the chosen variable (`MONGODB_URI` by default). The root password reaches `mongosh` via stdin, never a command line |
+| image | pulled before anything starts |
+| data | `data/` owned by the user the image runs as, mounted at the given path |
+| container | no published ports, all capabilities dropped, `no-new-privileges`, memory and PID limits |
+| ready | waits until the app accepts connections on its port; if it crashes, the error shows its last log lines |
+| Caddy | site block with the matching certificate, `caddy validate` before `caddy reload` |
+| check | an HTTPS request through Caddy must reach the app |
+
+**Redeploy** pulls the image again and recreates the container if it changed.
+**Remove** (confirmed by typing the name) takes the site offline and moves its files to
+`/srv/<group>/_removed/`; the database is kept.
+
+Host names no site claims get their connection dropped. Caddy trusts Cloudflare's ranges
+for the visitor's address (`CF-Connecting-IP`). In Cloudflare, point the domains at the
+server (A record, proxied) and use SSL mode **Full (strict)**.
+
+The agent re-attaches Caddy and MongoDB to every site network every 10 seconds, so
+recreating the core containers heals itself.
+
 ## Commands
 
 | Command | Purpose |

@@ -17,6 +17,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/swbilisim/FootOps/internal/agent"
+	"github.com/swbilisim/FootOps/internal/config"
 	"github.com/swbilisim/FootOps/internal/install"
 	"github.com/swbilisim/FootOps/internal/sysinfo"
 	"github.com/swbilisim/FootOps/internal/version"
@@ -72,7 +73,11 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		}
 	case "agent":
 		err = runService(func(ctx context.Context, l *log.Logger) error {
-			return agent.Main(ctx, agent.Config{Socket: agent.DefaultSocket, AuditPath: agent.DefaultAuditPath, PanelUser: agent.PanelUser}, l)
+			cfg := agent.Config{Socket: agent.DefaultSocket, AuditPath: agent.DefaultAuditPath, PanelUser: agent.PanelUser}
+			if p, err := config.Load(config.Path); err == nil {
+				cfg.PanelHost = p.PanelHost
+			}
+			return agent.Main(ctx, cfg, l)
 		})
 	case "web":
 		err = runService(web.Main)

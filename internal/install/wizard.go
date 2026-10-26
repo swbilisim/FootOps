@@ -124,15 +124,21 @@ func askTunnel(p *Prompter, a *Answers) error {
 		return err
 	}
 	p.Say("")
-	p.Say("Cloudflare Zero Trust panelinde:")
-	p.Say("  1. Networks → Tunnels → Create a tunnel (Cloudflared). Kurulum komutundaki token'ı kopyala.")
-	p.Say("  2. Tünelin Public hostname'i: %s → Service: HTTP, URL: 127.0.0.1:7700", a.PanelHost)
-	p.Say("  3. Access → Applications → Add (Self-hosted), aynı hostname; policy: sadece senin e-postan.")
-	p.Say("     Uygulamanın 'Application Audience (AUD) Tag' değerini kopyala.")
-	p.Say("  4. Takım adı: Settings → Custom Pages'te görünen <takım>.cloudflareaccess.com")
-	if a.TunnelToken, err = p.Secret("Tunnel token (ekranda görünmez)", ValidateTunnelToken); err != nil {
+	p.Say("Cloudflare Zero Trust (Cloudflare One) panelinde, bu sırayla (menü adları değişebilir):")
+	p.Say("  1. Access controls → Applications → Self-hosted: hostname %s,", a.PanelHost)
+	p.Say("     policy Allow + sadece senin e-postan. Uygulamanın Configure → Additional settings")
+	p.Say("     bölümündeki 'Application Audience (AUD) Tag' değerini kopyala.")
+	p.Say("  2. Networking → Tunnels → Create a tunnel (Cloudflared). Kurulum ekranındaki komutlardan birini")
+	p.Say("     kopyala (token'ı içeriyor); komutu ÇALIŞTIRMA, FootOps cloudflared'i kendisi çalıştırır.")
+	p.Say("  3. Tünelin Routes sekmesi → Published application: %s → HTTP → 127.0.0.1:7700", a.PanelHost)
+	p.Say("  4. Takım adı: Settings → Team name and domain (<takım>.cloudflareaccess.com)")
+	tok, err := p.Secret("Tunnel token ya da komutun tamamı (ekranda görünmez)", func(s string) error {
+		return ValidateTunnelToken(ExtractTunnelToken(s))
+	})
+	if err != nil {
 		return err
 	}
+	a.TunnelToken = ExtractTunnelToken(tok)
 	team, err := p.Ask("Zero Trust takım adı", "", func(s string) error { return config.ValidateTeam(normalizeTeam(s)) })
 	if err != nil {
 		return err

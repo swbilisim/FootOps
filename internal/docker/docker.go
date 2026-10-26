@@ -4,6 +4,7 @@ package docker
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -55,13 +56,28 @@ func IsNotFound(err error) bool {
 }
 
 func (c *Client) do(ctx context.Context, method, path string, q url.Values) (*http.Response, error) {
+	return c.doBody(ctx, method, path, q, nil)
+}
+
+func (c *Client) doBody(ctx context.Context, method, path string, q url.Values, body any) (*http.Response, error) {
 	u := "http://docker" + path
 	if len(q) > 0 {
 		u += "?" + q.Encode()
 	}
-	req, err := http.NewRequestWithContext(ctx, method, u, nil)
+	var rd io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		rd = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u, rd)
 	if err != nil {
 		return nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := c.Doer.Do(req)
 	if err != nil {
@@ -135,6 +151,11 @@ type Inspect struct {
 	HostConfig struct {
 		Memory int64 `json:"Memory"`
 	} `json:"HostConfig"`
+	NetworkSettings struct {
+		Networks map[string]struct {
+			IPAddress string `json:"IPAddress"`
+		} `json:"Networks"`
+	} `json:"NetworkSettings"`
 }
 
 var reName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)
@@ -272,4 +293,115 @@ func demux(r io.Reader) ([]string, error) {
 		}
 	}
 	return splitLines(strings.NewReader(buf.String()))
+}
+
+// ---- networks ----
+
+func (c *Client) send(ctx context.Context, method, path string, body any) error {
+	resp, err := c.doBody(ctx, method, path, nil, body)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
+}
+
+func checkNames(names ...string) error {
+	for _, n := range names {
+		if !ValidName(n) {
+			return fmt.Errorf("invalid name %q", n)
+		}
+	}
+	return nil
+}
+
+// CreateNetwork creates a bridge network. It is not an error if it already exists.
+func (c *Client) CreateNetwork(ctx context.Context, name string, labels map[string]string) error {
+	if err := checkNames(name); err != nil {
+		return err
+	}
+	if _, ok, err := c.NetworkMembers(ctx, name); err != nil || ok {
+		return err
+	}
+	return c.send(ctx, http.MethodPost, "/networks/create", map[string]any{
+		"Name": name, "Driver": "bridge", "Labels": labels,
+	})
+}
+
+// NetworkMembers returns the names of containers attached to a network and whether the
+// network exists.
+func (c *Client) NetworkMembers(ctx context.Context, name string) (map[string]bool, bool, error) {
+	if err := checkNames(name); err != nil {
+		return nil, false, err
+	}
+	var n struct {
+		Containers map[string]struct {
+			Name string `json:"Name"`
+		} `json:"Containers"`
+	}
+	err := c.getJSON(ctx, "/networks/"+name, nil, &n)
+	if IsNotFound(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	m := map[string]bool{}
+	for _, ct := range n.Containers {
+		m[ct.Name] = true
+	}
+	return m, true, nil
+}
+
+// Connect attaches a container to a network, with optional DNS aliases on it.
+func (c *Client) Connect(ctx context.Context, network, container string, aliases ...string) error {
+	if err := checkNames(append([]string{network, container}, aliases...)...); err != nil {
+		return err
+	}
+	ep := map[string]any{}
+	if len(aliases) > 0 {
+		ep["Aliases"] = aliases
+	}
+	return c.send(ctx, http.MethodPost, "/networks/"+network+"/connect", map[string]any{
+		"Container": container, "EndpointConfig": ep,
+	})
+}
+
+// Disconnect detaches a container from a network. Missing networks or containers are fine.
+func (c *Client) Disconnect(ctx context.Context, network, container string) error {
+	if err := checkNames(network, container); err != nil {
+		return err
+	}
+	err := c.send(ctx, http.MethodPost, "/networks/"+network+"/disconnect", map[string]any{
+		"Container": container, "Force": true,
+	})
+	if IsNotFound(err) {
+		return nil
+	}
+	return err
+}
+
+// RemoveNetwork deletes a network. A missing network is fine.
+func (c *Client) RemoveNetwork(ctx context.Context, name string) error {
+	if err := checkNames(name); err != nil {
+		return err
+	}
+	err := c.send(ctx, http.MethodDelete, "/networks/"+name, nil)
+	if IsNotFound(err) {
+		return nil
+	}
+	return err
+}
+
+// ContainerIP returns a container's address on a network.
+func (c *Client) ContainerIP(ctx context.Context, container, network string) (string, error) {
+	in, err := c.Inspect(ctx, container)
+	if err != nil {
+		return "", err
+	}
+	n, ok := in.NetworkSettings.Networks[network]
+	if !ok || n.IPAddress == "" {
+		return "", fmt.Errorf("%s, %s ağında değil", container, network)
+	}
+	return n.IPAddress, nil
 }

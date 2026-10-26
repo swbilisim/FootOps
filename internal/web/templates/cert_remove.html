@@ -1,0 +1,11 @@
+{{template "top" .}}
+<section class="confirm">
+  <h1>Sertifika silinsin mi?</h1>
+  <p>Bu sertifikayı kullanan bir site varsa silme reddedilir.</p>
+  <form method="post" action="/certs/{{.Data.ID}}/remove">
+    <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+    <button type="submit" class="danger">Sil</button>
+    <a href="/certs">Vazgeç</a>
+  </form>
+</section>
+{{template "bottom" .}}

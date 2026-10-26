@@ -220,11 +220,13 @@ func withResumedSecrets(ctx context.Context, o Options, a Answers) (Answers, err
 	}
 	if a.TunnelEnabled {
 		if done, _ := (tunnelSecretStep{h: o.Host}).Check(ctx); !done {
-			tok, err := o.Prompt.Secret("Cloudflare Tunnel token (ekranda görünmez)", ValidateTunnelToken)
+			tok, err := o.Prompt.Secret("Cloudflare Tunnel token ya da komutun tamamı (ekranda görünmez)", func(s string) error {
+				return ValidateTunnelToken(ExtractTunnelToken(s))
+			})
 			if err != nil {
 				return a, err
 			}
-			a.TunnelToken = tok
+			a.TunnelToken = ExtractTunnelToken(tok)
 		}
 	}
 	return a, nil

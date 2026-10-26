@@ -1,6 +1,6 @@
 //go:build !unix
 
-package install
+package run
 
 import "os/exec"
 

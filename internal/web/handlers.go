@@ -17,7 +17,10 @@ import (
 	"github.com/swbilisim/FootOps/internal/docker"
 )
 
-const maxForm = 8 << 10
+const (
+	maxForm       = 8 << 10 // login
+	maxAuthedForm = 1 << 20 // site environments, certificates
+)
 
 type sessKey struct{}
 
@@ -47,7 +50,7 @@ func (s *Server) requireSession(h http.HandlerFunc) http.Handler {
 			return
 		}
 		if r.Method == http.MethodPost {
-			r.Body = http.MaxBytesReader(w, r.Body, maxForm)
+			r.Body = http.MaxBytesReader(w, r.Body, maxAuthedForm)
 			if err := r.ParseForm(); err != nil ||
 				subtle.ConstantTimeCompare([]byte(r.PostFormValue("csrf")), []byte(sess.CSRF)) != 1 {
 				http.Error(w, "geçersiz form (CSRF); sayfayı yenileyip tekrar dene", http.StatusForbidden)

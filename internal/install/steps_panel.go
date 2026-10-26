@@ -23,6 +23,8 @@ const (
 	agentUnitPath = "/etc/systemd/system/footops-agent.service"
 	webUnitPath   = "/etc/systemd/system/footops-web.service"
 	panelStateDir = "/var/lib/footops"
+	// dockerConfigDir is the agent's DOCKER_CONFIG.
+	dockerConfigDir = panelStateDir + "/docker"
 )
 
 // ---- tunnel token ----
@@ -157,6 +159,7 @@ func (s panelConfigStep) Describe() string {
 // Ownership the step maintains: "path" -> "user:group mode" as printed by stat.
 func (s panelConfigStep) owners() map[string]string {
 	return map[string]string{
+		dockerConfigDir:    "root:root 700",
 		configDir:          "root:" + panelUser + " 750",
 		config.Path:        "root:" + panelUser + " 640",
 		panelStateDir:      "root:root 755",
@@ -190,7 +193,7 @@ func (s panelConfigStep) Apply(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	for _, d := range []string{panelStateDir, config.WebStateDir} {
+	for _, d := range []string{panelStateDir, config.WebStateDir, dockerConfigDir} {
 		if err := os.MkdirAll(s.h.Path(d), 0o755); err != nil {
 			return err
 		}
@@ -298,6 +301,8 @@ Type=simple
 ExecStart=/usr/local/bin/footops agent
 User=root
 Group=footops
+# docker CLI keeps its config (and later registry logins) here; /root is hidden by ProtectHome.
+Environment=DOCKER_CONFIG=/var/lib/footops/docker
 RuntimeDirectory=footops
 RuntimeDirectoryMode=0750
 UMask=0077

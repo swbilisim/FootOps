@@ -19,6 +19,7 @@ import (
 	"github.com/swbilisim/FootOps/internal/auth"
 	"github.com/swbilisim/FootOps/internal/cfaccess"
 	"github.com/swbilisim/FootOps/internal/config"
+	"github.com/swbilisim/FootOps/internal/sites"
 )
 
 //go:embed templates/*.html static/*
@@ -31,6 +32,14 @@ type AgentAPI interface {
 	Logs(ctx context.Context, name string, tail int) ([]string, error)
 	RecordAuth(ctx context.Context, e agent.AuditEntry) error
 	AuditTail(ctx context.Context, limit int) ([]agent.AuditEntry, error)
+	Sites(ctx context.Context) ([]agent.SiteStatus, error)
+	CreateSite(ctx context.Context, req agent.CreateSiteRequest) (string, error)
+	SiteJob(ctx context.Context, name, verb string, a agent.Actor) (string, error)
+	Job(ctx context.Context, id string) (agent.Job, error)
+	Certs(ctx context.Context) ([]sites.Cert, error)
+	InstallCert(ctx context.Context, certPEM, keyPEM string, a agent.Actor) (sites.Cert, error)
+	RemoveCert(ctx context.Context, id string, a agent.Actor) error
+	Server(ctx context.Context) (agent.ServerInfo, error)
 }
 
 // AccessVerifier checks Cloudflare Access tokens. *cfaccess.Verifier implements it.
@@ -102,6 +111,19 @@ func (s *Server) Handler(via string) http.Handler {
 	mux.Handle("GET /containers/{name}/restart", s.requireSession(s.restartConfirm))
 	mux.Handle("POST /containers/{name}/restart", s.requireSession(s.restart))
 	mux.Handle("GET /audit", s.requireSession(s.audit))
+	mux.Handle("GET /sites", s.requireSession(s.sitesList))
+	mux.Handle("GET /sites/new", s.requireSession(s.siteNew))
+	mux.Handle("POST /sites/new", s.requireSession(s.siteCreate))
+	mux.Handle("GET /sites/{name}", s.requireSession(s.site))
+	mux.Handle("GET /sites/{name}/redeploy", s.requireSession(s.siteConfirm("redeploy")))
+	mux.Handle("POST /sites/{name}/redeploy", s.requireSession(s.siteAction("redeploy")))
+	mux.Handle("GET /sites/{name}/remove", s.requireSession(s.siteConfirm("remove")))
+	mux.Handle("POST /sites/{name}/remove", s.requireSession(s.siteAction("remove")))
+	mux.Handle("GET /jobs/{id}", s.requireSession(s.job))
+	mux.Handle("GET /certs", s.requireSession(s.certs))
+	mux.Handle("POST /certs", s.requireSession(s.certInstall))
+	mux.Handle("GET /certs/{id}/remove", s.requireSession(s.certRemoveConfirm))
+	mux.Handle("POST /certs/{id}/remove", s.requireSession(s.certRemove))
 
 	var h http.Handler = mux
 	h = s.checkOrigin(h)

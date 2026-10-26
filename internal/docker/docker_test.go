@@ -117,3 +117,44 @@ func TestClientRequests(t *testing.T) {
 		t.Errorf("requests:\n%s", strings.Join(got, "\n"))
 	}
 }
+
+func TestNetworkRequests(t *testing.T) {
+	var got []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/networks/prj_musteri_a", func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Method+" "+r.URL.Path)
+		if r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusNotFound)
+			io.WriteString(w, `{"message":"network not found"}`)
+		}
+	})
+	mux.HandleFunc("/networks/create", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got = append(got, "POST create "+string(b))
+		w.WriteHeader(http.StatusCreated)
+	})
+	mux.HandleFunc("/networks/prj_musteri_a/connect", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got = append(got, "POST connect "+string(b))
+	})
+	c := &Client{Doer: handlerDoer{mux}}
+	ctx := context.Background()
+	if err := c.CreateNetwork(ctx, "prj_musteri_a", map[string]string{"footops.site": "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Connect(ctx, "prj_musteri_a", "footops-mongo", "mongo"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.RemoveNetwork(ctx, "prj_musteri_a"); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(got, "\n")
+	for _, want := range []string{`"Driver":"bridge"`, `"footops.site":"a"`, `"Container":"footops-mongo"`, `"Aliases":["mongo"]`, "DELETE /networks/prj_musteri_a"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("requests miss %s:\n%s", want, joined)
+		}
+	}
+	if err := c.Connect(ctx, "../x", "a"); err == nil {
+		t.Error("invalid network name accepted")
+	}
+}

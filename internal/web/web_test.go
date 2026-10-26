@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -18,14 +19,19 @@ import (
 	"github.com/swbilisim/FootOps/internal/auth"
 	"github.com/swbilisim/FootOps/internal/cfaccess"
 	"github.com/swbilisim/FootOps/internal/config"
+	"github.com/swbilisim/FootOps/internal/sites"
 )
 
 type fakeAgent struct {
-	mu       sync.Mutex
-	restarts []string
-	actors   []agent.Actor
-	audit    []agent.AuditEntry
-	logLines []string
+	mu        sync.Mutex
+	restarts  []string
+	actors    []agent.Actor
+	audit     []agent.AuditEntry
+	logLines  []string
+	created   []agent.CreateSiteRequest
+	createErr error
+	siteJobs  []string
+	jobDone   bool
 }
 
 func (f *fakeAgent) Overview(context.Context) (agent.Overview, error) {
@@ -56,6 +62,47 @@ func (f *fakeAgent) RecordAuth(_ context.Context, e agent.AuditEntry) error {
 }
 
 func (f *fakeAgent) AuditTail(context.Context, int) ([]agent.AuditEntry, error) { return f.audit, nil }
+
+func (f *fakeAgent) Sites(context.Context) ([]agent.SiteStatus, error) {
+	return []agent.SiteStatus{{Spec: sites.Spec{Name: "enisparta", Group: "musteri", Domains: []string{"enisparta.com"},
+		Image: "ghcr.io/x/enisparta:main", Port: 3000, MemoryMB: 256, EnvKeys: []string{"NODE_ENV"}}}}, nil
+}
+
+func (f *fakeAgent) CreateSite(_ context.Context, req agent.CreateSiteRequest) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.created = append(f.created, req)
+	if f.createErr != nil {
+		return "", f.createErr
+	}
+	return "job123", nil
+}
+
+func (f *fakeAgent) SiteJob(_ context.Context, name, verb string, a agent.Actor) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.siteJobs = append(f.siteJobs, verb+" "+name)
+	return "job456", nil
+}
+
+func (f *fakeAgent) Job(_ context.Context, id string) (agent.Job, error) {
+	return agent.Job{ID: id, Kind: "site.create", Target: "enisparta", Steps: []string{"✓ Klasör"}, Done: f.jobDone}, nil
+}
+
+func (f *fakeAgent) Certs(context.Context) ([]sites.Cert, error) { return nil, nil }
+
+func (f *fakeAgent) InstallCert(_ context.Context, c, k string, _ agent.Actor) (sites.Cert, error) {
+	if !strings.Contains(c, "BEGIN CERTIFICATE") {
+		return sites.Cert{}, errors.New("PEM sertifika bulunamadı")
+	}
+	return sites.Cert{Names: []string{"enisparta.com"}}, nil
+}
+
+func (f *fakeAgent) RemoveCert(context.Context, string, agent.Actor) error { return nil }
+
+func (f *fakeAgent) Server(context.Context) (agent.ServerInfo, error) {
+	return agent.ServerInfo{IPv4: []string{"2.31.81.202"}}, nil
+}
 
 type fakeAccess struct{ email string }
 

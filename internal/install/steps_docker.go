@@ -365,10 +365,25 @@ func (s coreFilesStep) Apply(ctx context.Context) error {
 	if err := s.ensureMongoSecret(); err != nil {
 		return err
 	}
+	prevCaddyfile, err := s.h.ReadFile(core.CaddyfilePath)
+	if err != nil {
+		return err
+	}
 	if err := s.h.WriteFile(core.CaddyfilePath, core.Caddyfile(), 0o644); err != nil {
 		return err
 	}
-	return s.h.WriteFile(core.ComposePath, core.Compose(s.cfg), 0o644)
+	if err := s.h.WriteFile(core.ComposePath, core.Compose(s.cfg), 0o644); err != nil {
+		return err
+	}
+	// The Caddyfile is a mounted file, not part of the compose config: a running Caddy
+	// only sees a change after a reload. (On a first install Caddy is not running yet.)
+	if prevCaddyfile != "" && prevCaddyfile != core.Caddyfile() {
+		if _, err := s.h.Run.Run(ctx, "docker", "exec", "footops-caddy", "caddy", "reload",
+			"--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"); err != nil {
+			return fmt.Errorf("Caddy yeniden yüklenemedi: %w", err)
+		}
+	}
+	return nil
 }
 
 // ensureMongoSecret creates the root password once. It is never regenerated: MongoDB only

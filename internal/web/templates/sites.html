@@ -1,0 +1,26 @@
+{{template "top" .}}
+<section>
+  <h1>Siteler <a class="button small-button" href="/sites/new">+ Yeni site</a></h1>
+  {{with .Data.Err}}<p class="error">Agent'a ulaşılamadı: {{.}}</p>{{end}}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th></th><th>Site</th><th>Grup</th><th>Alan adları</th><th>İmaj</th><th>Durum</th><th>RAM</th></tr></thead>
+    <tbody>
+    {{range .Data.Sites}}
+      <tr>
+        <td>{{with .Container}}<span class="dot {{status .}}"></span>{{else}}<span class="dot bad" title="container yok"></span>{{end}}</td>
+        <td><a href="/sites/{{.Spec.Name}}"><strong>{{.Spec.Name}}</strong></a></td>
+        <td>{{.Spec.Group}}</td>
+        <td class="small">{{range $i, $d := .Spec.Domains}}{{if $i}}<br>{{end}}{{$d}}{{end}}</td>
+        <td class="small muted">{{.Spec.Image}}</td>
+        <td>{{with .Container}}{{.State}}{{with .Health}} · {{.}}{{end}}{{else}}<span class="bad">container yok</span>{{end}}</td>
+        <td>{{with .Container}}{{if eq .State "running"}}{{bytes .MemUsage}} <span class="muted small">/ {{bytes .MemLimit}}</span>{{end}}{{end}}</td>
+      </tr>
+    {{else}}
+      <tr><td colspan="7" class="muted">Henüz site yok. Önce <a href="/certs">sertifikayı</a> yükle, sonra <a href="/sites/new">site ekle</a>.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+</section>
+{{template "bottom" .}}

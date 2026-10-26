@@ -185,3 +185,18 @@ func TestEnrolTOTP(t *testing.T) {
 		t.Errorf("three wrong codes: %v", err)
 	}
 }
+
+func TestExtractTunnelToken(t *testing.T) {
+	for _, in := range []string{
+		testTunnelToken,
+		"cloudflared tunnel run --token " + testTunnelToken,
+		"sudo cloudflared service install " + testTunnelToken,
+		"brew install cloudflared && sudo cloudflared service install " + testTunnelToken,
+		"docker run cloudflare/cloudflared:latest tunnel --no-autoupdate run --token " + testTunnelToken,
+		"  " + testTunnelToken + "\n",
+	} {
+		if got := ExtractTunnelToken(in); got != testTunnelToken {
+			t.Errorf("ExtractTunnelToken(%q) = %q", in, got)
+		}
+	}
+}

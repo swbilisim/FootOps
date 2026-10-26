@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/swbilisim/FootOps/internal/docker"
+	"github.com/swbilisim/FootOps/internal/run"
+	"github.com/swbilisim/FootOps/internal/sites"
 )
 
 const (
@@ -23,7 +25,7 @@ const (
 	DefaultAuditPath = "/var/lib/footops/audit.jsonl"
 	PanelUser        = "footops"
 
-	maxBody        = 64 << 10
+	maxBody        = 1 << 20 // site environments can be large
 	maxLogLines    = 2000
 	restartTimeout = 10 * time.Second
 )
@@ -33,6 +35,8 @@ type Server struct {
 	Docker  DockerAPI
 	Audit   *Audit
 	Sampler *Sampler
+	Sites   *SiteOps
+	Jobs    *Jobs
 	// AllowedUIDs may connect; everyone else gets 403. Checked against the kernel's
 	// peer credentials, not anything the client sends.
 	AllowedUIDs map[uint32]bool
@@ -56,8 +60,8 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) error {
 	srv := &http.Server{
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      60 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second, // long work runs as jobs, not in requests
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
 			uid, err := s.PeerUID(c)
 			if err != nil {
@@ -86,6 +90,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/containers/{name}/restart", s.restart)
 	mux.HandleFunc("GET /v1/audit", s.auditTail)
 	mux.HandleFunc("POST /v1/audit", s.auditRecord)
+	mux.HandleFunc("GET /v1/sites", s.listSites)
+	mux.HandleFunc("POST /v1/sites", s.createSite)
+	mux.HandleFunc("POST /v1/sites/{name}/redeploy", s.siteJob("site.redeploy"))
+	mux.HandleFunc("POST /v1/sites/{name}/remove", s.siteJob("site.remove"))
+	mux.HandleFunc("GET /v1/jobs/{id}", s.getJob)
+	mux.HandleFunc("GET /v1/certs", s.listCerts)
+	mux.HandleFunc("POST /v1/certs", s.installCert)
+	mux.HandleFunc("POST /v1/certs/{id}/remove", s.removeCert)
+	mux.HandleFunc("GET /v1/server", s.serverInfo)
 	return s.checkPeer(mux)
 }
 
@@ -235,6 +248,7 @@ type Config struct {
 	Socket    string
 	AuditPath string
 	PanelUser string
+	PanelHost string // refused as a site domain
 }
 
 // Main runs the agent until ctx is done.
@@ -270,10 +284,30 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 	sampler := NewSampler(d, nil)
 	go sampler.Run(ctx, 10*time.Second)
 
+	ops := &SiteOps{Store: sites.Store{Root: "/"}, Docker: d, Run: run.Exec{}, PanelHost: cfg.PanelHost}
+	// Reconcile often: until it runs, a recreated Caddy cannot reach the sites. It only
+	// inspects one network per site.
+	go func() {
+		t := time.NewTicker(10 * time.Second)
+		defer t.Stop()
+		for {
+			for _, err := range ops.Reconcile(ctx) {
+				logger.Printf("reconcile: %v", err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+		}
+	}()
+
 	s := &Server{
 		Docker:      d,
 		Audit:       NewAudit(cfg.AuditPath),
 		Sampler:     sampler,
+		Sites:       ops,
+		Jobs:        NewJobs(),
 		AllowedUIDs: map[uint32]bool{0: true, uint32(uid): true},
 		Log:         logger,
 	}
@@ -285,4 +319,173 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 func drain(r io.ReadCloser) {
 	_, _ = io.Copy(io.Discard, io.LimitReader(r, 64<<10))
 	r.Close()
+}
+
+// ---- sites ----
+
+func (s *Server) listSites(w http.ResponseWriter, r *http.Request) {
+	list, err := s.Sites.Store.List()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	byName := map[string]ContainerInfo{}
+	for _, c := range s.Sampler.Latest(r.Context()).Containers {
+		byName[c.Name] = c
+	}
+	out := make([]SiteStatus, len(list))
+	for i, sp := range list {
+		out[i].Spec = sp
+		if c, ok := byName[sp.Container()]; ok {
+			out[i].Container = &c
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) createSite(w http.ResponseWriter, r *http.Request) {
+	var req CreateSiteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "geçersiz istek")
+		return
+	}
+	spec, err := s.Sites.Check(req.Spec, req.Env)
+	if err != nil {
+		writeProblems(w, err)
+		return
+	}
+	id, err := s.Jobs.Start("site.create", spec.Name, req.Actor, func(ctx context.Context, p Progress) error {
+		return s.Sites.Create(ctx, spec, req.Env, p)
+	}, s.recordJob)
+	s.jobResponse(w, id, err)
+}
+
+func (s *Server) siteJob(kind string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		var req RestartRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(w, http.StatusBadRequest, "geçersiz istek")
+			return
+		}
+		if _, err := s.Sites.Store.Get(name); err != nil {
+			writeErr(w, http.StatusNotFound, err.Error())
+			return
+		}
+		id, err := s.Jobs.Start(kind, name, req.Actor, func(ctx context.Context, p Progress) error {
+			if kind == "site.remove" {
+				return s.Sites.Remove(ctx, name, p)
+			}
+			return s.Sites.Redeploy(ctx, name, p)
+		}, s.recordJob)
+		s.jobResponse(w, id, err)
+	}
+}
+
+func (s *Server) jobResponse(w http.ResponseWriter, id string, err error) {
+	if errors.Is(err, ErrBusy) {
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, JobResponse{JobID: id})
+}
+
+func (s *Server) recordJob(j Job) {
+	e := AuditEntry{Actor: j.Actor, Action: j.Kind, Target: j.Target, OK: j.Err == "", Detail: j.Err}
+	if err := s.Audit.Record(e); err != nil {
+		s.logf("audit: %v", err)
+	}
+	// Refresh the dashboard so the new or removed container shows up.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	s.Sampler.Sample(ctx)
+}
+
+func (s *Server) getJob(w http.ResponseWriter, r *http.Request) {
+	j, ok := s.Jobs.Get(r.PathValue("id"))
+	if !ok {
+		writeErr(w, http.StatusNotFound, "işlem bulunamadı (agent yeniden başlamış olabilir)")
+		return
+	}
+	writeJSON(w, http.StatusOK, j)
+}
+
+// ---- certificates ----
+
+func (s *Server) listCerts(w http.ResponseWriter, r *http.Request) {
+	certs, err := s.Sites.Store.Certs()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if certs == nil {
+		certs = []sites.Cert{}
+	}
+	writeJSON(w, http.StatusOK, certs)
+}
+
+func (s *Server) installCert(w http.ResponseWriter, r *http.Request) {
+	var req InstallCertRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "geçersiz istek")
+		return
+	}
+	c, err := s.Sites.InstallCert(r.Context(), req.Cert, req.Key)
+	s.record(AuditEntry{Actor: req.Actor, Action: "cert.install", Target: strings.Join(c.Names, " ")}, err)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, c)
+}
+
+func (s *Server) removeCert(w http.ResponseWriter, r *http.Request) {
+	var req RestartRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "geçersiz istek")
+		return
+	}
+	id := r.PathValue("id")
+	err := s.Sites.RemoveCert(r.Context(), id)
+	s.record(AuditEntry{Actor: req.Actor, Action: "cert.remove", Target: id}, err)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) serverInfo(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, publicAddrs())
+}
+
+// publicAddrs lists public addresses of this host, for DNS instructions.
+func publicAddrs() ServerInfo {
+	var info ServerInfo
+	addrs, _ := net.InterfaceAddrs()
+	for _, a := range addrs {
+		ipn, ok := a.(*net.IPNet)
+		if !ok || !ipn.IP.IsGlobalUnicast() || ipn.IP.IsPrivate() {
+			continue
+		}
+		if ipn.IP.To4() != nil {
+			info.IPv4 = append(info.IPv4, ipn.IP.String())
+		} else {
+			info.IPv6 = append(info.IPv6, ipn.IP.String())
+		}
+	}
+	return info
+}
+
+func writeProblems(w http.ResponseWriter, err error) {
+	var ve *sites.ValidationError
+	if errors.As(err, &ve) {
+		writeJSON(w, http.StatusUnprocessableEntity, errorResponse{Error: "site tanımında sorunlar var", Problems: ve.Problems})
+		return
+	}
+	writeErr(w, http.StatusInternalServerError, err.Error())
 }

@@ -1,0 +1,42 @@
+{{template "top" .}}
+<section>
+  <h1>Sertifikalar</h1>
+  {{with .Data.Err}}<p class="error">{{.}}</p>{{end}}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Kapsadığı adlar</th><th>Veren</th><th>Bitiş</th><th></th></tr></thead>
+    <tbody>
+    {{range .Data.Certs}}
+      <tr>
+        <td class="mono small">{{range $i, $n := .Names}}{{if $i}}<br>{{end}}{{$n}}{{end}}</td>
+        <td class="small">{{.Issuer}}</td>
+        <td>{{ts .NotAfter}}</td>
+        <td><a href="/certs/{{.ID}}/remove">Sil</a></td>
+      </tr>
+    {{else}}
+      <tr><td colspan="4" class="muted">Henüz sertifika yok.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="form-page">
+  <h2 class="section">Cloudflare Origin sertifikası ekle</h2>
+  <ol class="steps">
+    <li>Cloudflare → alan adı (örn. enisparta.com) → <strong>SSL/TLS → Origin Server → Create Certificate</strong></li>
+    <li>"Generate private key and CSR with Cloudflare", anahtar türü RSA, adlar: <span class="mono">*.alanadi.com</span> ve <span class="mono">alanadi.com</span>, süre 15 yıl → Create</li>
+    <li>Gösterilen <strong>Origin Certificate</strong> ve <strong>Private Key</strong>'i aşağıya yapıştır. Private key Cloudflare'de bir daha gösterilmez; istersen Vaultwarden'a da kaydet.</li>
+  </ol>
+  <form method="post" action="/certs" class="wide">
+    <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+    <label>Origin Certificate
+      <textarea name="cert" rows="8" class="mono" required placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+    </label>
+    <label>Private Key
+      <textarea name="key" rows="8" class="mono" required placeholder="-----BEGIN PRIVATE KEY-----" autocomplete="off"></textarea>
+    </label>
+    <button type="submit">Yükle</button>
+  </form>
+</section>
+{{template "bottom" .}}

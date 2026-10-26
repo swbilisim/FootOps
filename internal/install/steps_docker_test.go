@@ -310,3 +310,21 @@ func TestCoreStackCheck(t *testing.T) {
 		t.Error("missing container not detected")
 	}
 }
+
+func TestCoreFilesReloadsCaddyOnChange(t *testing.T) {
+	h, f := newTestHost(t, nil)
+	s := coreFilesStep{h, core.Config{MongoCacheGB: 0.5}, &Notes{}}
+	if err := s.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if f.ran("docker exec footops-caddy caddy reload") {
+		t.Error("reload on first install (Caddy is not running yet)")
+	}
+	put(t, h, core.CaddyfilePath, "# older version\n")
+	if err := s.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !f.ran("docker exec footops-caddy caddy reload") {
+		t.Error("changed Caddyfile not reloaded")
+	}
+}

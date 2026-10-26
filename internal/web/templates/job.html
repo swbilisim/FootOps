@@ -1,0 +1,20 @@
+{{template "top" .}}
+<section>
+  {{with .Data.Err}}<p class="error">{{.}}</p>{{end}}
+  {{with .Data.J}}
+  <h1>{{if eq .Kind "site.create"}}Site oluşturuluyor{{else if eq .Kind "site.remove"}}Site kaldırılıyor{{else}}Yeniden dağıtılıyor{{end}}: {{.Target}}</h1>
+  <p class="muted">
+    {{if not .Done}}Sürüyor… (sayfa kendiliğinden yenilenir){{else if .Err}}<span class="bad">Başarısız</span>{{else}}<span class="ok">Tamamlandı</span>{{end}}
+    · başlama {{ts .Started}}
+  </p>
+  <pre class="logs">{{range .Steps}}{{.}}
+{{end}}</pre>
+  {{if .Done}}
+  <p class="links">
+    {{if and (not .Err) (ne .Kind "site.remove")}}<a href="/sites/{{.Target}}">Siteye git</a>{{end}}
+    <a href="/sites">Siteler</a>
+  </p>
+  {{end}}
+  {{end}}
+</section>
+{{template "bottom" .}}
