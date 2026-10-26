@@ -80,17 +80,30 @@ func TestResumeAsksPasswordOnlyIfNotSet(t *testing.T) {
 	}
 }
 
-func TestStepsOrderEndsWithSSHHardening(t *testing.T) {
-	steps := Steps(Host{}, validAnswers(), confirmWith(true))
-	if steps[len(steps)-1].Name() != "ssh-hardening" {
-		t.Errorf("last step = %s", steps[len(steps)-1].Name())
-	}
+func TestStepsOrder(t *testing.T) {
+	steps := Steps(Host{}, validAnswers(), confirmWith(true), &Notes{})
 	pos := map[string]int{}
 	for i, s := range steps {
+		if _, dup := pos[s.Name()]; dup {
+			t.Errorf("duplicate step name %s", s.Name())
+		}
 		pos[s.Name()] = i
 	}
-	if pos["packages"] > pos["fail2ban"] || pos["admin-user"] > pos["ssh-hardening"] || pos["firewall"] > pos["ssh-hardening"] {
-		t.Errorf("bad order: %v", pos)
+	before := [][2]string{
+		{"packages", "fail2ban"},        // fail2ban/ufw are installed by packages
+		{"admin-user", "ssh-hardening"}, // never lock out before the new user exists
+		{"firewall", "ssh-hardening"},
+		{"fail2ban", "ssh-hardening"},
+		{"ssh-hardening", "docker-repo"}, // root login closed before long downloads
+		{"docker-repo", "docker"},
+		{"docker", "docker-daemon"},
+		{"docker-daemon", "core-files"},
+		{"core-files", "core-stack"},
+	}
+	for _, b := range before {
+		if pos[b[0]] >= pos[b[1]] {
+			t.Errorf("%s must run before %s: %v", b[0], b[1], pos)
+		}
 	}
 }
 
@@ -124,5 +137,29 @@ func TestWaitForCloudInitSkipsWhenNotRunning(t *testing.T) {
 	}
 	if f.ran("timeout") {
 		t.Error("waited for a cloud-init that is not running")
+	}
+}
+
+// secretStep reports a secret and then fails, like core-files followed by a failing core-stack.
+type secretStep struct {
+	fakeStep
+	notes *Notes
+}
+
+func (s *secretStep) Apply(context.Context) error {
+	s.notes.Add("secret-value")
+	return errors.New("later failure")
+}
+
+func TestSecretsShownEvenWhenRunFails(t *testing.T) {
+	notes := &Notes{}
+	p, out := prompter("")
+	o := Options{Prompt: p, Out: io.Discard}
+	func() {
+		defer printSecrets(o, notes)
+		_, _ = Run(ctx, []Step{&secretStep{fakeStep{name: "s"}, notes}}, io.Discard)
+	}()
+	if !strings.Contains(out.String(), "secret-value") {
+		t.Error("secret generated before a failure was never shown")
 	}
 }

@@ -58,7 +58,30 @@ plain text on the server.
 | admin-user | Creates the admin user in `sudo`, installs your SSH keys; sudo with password (recommended) or without |
 | firewall | UFW: deny incoming, allow 22/80/443 |
 | fail2ban | sshd jail in aggressive mode (counts failed key logins), 5 tries in 10 min → 1 h ban |
-| ssh-hardening | No root login, no passwords, only the admin user — **applied last, after you confirm** key login works from a second terminal; the config is validated with `sshd -t`/`sshd -T` and rolled back if invalid or overridden |
+| ssh-hardening | No root login, no passwords, only the admin user — **applied only after you confirm** key login works from a second terminal; the config is validated with `sshd -t`/`sshd -T` and rolled back if invalid or overridden |
+| docker-repo | Docker's official apt repository; the signing key is installed only if its fingerprint is Docker's |
+| docker | Docker Engine + Compose plugin (refuses to replace distribution `docker.io` packages) |
+| docker-daemon | `daemon.json`: rotated `local` logs, `live-restore`, `no-new-privileges`, room for 256 networks; validated with `dockerd --validate` before restart |
+| core-files | `/srv/core`: Caddyfile, `compose.yaml`, MongoDB root password (generated once, never regenerated) |
+| core-stack | Starts Caddy and MongoDB and waits until both are healthy; re-runs only when their config changed |
+
+The security baseline runs first, so root login is closed before the long Docker
+downloads start.
+
+### Core services
+
+| Service | Image | Exposed |
+|---|---|---|
+| Caddy | `caddy:2.11.7-alpine`, all capabilities dropped except binding 80/443 | 80, 443 |
+| MongoDB | `mongo:7.0.45`, auth on, WiredTiger cache sized from RAM | `127.0.0.1:27017` only |
+
+Caddy never requests certificates (`auto_https off`): sites use Cloudflare Origin CA
+certificates, so the origin only needs to be trusted by Cloudflare.
+
+MongoDB is reachable from your machine through an SSH tunnel (Robo 3T, Compass):
+SSH to the admin user, then connect to `localhost:27017` as `root` with auth database
+`admin`. The password is shown once at the end of the install and stored in
+`/etc/footops/secrets/mongo.env` (root only).
 
 Every step checks the current state first, so the installer can be re-run at any time:
 completed steps are skipped and an interrupted run continues where it stopped.
