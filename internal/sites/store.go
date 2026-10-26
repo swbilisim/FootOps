@@ -82,6 +82,16 @@ func (st Store) Get(name string) (Spec, error) {
 // Conflicts reports names and domains already used by other sites, and a panel host
 // that must never be served by a site.
 func (st Store) Conflicts(s Spec, reservedHosts ...string) ([]string, error) {
+	return st.conflicts(s, true, reservedHosts)
+}
+
+// UpdateConflicts is Conflicts for a site that already exists: its own name and domains
+// are not conflicts.
+func (st Store) UpdateConflicts(s Spec, reservedHosts ...string) ([]string, error) {
+	return st.conflicts(s, false, reservedHosts)
+}
+
+func (st Store) conflicts(s Spec, isNew bool, reservedHosts []string) ([]string, error) {
 	all, err := st.List()
 	if err != nil {
 		return nil, err
@@ -89,7 +99,7 @@ func (st Store) Conflicts(s Spec, reservedHosts ...string) ([]string, error) {
 	var p []string
 	used := map[string]string{}
 	for _, o := range all {
-		if o.Name == s.Name {
+		if isNew && o.Name == s.Name {
 			p = append(p, fmt.Sprintf("%q adında bir site zaten var (%s grubunda)", s.Name, o.Group))
 		}
 		for _, d := range o.Domains {
@@ -116,6 +126,15 @@ func (st Store) WriteMeta(s Spec) error {
 		return err
 	}
 	return writeFileAtomic(st.path(filepath.Join(s.Dir(), MetaFile)), b, 0o600)
+}
+
+// Env reads the site's current environment back from its compose file.
+func (st Store) Env(s Spec) (map[string]string, error) {
+	b, err := os.ReadFile(st.path(filepath.Join(s.Dir(), ComposeFile)))
+	if err != nil {
+		return nil, err
+	}
+	return ParseComposeEnv(string(b))
 }
 
 // WriteCompose writes compose.yaml atomically (0600: it holds secrets).

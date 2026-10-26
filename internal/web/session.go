@@ -55,7 +55,13 @@ func (s *sessions) create(user, via, email string) *Session {
 
 // get returns a copy of the session if it exists and has not expired, and refreshes its
 // idle timer.
-func (s *sessions) get(id string) (Session, bool) {
+func (s *sessions) get(id string) (Session, bool) { return s.lookup(id, true) }
+
+// peek is get without refreshing the idle timer: a page updating itself in the
+// background is not the operator doing something.
+func (s *sessions) peek(id string) (Session, bool) { return s.lookup(id, false) }
+
+func (s *sessions) lookup(id string, touch bool) (Session, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess, ok := s.m[id]
@@ -67,7 +73,9 @@ func (s *sessions) get(id string) (Session, bool) {
 		delete(s.m, id)
 		return Session{}, false
 	}
-	sess.LastSeen = now
+	if touch {
+		sess.LastSeen = now
+	}
 	return *sess, true
 }
 

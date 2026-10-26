@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/swbilisim/FootOps/internal/docker"
+	"github.com/swbilisim/FootOps/internal/history"
 	"github.com/swbilisim/FootOps/internal/run"
 	"github.com/swbilisim/FootOps/internal/sites"
 )
@@ -23,6 +24,7 @@ import (
 const (
 	DefaultSocket    = "/run/footops/agent.sock"
 	DefaultAuditPath = "/var/lib/footops/audit.jsonl"
+	DefaultHistory   = "/var/lib/footops/metrics.json"
 	PanelUser        = "footops"
 
 	maxBody        = 1 << 20 // site environments can be large
@@ -86,6 +88,8 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) error {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/overview", s.overview)
+	mux.HandleFunc("GET /v1/history", s.history)
+	mux.HandleFunc("GET /v1/alerts", s.alerts)
 	mux.HandleFunc("GET /v1/containers/{name}/logs", s.logs)
 	mux.HandleFunc("POST /v1/containers/{name}/restart", s.restart)
 	mux.HandleFunc("GET /v1/audit", s.auditTail)
@@ -93,6 +97,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/sites", s.listSites)
 	mux.HandleFunc("POST /v1/sites", s.createSite)
 	mux.HandleFunc("POST /v1/sites/{name}/redeploy", s.siteJob("site.redeploy"))
+	mux.HandleFunc("POST /v1/sites/{name}/update", s.updateSite)
 	mux.HandleFunc("POST /v1/sites/{name}/remove", s.siteJob("site.remove"))
 	mux.HandleFunc("GET /v1/jobs/{id}", s.getJob)
 	mux.HandleFunc("GET /v1/certs", s.listCerts)
@@ -117,6 +122,48 @@ func (s *Server) checkPeer(next http.Handler) http.Handler {
 
 func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.Sampler.Latest(r.Context()))
+}
+
+func (s *Server) history(w http.ResponseWriter, r *http.Request) {
+	rng, ok := history.RangeByName(r.URL.Query().Get("range"))
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "geçersiz aralık")
+		return
+	}
+	name := r.URL.Query().Get("container")
+	if name != "" && !docker.ValidName(name) {
+		writeErr(w, http.StatusBadRequest, "geçersiz container adı")
+		return
+	}
+	now := time.Now().UTC()
+	out := History{Range: rng.Name, Step: int64(rng.Step / time.Second), From: now.Add(-rng.Span), To: now,
+		Containers: map[string][]history.Point{}}
+	if s.Sampler.History == nil {
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	var series map[string][]history.Point
+	if name != "" {
+		series = s.Sampler.History.Query(rng, now, name)
+	} else {
+		series = s.Sampler.History.Query(rng, now)
+	}
+	for k, v := range series {
+		if k == history.HostKey {
+			out.Host = v
+		} else {
+			out.Containers[k] = v
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) alerts(w http.ResponseWriter, r *http.Request) {
+	list := []Alert{}
+	if s.Sampler.Alerts != nil {
+		list = s.Sampler.Alerts.Active()
+	}
+	writeJSON(w, http.StatusOK, list)
 }
 
 func (s *Server) logs(w http.ResponseWriter, r *http.Request) {
@@ -245,10 +292,11 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 
 // Config is the agent's runtime configuration.
 type Config struct {
-	Socket    string
-	AuditPath string
-	PanelUser string
-	PanelHost string // refused as a site domain
+	Socket      string
+	AuditPath   string
+	HistoryPath string // metric history; empty keeps none
+	PanelUser   string
+	PanelHost   string // refused as a site domain
 }
 
 // Main runs the agent until ctx is done.
@@ -281,10 +329,26 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 	}
 
 	d := docker.New(docker.DefaultSocket)
+	ops := &SiteOps{Store: sites.Store{Root: "/"}, Docker: d, Run: run.Exec{}, PanelHost: cfg.PanelHost}
 	sampler := NewSampler(d, nil)
+	sampler.Alerts = NewAlerter()
+	sampler.Alerts.Certs = ops.Store.Certs
+	if cfg.HistoryPath != "" {
+		h, err := history.Load(cfg.HistoryPath, time.Now())
+		if err != nil {
+			logger.Printf("metrik geçmişi okunamadı, boş başlıyor: %v", err)
+		}
+		sampler.History = h
+		go keepHistory(ctx, h, cfg.HistoryPath, logger)
+		// The last save runs before Main returns; the process exits right after.
+		defer func() {
+			if err := h.Save(cfg.HistoryPath); err != nil {
+				logger.Printf("metrik geçmişi kaydedilemedi: %v", err)
+			}
+		}()
+	}
 	go sampler.Run(ctx, 10*time.Second)
 
-	ops := &SiteOps{Store: sites.Store{Root: "/"}, Docker: d, Run: run.Exec{}, PanelHost: cfg.PanelHost}
 	// Reconcile often: until it runs, a recreated Caddy cannot reach the sites. It only
 	// inspects one network per site.
 	go func() {
@@ -313,6 +377,22 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 	}
 	logger.Printf("agent listening on %s (uid %d allowed)", cfg.Socket, uid)
 	return s.Serve(ctx, l)
+}
+
+// keepHistory saves the metric history every few minutes until ctx is done.
+func keepHistory(ctx context.Context, h *history.Store, path string, logger *log.Logger) {
+	t := time.NewTicker(5 * time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := h.Save(path); err != nil {
+				logger.Printf("metrik geçmişi kaydedilemedi: %v", err)
+			}
+		}
+	}
 }
 
 // drain discards a response body so the connection can be reused.
@@ -382,6 +462,36 @@ func (s *Server) siteJob(kind string) http.HandlerFunc {
 	}
 }
 
+// updateSite validates at once (so the form can show problems) and then applies the
+// change as a job. The audit log records what changed, by name only.
+func (s *Server) updateSite(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	var req UpdateSiteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "geçersiz istek")
+		return
+	}
+	changes, err := s.Sites.CheckUpdate(name, req.Update)
+	if errors.Is(err, sites.ErrNotFound) {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if err != nil {
+		writeProblems(w, err)
+		return
+	}
+	summary := strings.Join(changes, "; ")
+	id, err := s.Jobs.Start("site.update", name, req.Actor, func(ctx context.Context, p Progress) error {
+		return s.Sites.Update(ctx, name, req.Update, p)
+	}, func(j Job) {
+		if j.Err != "" {
+			summary += " — hata: " + j.Err
+		}
+		s.recordJobDetail(j, summary)
+	})
+	s.jobResponse(w, id, err)
+}
+
 func (s *Server) jobResponse(w http.ResponseWriter, id string, err error) {
 	if errors.Is(err, ErrBusy) {
 		writeErr(w, http.StatusConflict, err.Error())
@@ -394,8 +504,10 @@ func (s *Server) jobResponse(w http.ResponseWriter, id string, err error) {
 	writeJSON(w, http.StatusAccepted, JobResponse{JobID: id})
 }
 
-func (s *Server) recordJob(j Job) {
-	e := AuditEntry{Actor: j.Actor, Action: j.Kind, Target: j.Target, OK: j.Err == "", Detail: j.Err}
+func (s *Server) recordJob(j Job) { s.recordJobDetail(j, j.Err) }
+
+func (s *Server) recordJobDetail(j Job, detail string) {
+	e := AuditEntry{Actor: j.Actor, Action: j.Kind, Target: j.Target, OK: j.Err == "", Detail: detail}
 	if err := s.Audit.Record(e); err != nil {
 		s.logf("audit: %v", err)
 	}

@@ -4,32 +4,66 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-{{if .Data.Refresh}}<meta http-equiv="refresh" content="{{.Data.Refresh}}">{{end}}
+<meta name="color-scheme" content="light dark">
+{{if .Data.Refresh}}<noscript><meta http-equiv="refresh" content="{{.Data.Refresh}}"></noscript>{{end}}
 <title>{{if .Title}}{{.Title}} · {{end}}FootOps {{.Server}}</title>
 <link rel="stylesheet" href="/static/style.css">
+<script src="/static/live.js" defer></script>
 </head>
 <body>
 <header class="bar">
   <a class="brand" href="/">FootOps <span>{{.Server}}</span></a>
   {{if .Session.ID}}
-  <nav>
-    <a href="/">Sunucu</a>
-    <a href="/sites">Siteler</a>
-    <a href="/certs">Sertifikalar</a>
-    <a href="/audit">Denetim kaydı</a>
+  <nav aria-label="Ana menü">
+    <a href="/"{{if eq .Nav "server"}} aria-current="page"{{end}}>Sunucu<span data-live-id="alert-count">{{with .Alerts.List}} <span class="count{{if not $.Alerts.Bad}} warn{{end}}" title="{{len .}} uyarı">{{len .}}</span>{{end}}</span></a>
+    <a href="/sites"{{if eq .Nav "sites"}} aria-current="page"{{end}}>Siteler</a>
+    <a href="/certs"{{if eq .Nav "certs"}} aria-current="page"{{end}}>Sertifikalar</a>
+    <a href="/audit"{{if eq .Nav "audit"}} aria-current="page"{{end}}>Denetim kaydı</a>
+  </nav>
+  <div class="user">
+    <span>{{.Session.User}}</span>
     <form method="post" action="/logout" class="inline">
       <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
-      <button type="submit" class="link">Çıkış ({{.Session.User}})</button>
+      <button type="submit" class="link">Çıkış</button>
     </form>
-  </nav>
+  </div>
   {{end}}
 </header>
-<main>
-{{if .Flash}}<p class="flash">{{.Flash}}</p>{{end}}
+<main{{with .Data.Live}} data-live="{{.}}"{{end}}>
+{{if .Flash}}<p class="flash" role="status">{{.Flash}}</p>{{end}}
 {{end}}
 
 {{define "bottom"}}
 </main>
 </body>
 </html>
+{{end}}
+
+{{/* Container state as a labelled badge: never color alone. */}}
+{{define "state"}}<span class="badge {{status .}}">{{stateTR .State}}{{with .Health}} · {{healthTR .}}{{end}}</span>{{if .OOMKilled}} <span class="badge bad">bellek doldu (OOM)</span>{{end}}{{end}}
+
+{{/* Time-range selector and the charts below it. */}}
+{{define "history"}}
+<div class="toolbar">
+  <h2>{{.Title}}</h2>
+  <div class="segmented" role="group" aria-label="Zaman aralığı">
+    {{range .Ranges}}<a href="?range={{.Name}}"{{if .Selected}} aria-current="true"{{end}}>{{.Label}}</a>{{end}}
+  </div>
+</div>
+{{with .Err}}<p class="notice warn">Geçmiş alınamadı: {{.}}</p>{{end}}
+{{if not .Skip}}<div class="chart-grid" data-live-id="charts">{{range .Charts}}{{.}}{{end}}</div>{{end}}
+{{end}}
+
+{{/* Shown by live.js while the page updates itself. */}}
+{{define "live"}}<span class="live-status small" data-live-status hidden></span>{{end}}
+
+{{/* Current numbers of one container. */}}
+{{define "facts"}}
+<dl class="facts" data-live-id="facts">
+  <div><dt>Durum</dt><dd>{{template "state" .}}</dd></div>
+  <div><dt>CPU</dt><dd>{{if eq .State "running"}}%{{f1 .CPUPercent}}{{else}}—{{end}}</dd></div>
+  <div><dt>RAM</dt><dd>{{if eq .State "running"}}{{bytes .MemUsage}}{{else}}—{{end}}</dd></div>
+  <div><dt>Yeniden başlama</dt><dd>{{.RestartCount}}</dd></div>
+  <div><dt>Başlama</dt><dd>{{since .StartedAt}}</dd></div>
+</dl>
 {{end}}

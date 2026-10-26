@@ -1,0 +1,19 @@
+{{template "top" .}}
+{{$n := .Data.Name}}
+<div class="page-head">
+  <div>
+    <h1>{{$n}}</h1>
+    <span class="sub muted small">{{with .Data.C}}{{.Image}}{{if .Project}} · proje {{.Project}}{{end}}{{else}}container{{end}}</span>
+  </div>
+  <div class="actions-row">
+    {{with .Data.Site}}<a class="btn secondary small" href="/sites/{{.}}">Site</a>{{end}}
+    <a class="btn secondary small" href="/containers/{{$n}}/logs">Loglar</a>
+    <a class="btn secondary small" href="/containers/{{$n}}/restart">Yeniden başlat</a>
+  </div>
+</div>
+<p>{{template "live"}}</p>
+{{with .Data.Err}}<p class="notice bad">Agent'a ulaşılamadı: {{.}}</p>{{end}}
+{{with .Data.C}}{{template "facts" .}}{{else}}{{if not .Data.Err}}<p class="notice warn">Şu an bu adla bir container yok; aşağıda varsa geçmişi görünür.</p>{{end}}{{end}}
+{{template "history" .Data.History}}
+{{template "bottom" .}}
+

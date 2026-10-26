@@ -1,7 +1,7 @@
 {{template "top" .}}
 <section class="login">
   <h1>Giriş</h1>
-  {{with .Data.Error}}<p class="error">{{.}}</p>{{end}}
+  {{with .Data.Error}}<p class="notice bad" role="alert">{{.}}</p>{{end}}
   <form method="post" action="/login" autocomplete="on">
     <input type="hidden" name="csrf" value="{{.Data.CSRF}}">
     <label>Kullanıcı adı

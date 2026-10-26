@@ -1,6 +1,6 @@
 {{template "top" .}}
 <section class="form-page">
-  <h1>Yeni site</h1>
+  <div class="page-head"><h1>Yeni site</h1></div>
   {{with .Data.Problems}}
   <div class="problems">
     <strong>Düzeltilmesi gerekenler:</strong>
@@ -15,7 +15,7 @@
       <legend>Site</legend>
       <div class="row">
         <label>Proje adı
-          <input name="name" value="{{$f.Name}}" required pattern="[a-z][a-z0-9-]{1,30}[a-z0-9]" placeholder="enisparta">
+          <input name="name" value="{{$f.Name}}" required pattern="[a-z][a-z0-9-]{1,30}[a-z0-9]" placeholder="ornek-site">
           <span class="hint">küçük harf, rakam, tire. Container ve veritabanı adı da bu olur.</span>
         </label>
         <label>Grup
@@ -26,7 +26,7 @@
         </label>
       </div>
       <label>Alan adları
-        <textarea name="domains" rows="3" required placeholder="enisparta.com&#10;www.enisparta.com">{{$f.Domains}}</textarea>
+        <textarea name="domains" rows="3" required placeholder="ornek.com&#10;www.ornek.com">{{$f.Domains}}</textarea>
         <span class="hint">her satıra bir tane; hepsi için yüklenmiş bir Cloudflare Origin sertifikası olmalı</span>
       </label>
     </fieldset>
@@ -34,7 +34,7 @@
     <fieldset>
       <legend>Uygulama</legend>
       <label>Docker imajı
-        <input name="image" value="{{$f.Image}}" required placeholder="ghcr.io/swbilisim/enisparta:main">
+        <input name="image" value="{{$f.Image}}" required placeholder="ghcr.io/kullanici/ornek-site:main">
         <span class="hint">GitHub Actions'ın GHCR'ye yüklediği imaj (şimdilik public olmalı)</span>
       </label>
       <div class="row">
@@ -70,8 +70,10 @@
       </label>
     </fieldset>
 
-    <button type="submit">Siteyi oluştur</button>
-    <a href="/sites">Vazgeç</a>
+    <div class="form-actions">
+      <button type="submit">Siteyi oluştur</button>
+      <a class="btn secondary" href="/sites">Vazgeç</a>
+    </div>
   </form>
 </section>
 {{template "bottom" .}}

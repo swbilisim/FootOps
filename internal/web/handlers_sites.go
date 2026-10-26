@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/swbilisim/FootOps/internal/agent"
 	"github.com/swbilisim/FootOps/internal/docker"
@@ -30,11 +31,11 @@ func defaultSiteForm() siteForm {
 
 func (s *Server) sitesList(w http.ResponseWriter, r *http.Request) {
 	list, err := s.agent.Sites(r.Context())
-	s.render(w, r, "sites", map[string]any{"Sites": list, "Err": errString(err)})
+	s.render(w, r, "sites", map[string]any{"Title": "Siteler", "Sites": list, "Err": errString(err)})
 }
 
 func (s *Server) siteNew(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, "site_new", map[string]any{"F": defaultSiteForm(), "Groups": sites.Groups})
+	s.render(w, r, "site_new", map[string]any{"Title": "Yeni site", "F": defaultSiteForm(), "Groups": sites.Groups})
 }
 
 func (s *Server) siteCreate(w http.ResponseWriter, r *http.Request) {
@@ -77,13 +78,88 @@ func (s *Server) siteCreate(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/jobs/"+id, http.StatusSeeOther)
 }
 
+// siteEditForm is the edit form, kept as strings like siteForm. Env holds only new or
+// changed variables: current values are never sent to the browser.
+type siteEditForm struct {
+	Domains, Image, Port, MemoryMB, DataMount, Env string
+	Unset                                          map[string]bool
+}
+
+func editFormFor(sp sites.Spec) siteEditForm {
+	return siteEditForm{Domains: strings.Join(sp.Domains, "\n"), Image: sp.Image, Port: strconv.Itoa(sp.Port),
+		MemoryMB: strconv.Itoa(sp.MemoryMB), DataMount: sp.DataMount, Unset: map[string]bool{}}
+}
+
+func (s *Server) siteEdit(w http.ResponseWriter, r *http.Request) {
+	st, ok := s.findSite(w, r)
+	if !ok {
+		return
+	}
+	s.render(w, r, "site_edit", map[string]any{"Title": st.Spec.Name + " düzenle", "S": st.Spec, "F": editFormFor(st.Spec)})
+}
+
+func (s *Server) siteUpdate(w http.ResponseWriter, r *http.Request) {
+	st, ok := s.findSite(w, r)
+	if !ok {
+		return
+	}
+	f := siteEditForm{
+		Domains: r.PostFormValue("domains"), Image: r.PostFormValue("image"), Port: r.PostFormValue("port"),
+		MemoryMB: r.PostFormValue("memory_mb"), DataMount: r.PostFormValue("data_mount"), Env: r.PostFormValue("env"),
+		Unset: map[string]bool{},
+	}
+	for _, k := range r.PostForm["unset"] {
+		f.Unset[k] = true
+	}
+	again := func(problems ...string) {
+		s.renderStatus(w, r, http.StatusUnprocessableEntity, "site_edit",
+			map[string]any{"Title": st.Spec.Name + " düzenle", "S": st.Spec, "F": f, "Problems": problems})
+	}
+	set, err := sites.ParseEnv(f.Env)
+	if err != nil {
+		again("Ortam değişkenleri: " + err.Error())
+		return
+	}
+	port, perr := strconv.Atoi(strings.TrimSpace(f.Port))
+	mem, merr := strconv.Atoi(strings.TrimSpace(f.MemoryMB))
+	if perr != nil || merr != nil {
+		again("Port ve bellek sayı olmalı")
+		return
+	}
+	u := agent.SiteUpdate{Domains: strings.Fields(f.Domains), Image: f.Image, Port: port, MemoryMB: mem,
+		DataMount: f.DataMount, Set: set, Unset: sites.SortedKeys(boolKeys(f.Unset))}
+	id, err := s.agent.UpdateSite(r.Context(), st.Spec.Name, agent.UpdateSiteRequest{Update: u, Actor: s.actor(r)})
+	if err != nil {
+		var ae *agent.Error
+		if errors.As(err, &ae) && len(ae.Problems) > 0 {
+			again(ae.Problems...)
+			return
+		}
+		again(err.Error())
+		return
+	}
+	http.Redirect(w, r, "/jobs/"+id, http.StatusSeeOther)
+}
+
+// boolKeys turns a set into a map SortedKeys accepts.
+func boolKeys(m map[string]bool) map[string]string {
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		if v {
+			out[k] = ""
+		}
+	}
+	return out
+}
+
 func (s *Server) site(w http.ResponseWriter, r *http.Request) {
 	st, ok := s.findSite(w, r)
 	if !ok {
 		return
 	}
 	srv, _ := s.agent.Server(r.Context())
-	s.render(w, r, "site", map[string]any{"S": st, "Server": srv})
+	s.render(w, r, "site", map[string]any{"Title": st.Spec.Name, "S": st, "Server": srv, "Live": liveEvery,
+		"History": s.containerHistory(r, st.Spec.Container(), uint64(st.Spec.MemoryMB)<<20)})
 }
 
 // findSite looks the site up via the agent; it writes a 404 if there is none.
@@ -146,9 +222,9 @@ func (s *Server) job(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	j, err := s.agent.Job(r.Context(), id)
-	data := map[string]any{"J": j, "Err": errString(err)}
+	data := map[string]any{"Title": "İşlem", "J": j, "Err": errString(err)}
 	if err == nil && !j.Done {
-		data["Refresh"] = 2
+		data["Refresh"], data["Live"] = 2, 2
 	}
 	s.render(w, r, "job", data)
 }
@@ -157,7 +233,7 @@ func (s *Server) job(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) certs(w http.ResponseWriter, r *http.Request) {
 	list, err := s.agent.Certs(r.Context())
-	s.render(w, r, "certs", map[string]any{"Certs": list, "Err": errString(err)})
+	s.render(w, r, "certs", map[string]any{"Title": "Sertifikalar", "Certs": list, "Err": errString(err), "Now": time.Now()})
 }
 
 func (s *Server) certInstall(w http.ResponseWriter, r *http.Request) {

@@ -28,12 +28,15 @@ var assets embed.FS
 // AgentAPI is what the web process may ask the agent for.
 type AgentAPI interface {
 	Overview(ctx context.Context) (agent.Overview, error)
+	History(ctx context.Context, rng, container string) (agent.History, error)
+	Alerts(ctx context.Context) ([]agent.Alert, error)
 	Restart(ctx context.Context, name string, a agent.Actor) error
 	Logs(ctx context.Context, name string, tail int) ([]string, error)
 	RecordAuth(ctx context.Context, e agent.AuditEntry) error
 	AuditTail(ctx context.Context, limit int) ([]agent.AuditEntry, error)
 	Sites(ctx context.Context) ([]agent.SiteStatus, error)
 	CreateSite(ctx context.Context, req agent.CreateSiteRequest) (string, error)
+	UpdateSite(ctx context.Context, name string, req agent.UpdateSiteRequest) (string, error)
 	SiteJob(ctx context.Context, name, verb string, a agent.Actor) (string, error)
 	Job(ctx context.Context, id string) (agent.Job, error)
 	Certs(ctx context.Context) ([]sites.Cert, error)
@@ -107,6 +110,7 @@ func (s *Server) Handler(via string) http.Handler {
 	mux.HandleFunc("POST /login", s.login)
 	mux.Handle("POST /logout", s.requireSession(s.logout))
 	mux.Handle("GET /{$}", s.requireSession(s.dashboard))
+	mux.Handle("GET /containers/{name}", s.requireSession(s.container))
 	mux.Handle("GET /containers/{name}/logs", s.requireSession(s.logs))
 	mux.Handle("GET /containers/{name}/restart", s.requireSession(s.restartConfirm))
 	mux.Handle("POST /containers/{name}/restart", s.requireSession(s.restart))
@@ -115,6 +119,8 @@ func (s *Server) Handler(via string) http.Handler {
 	mux.Handle("GET /sites/new", s.requireSession(s.siteNew))
 	mux.Handle("POST /sites/new", s.requireSession(s.siteCreate))
 	mux.Handle("GET /sites/{name}", s.requireSession(s.site))
+	mux.Handle("GET /sites/{name}/edit", s.requireSession(s.siteEdit))
+	mux.Handle("POST /sites/{name}/edit", s.requireSession(s.siteUpdate))
 	mux.Handle("GET /sites/{name}/redeploy", s.requireSession(s.siteConfirm("redeploy")))
 	mux.Handle("POST /sites/{name}/redeploy", s.requireSession(s.siteAction("redeploy")))
 	mux.Handle("GET /sites/{name}/remove", s.requireSession(s.siteConfirm("remove")))
@@ -138,8 +144,9 @@ func (s *Server) Handler(via string) http.Handler {
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		// No JavaScript at all: the strictest policy that still renders the pages.
-		h.Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+		// Only the panel's own files: one small script (live updates), no inline script or
+		// style, no third parties.
+		h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")

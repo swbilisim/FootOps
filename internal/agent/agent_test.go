@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/swbilisim/FootOps/internal/docker"
+	"github.com/swbilisim/FootOps/internal/history"
 	"github.com/swbilisim/FootOps/internal/sysinfo"
 )
 
@@ -67,6 +68,14 @@ func fakeSystem(prev sysinfo.CPUTimes) (SystemMetrics, sysinfo.CPUTimes, error) 
 // Linux-only; uid is what the "kernel" reports for every client.
 func startAgent(t *testing.T, uid uint32) (*Client, *fakeDocker, *Audit) {
 	t.Helper()
+	c, s := startServer(t, uid)
+	return c, s.Docker.(*fakeDocker), s.Audit
+}
+
+// startServer starts an agent; setup runs before it serves, so tests can swap parts
+// without racing the handlers.
+func startServer(t *testing.T, uid uint32, setup ...func(*Server)) (*Client, *Server) {
+	t.Helper()
 	dir, err := os.MkdirTemp("", "fo") // short path: unix socket paths are limited to ~104 bytes
 	if err != nil {
 		t.Fatal(err)
@@ -86,11 +95,14 @@ func startAgent(t *testing.T, uid uint32) (*Client, *fakeDocker, *Audit) {
 		AllowedUIDs: map[uint32]bool{0: true, 999: true},
 		PeerUID:     func(net.Conn) (uint32, error) { return uid, nil },
 	}
+	for _, f := range setup {
+		f(s)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { _ = s.Serve(ctx, l); close(done) }()
 	t.Cleanup(func() { cancel(); <-done })
-	return NewClient(sock), d, audit
+	return NewClient(sock), s
 }
 
 var ctx = context.Background()
@@ -202,5 +214,40 @@ func TestAuditSanitisesAndRotates(t *testing.T) {
 	}
 	if e, _ := a.Tail(5); len(e) != 1 {
 		t.Errorf("after rotation: %d entries", len(e))
+	}
+}
+
+func TestHistory(t *testing.T) {
+	c, _ := startServer(t, 999)
+	if h, err := c.History(ctx, "24h", ""); err != nil || len(h.Host) != 0 || h.Containers == nil {
+		t.Fatalf("without a store: %+v, %v", h, err)
+	}
+
+	store := history.New()
+	c, _ = startServer(t, 999, func(s *Server) { s.Sampler.History = store })
+	start := time.Now().Add(-5 * time.Minute)
+	for i := 0; i < 30; i++ {
+		o := Overview{
+			SampledAt:  start.Add(time.Duration(i) * 10 * time.Second),
+			System:     SystemMetrics{CPUPercent: 20, MemTotal: 4 << 30, MemUsed: 1 << 30},
+			Containers: []ContainerInfo{{Name: "web", State: "running", CPUPercent: 5, MemUsage: 100 << 20}, {Name: "old", State: "exited"}},
+		}
+		store.Add(o.SampledAt, o.samples())
+	}
+	h, err := c.History(ctx, "1h", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.Step != 60 || len(h.Host) == 0 || h.Host[0].CPU != 20 || len(h.Containers) != 1 || len(h.Containers["web"]) == 0 {
+		t.Errorf("history = %+v", h)
+	}
+	if h, err := c.History(ctx, "1h", "web"); err != nil || len(h.Host) != 0 || len(h.Containers) != 1 {
+		t.Errorf("one container: %+v, %v", h, err)
+	}
+	if _, err := c.History(ctx, "1y", ""); err == nil {
+		t.Error("unknown range accepted")
+	}
+	if _, err := c.History(ctx, "1h", "../x"); err == nil {
+		t.Error("bad container name accepted")
 	}
 }

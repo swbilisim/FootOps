@@ -19,6 +19,7 @@ import (
 	"github.com/swbilisim/FootOps/internal/auth"
 	"github.com/swbilisim/FootOps/internal/cfaccess"
 	"github.com/swbilisim/FootOps/internal/config"
+	"github.com/swbilisim/FootOps/internal/history"
 	"github.com/swbilisim/FootOps/internal/sites"
 )
 
@@ -32,6 +33,8 @@ type fakeAgent struct {
 	createErr error
 	siteJobs  []string
 	jobDone   bool
+	alerts    []agent.Alert
+	updates   []agent.UpdateSiteRequest
 }
 
 func (f *fakeAgent) Overview(context.Context) (agent.Overview, error) {
@@ -43,6 +46,21 @@ func (f *fakeAgent) Overview(context.Context) (agent.Overview, error) {
 		},
 	}, nil
 }
+
+func (f *fakeAgent) History(_ context.Context, rng, name string) (agent.History, error) {
+	now := time.Now()
+	h := agent.History{Range: rng, Step: 60, From: now.Add(-time.Hour), To: now, Containers: map[string][]history.Point{}}
+	for i := 0; i < 30; i++ {
+		p := history.Point{T: now.Add(time.Duration(i-30) * time.Minute).Unix(), CPU: float64(i), CPUMax: float64(i + 1), Mem: uint64(i) << 20, MemMax: uint64(i+1) << 20}
+		if name == "" {
+			h.Host = append(h.Host, p)
+		}
+		h.Containers["footops-mongo"] = append(h.Containers["footops-mongo"], p)
+	}
+	return h, nil
+}
+
+func (f *fakeAgent) Alerts(context.Context) ([]agent.Alert, error) { return f.alerts, nil }
 
 func (f *fakeAgent) Restart(_ context.Context, name string, a agent.Actor) error {
 	f.mu.Lock()
@@ -78,6 +96,16 @@ func (f *fakeAgent) CreateSite(_ context.Context, req agent.CreateSiteRequest) (
 	return "job123", nil
 }
 
+func (f *fakeAgent) UpdateSite(_ context.Context, name string, req agent.UpdateSiteRequest) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.updates = append(f.updates, req)
+	if f.createErr != nil {
+		return "", f.createErr
+	}
+	return "job789", nil
+}
+
 func (f *fakeAgent) SiteJob(_ context.Context, name, verb string, a agent.Actor) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -101,7 +129,7 @@ func (f *fakeAgent) InstallCert(_ context.Context, c, k string, _ agent.Actor) (
 func (f *fakeAgent) RemoveCert(context.Context, string, agent.Actor) error { return nil }
 
 func (f *fakeAgent) Server(context.Context) (agent.ServerInfo, error) {
-	return agent.ServerInfo{IPv4: []string{"2.31.81.202"}}, nil
+	return agent.ServerInfo{IPv4: []string{"203.0.113.10"}}, nil
 }
 
 type fakeAccess struct{ email string }
@@ -165,6 +193,7 @@ type client struct {
 	token  string
 	hc     *http.Client
 	origin string
+	header http.Header // added to every request
 }
 
 func (e *env) client(t *testing.T, tunnel bool) *client {
@@ -193,6 +222,9 @@ func (c *client) do(method, path string, form url.Values) (*http.Response, strin
 	if form != nil {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Origin", c.origin)
+	}
+	for k, v := range c.header {
+		req.Header[k] = v
 	}
 	if c.token != "" {
 		req.Header.Set(cfaccess.Header, c.token)

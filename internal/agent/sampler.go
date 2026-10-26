@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/swbilisim/FootOps/internal/docker"
+	"github.com/swbilisim/FootOps/internal/history"
 	"github.com/swbilisim/FootOps/internal/sysinfo"
 )
 
@@ -29,6 +30,10 @@ type SystemReader func(prev sysinfo.CPUTimes) (SystemMetrics, sysinfo.CPUTimes, 
 type Sampler struct {
 	docker     DockerAPI
 	readSystem SystemReader
+	// History receives every periodic sample when set.
+	History *history.Store
+	// Alerts evaluates every periodic sample when set.
+	Alerts *Alerter
 
 	mu      sync.RWMutex
 	last    Overview
@@ -46,8 +51,17 @@ func NewSampler(d DockerAPI, rs SystemReader) *Sampler {
 func (s *Sampler) Run(ctx context.Context, every time.Duration) {
 	t := time.NewTicker(every)
 	defer t.Stop()
-	for {
-		s.Sample(ctx)
+	for first := true; ; first = false {
+		o := s.Sample(ctx)
+		// The first host CPU reading has nothing to compare with and is always 0.
+		if !first {
+			if s.History != nil {
+				s.History.Add(o.SampledAt, o.samples())
+			}
+			if s.Alerts != nil {
+				s.Alerts.Evaluate(o, o.SampledAt)
+			}
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -118,6 +132,20 @@ func (s *Sampler) Sample(ctx context.Context) Overview {
 	s.last, s.prevCPU = o, cpu
 	s.mu.Unlock()
 	return o
+}
+
+// samples converts an overview into history readings: the host and running containers.
+func (o Overview) samples() map[string]history.Sample {
+	m := map[string]history.Sample{}
+	if o.System.MemTotal > 0 {
+		m[history.HostKey] = history.Sample{CPU: o.System.CPUPercent, Mem: o.System.MemUsed, Swap: o.System.SwapUsed}
+	}
+	for _, c := range o.Containers {
+		if c.State == "running" && c.Name != "" {
+			m[c.Name] = history.Sample{CPU: c.CPUPercent, Mem: c.MemUsage}
+		}
+	}
+	return m
 }
 
 func (s *Sampler) container(ctx context.Context, c docker.Container) (ContainerInfo, error) {

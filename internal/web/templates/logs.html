@@ -1,15 +1,30 @@
 {{template "top" .}}
-<section>
-  <h1>{{.Data.Name}} <span class="muted small">son {{.Data.Tail}} satır</span></h1>
-  <p class="links">
-    {{$n := .Data.Name}}
-    <a href="/containers/{{$n}}/logs?tail=100">100</a>
-    <a href="/containers/{{$n}}/logs?tail=500">500</a>
-    <a href="/containers/{{$n}}/logs?tail=1000">1000</a>
-    · <a href="/containers/{{$n}}/logs?tail={{.Data.Tail}}">Yenile</a>
-  </p>
-  {{with .Data.Err}}<p class="error">{{.}}</p>{{end}}
-  <pre class="logs">{{range .Data.Lines}}{{.}}
-{{end}}</pre>
-</section>
+{{$n := .Data.Name}}
+<div class="page-head">
+  <div>
+    <h1>{{$n}} <span class="muted">logları</span></h1>
+    <span class="sub muted small" data-live-id="log-count">{{if .Data.Filtered}}son {{.Data.Total}} satırdan {{len .Data.Lines}} tanesi filtreye uyuyor{{else}}son {{.Data.Total}} satır{{end}}</span>
+  </div>
+  <div class="actions-row">
+    {{if .Data.LiveOn}}{{template "live"}}<a class="btn secondary small" href="{{.Data.PauseURL}}">Durdur</a>{{else}}<a class="btn secondary small" href="{{.Data.LiveURL}}">Canlı takip et</a>{{end}}
+    <a class="btn secondary small" href="/containers/{{$n}}">Container</a>
+  </div>
+</div>
+<form method="get" action="/containers/{{$n}}/logs" class="searchbar" role="search">
+  <input type="search" name="q" value="{{.Data.Q}}" maxlength="200" placeholder="Ara (büyük/küçük harf fark etmez)" aria-label="Loglarda ara">
+  <select name="level" aria-label="Seviye">
+    <option value=""{{if eq .Data.Level ""}} selected{{end}}>Tüm satırlar</option>
+    <option value="warn"{{if eq .Data.Level "warn"}} selected{{end}}>Uyarı ve hata</option>
+    <option value="error"{{if eq .Data.Level "error"}} selected{{end}}>Sadece hata</option>
+  </select>
+  <select name="tail" aria-label="Satır sayısı">
+    {{range .Data.Tails}}<option value="{{.}}"{{if eq . $.Data.Tail}} selected{{end}}>son {{.}} satır</option>{{end}}
+  </select>
+  {{if not .Data.LiveOn}}<input type="hidden" name="live" value="0">{{end}}
+  <button type="submit">Filtrele</button>
+  {{if .Data.Filtered}}<a href="/containers/{{$n}}/logs?tail={{.Data.Tail}}">Temizle</a>{{end}}
+</form>
+{{with .Data.Err}}<p class="notice bad">{{.}}</p>{{end}}
+<pre class="logs" data-live-id="logs" data-follow tabindex="0">{{range .Data.Lines}}<span class="{{.Level}}">{{range .Parts}}{{if .Hit}}<mark>{{.Text}}</mark>{{else}}{{.Text}}{{end}}{{end}}</span>
+{{else}}<span class="muted">{{if .Data.Filtered}}Filtreye uyan satır yok.{{else}}Log yok.{{end}}</span>{{end}}</pre>
 {{template "bottom" .}}

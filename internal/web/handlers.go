@@ -17,6 +17,12 @@ import (
 	"github.com/swbilisim/FootOps/internal/docker"
 )
 
+// liveHeader marks the background requests of live.js: "full", or "1" for a light
+// refresh that leaves the charts out.
+const liveHeader = "X-FootOps-Live"
+
+func lightRefresh(r *http.Request) bool { return r.Header.Get(liveHeader) == "1" }
+
 const (
 	maxForm       = 8 << 10 // login
 	maxAuthedForm = 1 << 20 // site environments, certificates
@@ -40,7 +46,11 @@ func (s *Server) requireSession(h http.HandlerFunc) http.Handler {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
-		sess, ok := s.sessions.get(c.Value)
+		lookup := s.sessions.get
+		if r.Method == http.MethodGet && r.Header.Get(liveHeader) != "" {
+			lookup = s.sessions.peek
+		}
+		sess, ok := lookup(c.Value)
 		if !ok || sess.Via != ri.via || sess.AccessEmail != ri.accessEmail {
 			if ok {
 				s.sessions.delete(sess.ID)
@@ -82,7 +92,7 @@ func (s *Server) actor(r *http.Request) agent.Actor {
 
 func (s *Server) audit(w http.ResponseWriter, r *http.Request) {
 	entries, err := s.agent.AuditTail(r.Context(), 200)
-	s.render(w, r, "audit", map[string]any{"Entries": entries, "Err": errString(err)})
+	s.render(w, r, "audit", map[string]any{"Title": "Denetim kaydı", "Entries": entries, "Err": errString(err)})
 }
 
 func (s *Server) recordAuth(r *http.Request, user, action string, ok bool, detail string) {
@@ -180,26 +190,6 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 
 // ---- pages ----
 
-func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
-	o, err := s.agent.Overview(r.Context())
-	// Plain meta refresh: the panel ships no JavaScript.
-	s.render(w, r, "dashboard", map[string]any{"O": o, "Err": errString(err), "Refresh": 15})
-}
-
-func (s *Server) logs(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	if !docker.ValidName(name) {
-		http.NotFound(w, r)
-		return
-	}
-	tail := 200
-	if n, err := strconv.Atoi(r.URL.Query().Get("tail")); err == nil && (n == 100 || n == 500 || n == 1000) {
-		tail = n
-	}
-	lines, err := s.agent.Logs(r.Context(), name, tail)
-	s.render(w, r, "logs", map[string]any{"Name": name, "Tail": tail, "Lines": lines, "Err": errString(err)})
-}
-
 // restartConfirm is a separate page so a stray click never restarts anything (and the
 // panel needs no JavaScript for a confirm dialog).
 func (s *Server) restartConfirm(w http.ResponseWriter, r *http.Request) {
@@ -208,7 +198,7 @@ func (s *Server) restartConfirm(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	s.render(w, r, "restart", map[string]any{"Name": name})
+	s.render(w, r, "restart", map[string]any{"Title": name, "Name": name})
 }
 
 func (s *Server) restart(w http.ResponseWriter, r *http.Request) {
@@ -230,10 +220,26 @@ func (s *Server) restart(w http.ResponseWriter, r *http.Request) {
 
 type page struct {
 	Title   string
+	Nav     string // highlighted menu entry
 	Session Session
 	Server  string
 	Flash   string
+	Alerts  alertSummary
 	Data    map[string]any
+}
+
+// alertSummary is shown on every page: a count in the menu, the list on the dashboard.
+type alertSummary struct {
+	List []agent.Alert
+	Bad  bool // at least one serious alert
+}
+
+// navOf maps a template to its menu entry.
+var navOf = map[string]string{
+	"dashboard": "server", "container": "server", "logs": "server", "restart": "server",
+	"sites": "sites", "site": "sites", "site_new": "sites", "site_edit": "sites", "site_confirm": "sites", "job": "sites",
+	"certs": "certs", "cert_remove": "certs",
+	"audit": "audit",
 }
 
 func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, data map[string]any) {
@@ -244,8 +250,13 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 // leaves a half-written page behind a 200 status.
 func (s *Server) renderStatus(w http.ResponseWriter, r *http.Request, status int, name string, data map[string]any) {
 	sess := current(r)
-	p := page{Session: sess, Server: s.cfg.ServerCode, Data: data}
+	p := page{Session: sess, Server: s.cfg.ServerCode, Nav: navOf[name], Data: data}
+	p.Title, _ = data["Title"].(string)
 	if sess.ID != "" {
+		p.Alerts = s.alerts(r)
+	}
+	// A background refresh must not swallow a flash message meant for a real page load.
+	if sess.ID != "" && r.Header.Get(liveHeader) == "" {
 		p.Flash = s.sessions.takeFlash(sess.ID)
 	}
 	var buf bytes.Buffer
@@ -257,6 +268,24 @@ func (s *Server) renderStatus(w http.ResponseWriter, r *http.Request, status int
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	_, _ = buf.WriteTo(w)
+}
+
+// alerts asks the agent for active alerts; an unreachable agent shows up elsewhere on the
+// page, so a failure here just means no badge.
+func (s *Server) alerts(r *http.Request) alertSummary {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	list, err := s.agent.Alerts(ctx)
+	if err != nil {
+		return alertSummary{}
+	}
+	sum := alertSummary{List: list}
+	for _, a := range list {
+		if a.Level == "bad" {
+			sum.Bad = true
+		}
+	}
+	return sum
 }
 
 func errString(err error) string {
@@ -313,16 +342,27 @@ var funcs = template.FuncMap{
 			return fmt.Sprintf("%d gün önce", int(d.Hours()/24))
 		}
 	},
-	"ts": func(t time.Time) string { return t.Local().Format("2006-01-02 15:04:05") },
-	"level": func(p float64) string {
-		switch {
-		case p >= 90:
-			return "bad"
-		case p >= 75:
-			return "warn"
-		default:
-			return "ok"
+	"ts":      func(t time.Time) string { return t.Local().Format("2006-01-02 15:04:05") },
+	"datefmt": func(t time.Time) string { return t.Local().Format("02.01.2006") },
+	"daysLeft": func(t, now time.Time) int {
+		return int(math.Floor(t.Sub(now).Hours() / 24))
+	},
+	"level": levelOf,
+	"meter": meter,
+	// limited reports whether a container has a memory limit of its own; without one
+	// Docker reports the host's memory.
+	"limited": func(limit, host uint64) bool { return limit > 0 && (host == 0 || limit < host) },
+	"stateTR": func(s string) string {
+		if t, ok := stateNames[s]; ok {
+			return t
 		}
+		return s
+	},
+	"healthTR": func(s string) string {
+		if t, ok := healthNames[s]; ok {
+			return t
+		}
+		return s
 	},
 	"status": func(c agent.ContainerInfo) string {
 		switch {
@@ -337,3 +377,8 @@ var funcs = template.FuncMap{
 		}
 	},
 }
+
+var (
+	stateNames  = map[string]string{"running": "çalışıyor", "exited": "durdu", "restarting": "yeniden başlıyor", "created": "oluşturuldu", "paused": "duraklatıldı", "dead": "ölü", "removing": "siliniyor"}
+	healthNames = map[string]string{"healthy": "sağlıklı", "unhealthy": "sağlıksız", "starting": "başlıyor"}
+)

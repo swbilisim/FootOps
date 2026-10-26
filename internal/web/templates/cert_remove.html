@@ -4,8 +4,10 @@
   <p>Bu sertifikayı kullanan bir site varsa silme reddedilir.</p>
   <form method="post" action="/certs/{{.Data.ID}}/remove">
     <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
-    <button type="submit" class="danger">Sil</button>
-    <a href="/certs">Vazgeç</a>
+    <div class="form-actions">
+      <button type="submit" class="danger">Sil</button>
+      <a class="btn secondary" href="/certs">Vazgeç</a>
+    </div>
   </form>
 </section>
 {{template "bottom" .}}

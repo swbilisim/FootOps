@@ -7,6 +7,7 @@ package agent
 import (
 	"time"
 
+	"github.com/swbilisim/FootOps/internal/history"
 	"github.com/swbilisim/FootOps/internal/sites"
 )
 
@@ -47,6 +48,17 @@ type ContainerInfo struct {
 	MemLimit     uint64    `json:"mem_limit"`
 }
 
+// History is the metric history for one range. Points are Step seconds wide; Host is
+// the server itself, Containers are keyed by container name.
+type History struct {
+	Range      string                     `json:"range"`
+	Step       int64                      `json:"step"`
+	From       time.Time                  `json:"from"`
+	To         time.Time                  `json:"to"`
+	Host       []history.Point            `json:"host,omitempty"`
+	Containers map[string][]history.Point `json:"containers"`
+}
+
 // Actor identifies who asked for an action; the web process fills it in.
 type Actor struct {
 	User string `json:"user"`
@@ -83,6 +95,13 @@ type CreateSiteRequest struct {
 	Spec  sites.Spec        `json:"spec"`
 	Env   map[string]string `json:"env"`
 	Actor Actor             `json:"actor"`
+}
+
+// UpdateSiteRequest changes an existing site. Set may hold secrets: it is written to the
+// site's compose file and never logged.
+type UpdateSiteRequest struct {
+	Update SiteUpdate `json:"update"`
+	Actor  Actor      `json:"actor"`
 }
 
 type JobResponse struct {

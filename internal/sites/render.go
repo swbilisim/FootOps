@@ -61,6 +61,33 @@ networks:
 	return b.String()
 }
 
+// ParseComposeEnv reads the environment back from a compose file written by Compose, so
+// a site can be changed without the panel ever holding its secrets. It only understands
+// that exact layout and refuses anything else rather than guess.
+func ParseComposeEnv(text string) (map[string]string, error) {
+	env := map[string]string{}
+	in := false
+	for i, line := range strings.Split(text, "\n") {
+		if line == "    environment:" {
+			in = true
+			continue
+		}
+		if !in {
+			continue
+		}
+		if !strings.HasPrefix(line, "      ") {
+			break // end of the block
+		}
+		k, v, ok := strings.Cut(strings.TrimPrefix(line, "      "), ": ")
+		var s string
+		if !ok || !reEnvKey.MatchString(k) || json.Unmarshal([]byte(v), &s) != nil {
+			return nil, fmt.Errorf("compose.yaml satır %d anlaşılamadı (elle mi değiştirildi?)", i+1)
+		}
+		env[k] = strings.ReplaceAll(s, "$$", "$")
+	}
+	return env, nil
+}
+
 // CaddyBlock renders the site's Caddy configuration.
 //
 // Addresses carry an explicit https:// so Caddy listens on 443 only (automatic HTTPS

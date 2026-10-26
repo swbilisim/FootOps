@@ -6,8 +6,8 @@ One command turns a fresh Ubuntu server into a hardened Docker host (swap, SSH h
 firewall, Docker, Caddy, MongoDB) and installs a small web panel for adding, deploying and
 monitoring sites.
 
-> **Status:** early development. The installer and panel work end to end in tests;
-> they have not run on a production server yet.
+> **Status:** early development. The installer and panel work end to end in tests and
+> run on a first production server; expect changes.
 
 ## Design in short
 
@@ -104,7 +104,7 @@ confirmed with a live code) and starts two services:
 
 | Service | Runs as | Can do |
 |---|---|---|
-| `footops-agent` | root | A fixed, validated API on `/run/footops/agent.sock`: overview, container logs, restart, audit log. Accepts connections only from root and the `footops` uid, checked with `SO_PEERCRED`. |
+| `footops-agent` | root | A fixed, validated API on `/run/footops/agent.sock`: overview, metric history, alerts, container logs, restart, sites, audit log. Accepts connections only from root and the `footops` uid, checked with `SO_PEERCRED`. |
 | `footops-web` | `footops`, no capabilities, seccomp, `ProtectSystem=strict` | Login and pages. Cannot see `/srv`, secrets, Docker's socket or data, or the audit log; asks the agent for everything. |
 
 Access:
@@ -122,8 +122,28 @@ Login is username + argon2id password + TOTP (RFC 6238, codes cannot be replayed
 single-use recovery code. Five failed logins lock the account (5 min, doubling); logins
 are also rate-limited per IP and overall. Sessions are server-side, bound to the
 listener and Cloudflare identity, idle-expire after 30 minutes and end after 12 hours.
-Every form has a CSRF token and cross-site requests are refused. The UI ships no
-JavaScript, so the Content-Security-Policy is `default-src 'none'`.
+Every form has a CSRF token and cross-site requests are refused. The only script is the
+panel's own `live.js` (no inline script or style, no third parties): the
+Content-Security-Policy is `default-src 'none'; script-src 'self'; connect-src 'self';
+style-src 'self'`. Pages work without it and fall back to a plain refresh.
+
+What the panel shows:
+
+- **Server and containers:** CPU, RAM, swap, disk, load and per-container CPU, memory
+  (against its limit), restarts and health, updating themselves every 10 seconds.
+  Background refreshes do not count as activity, so an open tab still logs out after 30
+  idle minutes.
+- **History:** the agent keeps one point per minute for a day and one per hour for a
+  week (`/var/lib/footops/metrics.json`, saved every 5 minutes and on shutdown). Charts
+  for the server and for each container answer "which container made memory grow".
+  They are drawn on the server as SVG; hovering shows the values, and a table under
+  each chart lists now, average and peak.
+- **Alerts:** disk ≥ 80%, RAM ≥ 90%, swap ≥ 50%, CPU ≥ 90% for 5 minutes, a FootOps
+  container that is not running, unhealthy, restarting, OOM-killed or near its memory
+  limit, restarts within 15 minutes, certificates expiring within 30 days. Short spikes
+  (under 30 seconds) are ignored. Alerts show as a count in the menu and a list on the
+  dashboard.
+- **Logs:** last 200-2000 lines, search (highlighted), warning/error filter, live follow.
 
 Every login, logout, restart and recovery command is written to
 `/var/lib/footops/audit.jsonl` and shown in the panel.
@@ -154,6 +174,12 @@ undoes everything if any step fails:
 | ready | waits until the app accepts connections on its port; if it crashes, the error shows its last log lines |
 | Caddy | site block with the matching certificate, `caddy validate` before `caddy reload` |
 | check | an HTTPS request through Caddy must reach the app |
+
+**Edit** changes domains, image, port, memory limit, the persistent directory and
+environment variables. Current values are never sent to the browser: variables are added,
+replaced or removed by name, and the audit log records only names. The database variable
+stays managed by FootOps. If the site does not come back with the new settings, the old
+files are restored and the old container is started again.
 
 **Redeploy** pulls the image again and recreates the container if it changed.
 **Remove** (confirmed by typing the name) takes the site offline and moves its files to

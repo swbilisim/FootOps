@@ -5,22 +5,26 @@
   <h1>{{$s.Name}} kaldırılsın mı?</h1>
   <p>Site yayından kalkar: Caddy'den çıkarılır, container ve ağı silinir.</p>
   <p><strong>Silinmeyenler:</strong> dosyalar <span class="mono">/srv/{{$s.Group}}/_removed/</span> altına taşınır{{if $s.Database}}, MongoDB veritabanı <span class="mono">{{$s.Name}}</span> olduğu gibi kalır{{end}}.</p>
-  {{with .Data.Problem}}<p class="error">{{.}}</p>{{end}}
+  {{with .Data.Problem}}<p class="notice bad">{{.}}</p>{{end}}
   <form method="post" action="/sites/{{$s.Name}}/remove">
     <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
     <label>Onaylamak için site adını yaz: <strong>{{$s.Name}}</strong>
       <input name="confirm" autocomplete="off" required>
     </label>
-    <button type="submit" class="danger">Kaldır</button>
-    <a href="/sites/{{$s.Name}}">Vazgeç</a>
+    <div class="form-actions">
+      <button type="submit" class="danger">Kaldır</button>
+      <a class="btn secondary" href="/sites/{{$s.Name}}">Vazgeç</a>
+    </div>
   </form>
   {{else}}
   <h1>{{$s.Name}} yeniden dağıtılsın mı?</h1>
   <p><span class="mono">{{$s.Image}}</span> imajı tekrar indirilir; değiştiyse container yenisiyle değiştirilir (birkaç saniye kesinti).</p>
   <form method="post" action="/sites/{{$s.Name}}/redeploy">
     <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
-    <button type="submit">Yeniden dağıt</button>
-    <a href="/sites/{{$s.Name}}">Vazgeç</a>
+    <div class="form-actions">
+      <button type="submit">Yeniden dağıt</button>
+      <a class="btn secondary" href="/sites/{{$s.Name}}">Vazgeç</a>
+    </div>
   </form>
   {{end}}
 </section>

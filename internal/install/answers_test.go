@@ -78,7 +78,7 @@ func TestValidators(t *testing.T) {
 		{"../etc/passwd", false}, {"Europe/../../x", false}, {"", false},
 	})
 	run("ValidateFQDN", ValidateFQDN, []tc{
-		{"panel-h1.swbilisim.com", true}, {"a.b", true}, {"localhost", false}, {"https://x.com", false},
+		{"panel.example.com", true}, {"a.b", true}, {"localhost", false}, {"https://x.com", false},
 		{"Panel.example.com", false}, {"a..b", false}, {"-a.com", false},
 	})
 	run("ValidateClock", ValidateClock, []tc{

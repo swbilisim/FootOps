@@ -4,8 +4,10 @@
   <p>Container durdurulup tekrar başlatılır; birkaç saniye erişilemeyebilir.</p>
   <form method="post" action="/containers/{{.Data.Name}}/restart">
     <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
-    <button type="submit" class="danger">Evet, yeniden başlat</button>
-    <a href="/">Vazgeç</a>
+    <div class="form-actions">
+      <button type="submit" class="danger">Evet, yeniden başlat</button>
+      <a class="btn secondary" href="/containers/{{.Data.Name}}">Vazgeç</a>
+    </div>
   </form>
 </section>
 {{template "bottom" .}}

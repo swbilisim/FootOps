@@ -1,20 +1,24 @@
 {{template "top" .}}
-<section>
-  {{with .Data.Err}}<p class="error">{{.}}</p>{{end}}
-  {{with .Data.J}}
-  <h1>{{if eq .Kind "site.create"}}Site oluşturuluyor{{else if eq .Kind "site.remove"}}Site kaldırılıyor{{else}}Yeniden dağıtılıyor{{end}}: {{.Target}}</h1>
-  <p class="muted">
-    {{if not .Done}}Sürüyor… (sayfa kendiliğinden yenilenir){{else if .Err}}<span class="bad">Başarısız</span>{{else}}<span class="ok">Tamamlandı</span>{{end}}
-    · başlama {{ts .Started}}
-  </p>
-  <pre class="logs">{{range .Steps}}{{.}}
+{{with .Data.Err}}<p class="notice bad">{{.}}</p>{{end}}
+{{with .Data.J}}
+<div class="page-head">
+  <div>
+    <h1>{{if eq .Kind "site.create"}}Site oluşturuluyor{{else if eq .Kind "site.remove"}}Site kaldırılıyor{{else if eq .Kind "site.update"}}Site güncelleniyor{{else}}Yeniden dağıtılıyor{{end}}: {{.Target}}</h1>
+    <span class="sub muted small">başlama {{ts .Started}}</span>
+  </div>
+  <div data-live-id="job-state">
+    {{if not .Done}}<span class="badge warn">sürüyor… sayfa kendiliğinden yenilenir</span>{{else if .Err}}<span class="badge bad">başarısız</span>{{else}}<span class="badge ok">tamamlandı</span>{{end}}
+  </div>
+</div>
+<pre class="logs" data-live-id="job-steps">{{range .Steps}}{{.}}
 {{end}}</pre>
-  {{if .Done}}
-  <p class="links">
-    {{if and (not .Err) (ne .Kind "site.remove")}}<a href="/sites/{{.Target}}">Siteye git</a>{{end}}
-    <a href="/sites">Siteler</a>
-  </p>
-  {{end}}
-  {{end}}
-</section>
+<div data-live-id="job-links">
+{{if .Done}}
+<div class="form-actions">
+  {{if and (not .Err) (ne .Kind "site.remove")}}<a class="btn" href="/sites/{{.Target}}">Siteye git</a>{{end}}
+  <a class="btn secondary" href="/sites">Siteler</a>
+</div>
+{{end}}
+</div>
+{{end}}
 {{template "bottom" .}}

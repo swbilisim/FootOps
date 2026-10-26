@@ -1,69 +1,95 @@
 {{template "top" .}}
-{{with .Data.Err}}<p class="error">Agent'a ulaşılamadı: {{.}}</p>{{end}}
-{{with .Data.O}}
-{{with .System}}
-<section class="cards">
+{{$o := .Data.O}}
+<div class="page-head">
+  <div>
+    <h1>Sunucu</h1>
+    <span class="sub muted small" data-live-id="updated">{{with $o.System.Hostname}}{{.}} · {{end}}ölçüm {{since $o.SampledAt}}</span>
+  </div>
+  {{template "live"}}
+</div>
+{{with .Data.Err}}<p class="notice bad">Agent'a ulaşılamadı: {{.}}</p>{{end}}
+<section data-live-id="alerts" aria-label="Uyarılar">
+{{with .Alerts.List}}
+<ul class="alerts">
+  {{range .}}
+  <li class="{{.Level}}">
+    <span class="badge {{.Level}}">{{if eq .Level "bad"}}ciddi{{else}}uyarı{{end}}</span>
+    <div>
+      <strong>{{if .Link}}<a href="{{.Link}}">{{.Title}}</a>{{else}}{{.Title}}{{end}}</strong>
+      {{with .Detail}}<span class="muted small">{{.}}</span>{{end}}
+    </div>
+    <span class="muted small nowrap">{{since .Since}}</span>
+  </li>
+  {{end}}
+</ul>
+{{end}}
+</section>
+
+{{with $o.System}}{{if .MemTotal}}
+<section class="cards" aria-label="Anlık durum" data-live-id="cards">
   <div class="card">
     <h2>CPU</h2>
     <p class="big {{level .CPUPercent}}">%{{f1 .CPUPercent}}</p>
-    <p class="muted">load {{f2 .Load1}} · {{f2 .Load5}} · {{f2 .Load15}}</p>
+    {{meter .CPUPercent}}
+    <p class="muted">yük {{f2 .Load1}} · {{f2 .Load5}} · {{f2 .Load15}}</p>
   </div>
   <div class="card">
     <h2>RAM</h2>
     {{$p := pct .MemUsed .MemTotal}}
     <p class="big {{level $p}}">%{{f1 $p}}</p>
+    {{meter $p}}
     <p class="muted">{{bytes .MemUsed}} / {{bytes .MemTotal}}</p>
   </div>
   <div class="card">
     <h2>Swap</h2>
-    {{$p := pct .SwapUsed .SwapTotal}}
+    {{if .SwapTotal}}{{$p := pct .SwapUsed .SwapTotal}}
     <p class="big {{level $p}}">%{{f1 $p}}</p>
+    {{meter $p}}
     <p class="muted">{{bytes .SwapUsed}} / {{bytes .SwapTotal}}</p>
+    {{else}}<p class="big muted">yok</p>{{end}}
   </div>
   <div class="card">
     <h2>Disk</h2>
     {{$p := pct .DiskUsed .DiskTotal}}
     <p class="big {{level $p}}">%{{f1 $p}}</p>
+    {{meter $p}}
     <p class="muted">{{bytes .DiskUsed}} / {{bytes .DiskTotal}}</p>
   </div>
   <div class="card">
     <h2>Açık kalma</h2>
     <p class="big">{{dur .Uptime}}</p>
-    <p class="muted">{{.Hostname}}</p>
+    <p class="muted">son açılıştan beri</p>
   </div>
 </section>
-{{end}}
+{{end}}{{end}}
 
-<section>
-  <h1>Container'lar <span class="muted small">güncelleme: {{since .SampledAt}}</span></h1>
-  <div class="table-wrap">
-  <table>
-    <thead>
-      <tr><th></th><th>Ad</th><th>Proje</th><th>Durum</th><th>CPU</th><th>RAM</th><th>Restart</th><th>Başlama</th><th></th></tr>
-    </thead>
-    <tbody>
-    {{range .Containers}}
-      <tr>
-        <td><span class="dot {{status .}}" title="{{.State}} {{.Health}}"></span></td>
-        <td><strong>{{.Name}}</strong><br><span class="muted small">{{.Image}}</span></td>
-        <td>{{.Project}}</td>
-        <td>{{.State}}{{with .Health}} · {{.}}{{end}}{{if .OOMKilled}} · <span class="bad">OOM</span>{{end}}</td>
-        <td>{{if eq .State "running"}}%{{f1 .CPUPercent}}{{end}}</td>
-        <td>{{if eq .State "running"}}{{bytes .MemUsage}}{{if .MemLimit}} <span class="muted small">/ {{bytes .MemLimit}}</span>{{end}}{{end}}</td>
-        <td>{{.RestartCount}}</td>
-        <td>{{since .StartedAt}}</td>
-        <td class="actions">
-          <a href="/containers/{{.Name}}/logs">Loglar</a>
-          <a href="/containers/{{.Name}}/restart">Yeniden başlat</a>
-        </td>
-      </tr>
-    {{else}}
-      <tr><td colspan="9" class="muted">Container yok.</td></tr>
-    {{end}}
-    </tbody>
-  </table>
-  </div>
-  {{range .Errors}}<p class="muted small">⚠ {{.}}</p>{{end}}
-</section>
-{{end}}
+{{template "history" .Data.History}}
+
+<div class="toolbar"><h2>Container'lar</h2></div>
+<div class="table-wrap" data-live-id="containers">
+<table class="responsive">
+  <thead>
+    <tr><th>Ad</th><th>Durum</th><th class="num">CPU</th><th class="num">RAM</th><th class="num">Restart</th><th>Başlama</th><th></th></tr>
+  </thead>
+  <tbody>
+  {{range $o.Containers}}
+    <tr>
+      <td class="primary"><a href="/containers/{{.Name}}"><strong>{{.Name}}</strong></a><br><span class="muted small">{{.Image}}</span></td>
+      <td data-label="Durum">{{template "state" .}}</td>
+      <td data-label="CPU" class="num">{{if eq .State "running"}}%{{f1 .CPUPercent}}{{end}}</td>
+      <td data-label="RAM" class="num">{{if eq .State "running"}}{{bytes .MemUsage}}{{if limited .MemLimit $o.System.MemTotal}} <span class="muted small">/ {{bytes .MemLimit}}</span>{{end}}{{end}}</td>
+      <td data-label="Restart" class="num">{{.RestartCount}}</td>
+      <td data-label="Başlama" class="nowrap">{{since .StartedAt}}</td>
+      <td class="actions">
+        <a href="/containers/{{.Name}}/logs">Loglar</a>
+        <a href="/containers/{{.Name}}/restart">Yeniden başlat</a>
+      </td>
+    </tr>
+  {{else}}
+    <tr><td colspan="7" class="empty">Container yok. Kurulum çekirdek yığını (Caddy, MongoDB) başlattığında burada görünür.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{range $o.Errors}}<p class="muted small">⚠ {{.}}</p>{{end}}
 {{template "bottom" .}}

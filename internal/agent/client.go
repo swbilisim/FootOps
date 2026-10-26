@@ -81,6 +81,25 @@ func (c *Client) Overview(ctx context.Context) (Overview, error) {
 	return o, err
 }
 
+// History returns metric history for a range ("1h", "6h", "24h", "7d"). With a container
+// name it returns only that container.
+func (c *Client) History(ctx context.Context, rng, container string) (History, error) {
+	q := url.Values{"range": {rng}}
+	if container != "" {
+		q.Set("container", container)
+	}
+	var h History
+	err := c.call(ctx, http.MethodGet, "/v1/history?"+q.Encode(), nil, &h)
+	return h, err
+}
+
+// Alerts returns the active alerts, most severe first.
+func (c *Client) Alerts(ctx context.Context) ([]Alert, error) {
+	var out []Alert
+	err := c.call(ctx, http.MethodGet, "/v1/alerts", nil, &out)
+	return out, err
+}
+
 func (c *Client) Restart(ctx context.Context, name string, a Actor) error {
 	return c.call(ctx, http.MethodPost, "/v1/containers/"+url.PathEscape(name)+"/restart", RestartRequest{Actor: a}, nil)
 }
@@ -117,6 +136,13 @@ func (c *Client) CreateSite(ctx context.Context, req CreateSiteRequest) (string,
 func (c *Client) SiteJob(ctx context.Context, name, verb string, a Actor) (string, error) {
 	var r JobResponse
 	err := c.call(ctx, http.MethodPost, "/v1/sites/"+url.PathEscape(name)+"/"+verb, RestartRequest{Actor: a}, &r)
+	return r.JobID, err
+}
+
+// UpdateSite starts a site update job.
+func (c *Client) UpdateSite(ctx context.Context, name string, req UpdateSiteRequest) (string, error) {
+	var r JobResponse
+	err := c.call(ctx, http.MethodPost, "/v1/sites/"+url.PathEscape(name)+"/update", req, &r)
 	return r.JobID, err
 }
 

@@ -95,6 +95,8 @@ func (f *fakeNet) ContainerIP(_ context.Context, container, network string) (str
 }
 
 func (f *fakeNet) Inspect(_ context.Context, name string) (docker.Inspect, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	var in docker.Inspect
 	in.State.Running = f.running
 	in.RestartCount = f.restarts
@@ -114,6 +116,7 @@ type cmdRunner struct {
 	stdins []string
 	fail   map[string]error // command prefix -> error
 	out    map[string]string
+	hook   func(cmd string) // called for every command
 }
 
 func (r *cmdRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
@@ -125,6 +128,9 @@ func (r *cmdRunner) RunInput(_ context.Context, stdin, name string, args ...stri
 	defer r.mu.Unlock()
 	cmd := name + " " + strings.Join(args, " ")
 	r.calls = append(r.calls, cmd)
+	if r.hook != nil {
+		r.hook(cmd)
+	}
 	r.stdins = append(r.stdins, stdin)
 	out := ""
 	for p, o := range r.out {

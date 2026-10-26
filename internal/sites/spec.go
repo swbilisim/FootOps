@@ -138,7 +138,7 @@ func (s Spec) Validate(env map[string]string) error {
 		}
 	}
 	if !reImage.MatchString(s.Image) || strings.Contains(s.Image, "..") {
-		add("imaj adı geçersiz (örn. ghcr.io/swbilisim/enisparta:main)")
+		add("imaj adı geçersiz (örn. ghcr.io/kullanici/site:main)")
 	}
 	if s.Port < 1 || s.Port > 65535 {
 		add("uygulama portu 1-65535 arasında olmalı")

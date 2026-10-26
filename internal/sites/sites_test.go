@@ -205,8 +205,8 @@ func TestStoreListAndConflicts(t *testing.T) {
 		t.Fatalf("list = %+v, %v", list, err)
 	}
 	b := validSpec()
-	b.Name, b.Domains = "other", []string{"www.enisparta.com", "panel-h1.swbilisim.com"}
-	p, _ := st.Conflicts(b, "panel-h1.swbilisim.com")
+	b.Name, b.Domains = "other", []string{"www.enisparta.com", "panel.example.com"}
+	p, _ := st.Conflicts(b, "panel.example.com")
 	if len(p) != 2 {
 		t.Errorf("conflicts = %v", p)
 	}
@@ -216,5 +216,32 @@ func TestStoreListAndConflicts(t *testing.T) {
 	}
 	if _, err := st.Get("nope"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("get missing: %v", err)
+	}
+}
+
+func TestParseComposeEnvRoundTrip(t *testing.T) {
+	env := map[string]string{
+		"PLAIN": "production", "DOLLAR": "pa$$w0rd$HOME", "QUOTES": `a "quoted" 'value' \ back`,
+		"UNICODE": "şifre ğüıöç ✓", "EMPTY": "", "URI": "mongodb://u:p@mongo:27017/db?authSource=db",
+	}
+	s := Spec{Name: "web", Group: "musteri", Image: "x/y:1", Port: 3000, MemoryMB: 256, DataMount: "/data"}
+	got, err := ParseComposeEnv(Compose(s, env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(env) {
+		t.Fatalf("got %d vars, want %d: %v", len(got), len(env), got)
+	}
+	for k, v := range env {
+		if got[k] != v {
+			t.Errorf("%s = %q, want %q", k, got[k], v)
+		}
+	}
+	if got, err := ParseComposeEnv(Compose(s, nil)); err != nil || len(got) != 0 {
+		t.Errorf("no environment: %v, %v", got, err)
+	}
+	broken := strings.Replace(Compose(s, env), `PLAIN: "production"`, `PLAIN: production`, 1)
+	if _, err := ParseComposeEnv(broken); err == nil {
+		t.Error("hand-edited compose file accepted")
 	}
 }

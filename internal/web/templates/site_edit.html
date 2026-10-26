@@ -1,0 +1,71 @@
+{{template "top" .}}
+{{$s := .Data.S}}
+{{$f := .Data.F}}
+<section class="form-page">
+  <div class="page-head">
+    <div>
+      <h1>{{$s.Name}} <span class="muted">düzenle</span></h1>
+      <span class="sub muted small">{{$s.Group}} · ad, grup ve veritabanı değiştirilemez</span>
+    </div>
+  </div>
+  {{with .Data.Problems}}
+  <div class="problems">
+    <strong>Düzeltilmesi gerekenler:</strong>
+    <ul>{{range .}}<li>{{.}}</li>{{end}}</ul>
+  </div>
+  {{end}}
+  <form method="post" action="/sites/{{$s.Name}}/edit" class="wide">
+    <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+
+    <fieldset>
+      <legend>Alan adları</legend>
+      <label>Her satıra bir tane
+        <textarea name="domains" rows="3" required>{{$f.Domains}}</textarea>
+        <span class="hint">yeni eklenenler için yüklenmiş bir sertifika olmalı; DNS kaydını Cloudflare'de sen açarsın</span>
+      </label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Uygulama</legend>
+      <label>Docker imajı
+        <input name="image" value="{{$f.Image}}" required>
+        <span class="hint">değişirse yeni imaj indirilir</span>
+      </label>
+      <div class="row">
+        <label>Uygulama portu
+          <input name="port" value="{{$f.Port}}" inputmode="numeric" required>
+        </label>
+        <label>Bellek sınırı (MB)
+          <input name="memory_mb" value="{{$f.MemoryMB}}" inputmode="numeric" required>
+          <span class="hint">aşarsa container yeniden başlatılır</span>
+        </label>
+      </div>
+      <label>Kalıcı klasör (container içindeki yol, isteğe bağlı)
+        <input name="data_mount" value="{{$f.DataMount}}" placeholder="/app/uploads">
+        <span class="hint">sunucuda /srv/{{$s.Group}}/{{$s.Name}}/data; boşaltmak klasörü silmez, sadece bağlamaz</span>
+      </label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Ortam değişkenleri</legend>
+      {{if $s.EnvKeys}}
+      <p class="hint">Mevcut değerler gösterilmez. Silmek istediklerini işaretle; değiştirmek için aşağıya aynı adla yeni değerini yaz.</p>
+      <div class="env-keys">
+        {{range $s.EnvKeys}}<label class="check mono"><input type="checkbox" name="unset" value="{{.}}"{{if index $f.Unset .}} checked{{end}}> {{.}} <span class="muted small">sil</span></label>{{end}}
+      </div>
+      {{end}}
+      {{if $s.Database}}<p class="hint"><span class="mono">{{$s.DBVar}}</span> veritabanı bağlantısıdır; FootOps yönetir, burada değişmez.</p>{{end}}
+      <label>Eklenecek veya değişecek değişkenler (KEY=DEĞER, her satıra bir tane)
+        <textarea name="env" rows="6" class="mono" placeholder="NODE_ENV=production" autocomplete="off">{{$f.Env}}</textarea>
+        <span class="hint">sadece burada yazdıkların değişir; diğerleri olduğu gibi kalır</span>
+      </label>
+    </fieldset>
+
+    <p class="muted small">Kaydedince container yeni ayarlarla yeniden oluşturulur (birkaç saniye kesinti). Site ayağa kalkmazsa eski ayarlara otomatik dönülür.</p>
+    <div class="form-actions">
+      <button type="submit">Kaydet ve uygula</button>
+      <a class="btn secondary" href="/sites/{{$s.Name}}">Vazgeç</a>
+    </div>
+  </form>
+</section>
+{{template "bottom" .}}

@@ -206,7 +206,7 @@ func (o *SiteOps) Create(ctx context.Context, spec sites.Spec, env map[string]st
 		return fmt.Errorf("container başlatılamadı: %w", err)
 	}
 	undo = append(undo, func() { _ = o.compose(bg(), spec, "down", "--remove-orphans") })
-	if err := o.waitListening(ctx, spec); err != nil {
+	if err := o.waitListening(ctx, spec, restartBase{}); err != nil {
 		return err
 	}
 	done(fmt.Sprintf("Uygulama %d portunda cevap veriyor", spec.Port))
@@ -240,11 +240,12 @@ func (o *SiteOps) Redeploy(ctx context.Context, name string, progress Progress) 
 		return fmt.Errorf("imaj indirilemedi: %w", err)
 	}
 	progress("✓ İmaj indirildi: " + spec.Image)
+	base := o.restartBaseline(ctx, spec)
 	if err := o.compose(ctx, spec, "up", "--detach", "--remove-orphans"); err != nil {
 		return err
 	}
 	progress("✓ Container güncellendi")
-	if err := o.waitListening(ctx, spec); err != nil {
+	if err := o.waitListening(ctx, spec, base); err != nil {
 		return err
 	}
 	if err := o.checkHTTPS(ctx, spec.Domains[0]); err != nil {
@@ -570,13 +571,32 @@ func (o *SiteOps) idIn(ctx context.Context, image, flag string) (int, error) {
 	return strconv.Atoi(strings.TrimSpace(out))
 }
 
+// restartBase is a container's restart count before an operation. An unchanged
+// container keeps its old count; a recreated one (new ID) starts again at 0.
+type restartBase struct {
+	id string
+	n  int
+}
+
+func (o *SiteOps) restartBaseline(ctx context.Context, s sites.Spec) restartBase {
+	in, err := o.Docker.Inspect(ctx, s.Container())
+	if err != nil {
+		return restartBase{}
+	}
+	return restartBase{in.ID, in.RestartCount}
+}
+
 // waitListening waits until the app accepts TCP connections on its port, and fails
-// early (with its last log lines) if the container stops or keeps restarting.
-func (o *SiteOps) waitListening(ctx context.Context, s sites.Spec) error {
+// early (with its last log lines) if the container stops or restarts again.
+func (o *SiteOps) waitListening(ctx context.Context, s sites.Spec, base restartBase) error {
 	deadline := o.now().Add(listenTimeout)
 	for {
 		in, err := o.Docker.Inspect(ctx, s.Container())
-		if err == nil && (!in.State.Running || in.RestartCount > 0) {
+		allowed := 0
+		if err == nil && in.ID == base.id {
+			allowed = base.n
+		}
+		if err == nil && (!in.State.Running || in.RestartCount > allowed) {
 			lines, _ := o.Docker.Logs(ctx, s.Container(), 20)
 			return fmt.Errorf("container çalışmıyor (%s, %d kez yeniden başladı). Son loglar:\n%s",
 				in.State.Status, in.RestartCount, strings.Join(lines, "\n"))

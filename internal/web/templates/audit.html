@@ -1,26 +1,29 @@
 {{template "top" .}}
-<section>
-  <h1>Denetim kaydı <span class="muted small">son 200 olay</span></h1>
-  {{with .Data.Err}}<p class="error">{{.}}</p>{{end}}
-  <div class="table-wrap">
-  <table>
-    <thead><tr><th>Zaman</th><th>Kim</th><th>Nereden</th><th>İşlem</th><th>Hedef</th><th>Sonuç</th><th>Ayrıntı</th></tr></thead>
-    <tbody>
-    {{range .Data.Entries}}
-      <tr>
-        <td class="nowrap">{{ts .Time}}</td>
-        <td>{{.Actor.User}}</td>
-        <td>{{.Actor.IP}} <span class="muted small">{{.Actor.Via}}</span></td>
-        <td>{{.Action}}</td>
-        <td>{{.Target}}</td>
-        <td>{{if .OK}}<span class="ok">başarılı</span>{{else}}<span class="bad">başarısız</span>{{end}}</td>
-        <td class="small">{{.Detail}}</td>
-      </tr>
-    {{else}}
-      <tr><td colspan="7" class="muted">Kayıt yok.</td></tr>
-    {{end}}
-    </tbody>
-  </table>
+<div class="page-head">
+  <div>
+    <h1>Denetim kaydı</h1>
+    <span class="sub muted small">son 200 olay, en yenisi üstte</span>
   </div>
-</section>
+</div>
+{{with .Data.Err}}<p class="notice bad">{{.}}</p>{{end}}
+<div class="table-wrap">
+<table class="responsive">
+  <thead><tr><th>Zaman</th><th>Kim</th><th>Nereden</th><th>İşlem</th><th>Hedef</th><th>Sonuç</th><th>Ayrıntı</th></tr></thead>
+  <tbody>
+  {{range .Data.Entries}}
+    <tr>
+      <td class="primary nowrap">{{ts .Time}}</td>
+      <td data-label="Kim">{{.Actor.User}}</td>
+      <td data-label="Nereden">{{.Actor.IP}} <span class="muted small">{{.Actor.Via}}</span></td>
+      <td data-label="İşlem" class="mono small">{{.Action}}</td>
+      <td data-label="Hedef">{{.Target}}</td>
+      <td data-label="Sonuç">{{if .OK}}<span class="badge ok">başarılı</span>{{else}}<span class="badge bad">başarısız</span>{{end}}</td>
+      <td data-label="Ayrıntı" class="small">{{.Detail}}</td>
+    </tr>
+  {{else}}
+    <tr><td colspan="7" class="empty">Henüz kayıt yok.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
 {{template "bottom" .}}
