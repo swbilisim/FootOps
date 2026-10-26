@@ -62,7 +62,7 @@ func TestComposeTunnel(t *testing.T) {
 		t.Error("cloudflared present without tunnel")
 	}
 	with := Compose(Config{MongoCacheGB: 0.5, Tunnel: true})
-	for _, want := range []string{"image: " + CloudflaredImage, "network_mode: host", "env_file: " + TunnelSecretPath, "--no-autoupdate"} {
+	for _, want := range []string{"image: " + CloudflaredImage, "network_mode: host", "env_file: " + TunnelSecretPath, "--no-autoupdate", `"--metrics", "127.0.0.1:20241"`} {
 		if !strings.Contains(with, want) {
 			t.Errorf("tunnel compose misses %q", want)
 		}

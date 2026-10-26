@@ -3,6 +3,7 @@ package install
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -506,4 +507,75 @@ func recordReset(h Host, action string) {
 	_ = agent.NewAudit(h.Path(agent.DefaultAuditPath)).Record(agent.AuditEntry{
 		Actor: agent.Actor{User: "root", IP: "local", Via: "cli"}, Action: action, OK: true,
 	})
+}
+
+// RotateMongoRoot gives the MongoDB root user a new password. The new password is
+// verified by logging in with it before the secret file is replaced; if anything fails
+// before that point, the old password stays in force and in the file.
+func RotateMongoRoot(ctx context.Context, h Host, p *Prompter) error {
+	if os.Geteuid() != 0 {
+		return errors.New("root olarak çalıştırılmalı: sudo footops rotate-mongo-root")
+	}
+	return rotateMongoRoot(ctx, h, p)
+}
+
+func rotateMongoRoot(ctx context.Context, h Host, p *Prompter) error {
+	env, err := h.ReadFile(core.MongoSecretPath)
+	if err != nil {
+		return err
+	}
+	old := core.MongoPasswordFromEnv(env)
+	if old == "" {
+		return fmt.Errorf("%s içinde mevcut şifre yok", core.MongoSecretPath)
+	}
+	ok, err := p.YesNo("MongoDB root şifresi değiştirilecek ve container kısa bir süre yeniden başlatılacak. Devam?", false)
+	if err != nil || !ok {
+		if err == nil {
+			err = ErrAborted
+		}
+		return err
+	}
+	pw, err := randomPassword(32)
+	if err != nil {
+		return err
+	}
+	// Both passwords travel on stdin, never on a command line.
+	script := fmt.Sprintf(`(function(){try{const c=new Mongo("mongodb://127.0.0.1:27017");const a=c.getDB("admin");`+
+		`a.auth(%[1]s,%[2]s);a.changeUserPassword(%[1]s,%[3]s);`+
+		`const v=new Mongo("mongodb://127.0.0.1:27017").getDB("admin");v.auth(%[1]s,%[3]s);`+
+		`print("FOOTOPS_OK")}catch(e){print("FOOTOPS_ERR "+e.message);quit(3)}})()`,
+		jsString(core.MongoRootUser), jsString(old), jsString(pw))
+	out, err := h.Run.RunInput(ctx, script+"\n", "docker", "exec", "-i", core.Services(core.Config{})["mongo"],
+		"mongosh", "--quiet", "--nodb", "--file", "/dev/stdin")
+	if i := strings.Index(out, "FOOTOPS_ERR "); i >= 0 {
+		return fmt.Errorf("şifre değiştirilemedi, eski şifre geçerli: %s", strings.TrimSpace(out[i+len("FOOTOPS_ERR "):]))
+	}
+	if err != nil || !strings.Contains(out, "FOOTOPS_OK") {
+		return fmt.Errorf("şifre değiştirilemedi, eski şifre geçerli: %v", err)
+	}
+	if err := h.WriteFile(core.MongoSecretPath, core.MongoSecretEnv(pw), 0o600); err != nil {
+		// MongoDB already uses the new password: show it so it is not lost.
+		p.Say("⚠ Şifre MongoDB'de değişti ama dosyaya yazılamadı (%v).", err)
+		p.Say("Yeni şifre: %s — %s dosyasına elle yaz.", pw, core.MongoSecretPath)
+		return err
+	}
+	// The env file is part of the compose configuration; recreating the container now
+	// keeps it in step (otherwise the next install run would restart it unexpectedly).
+	// The agent re-attaches it to the site networks within seconds.
+	if _, err := h.Run.Run(ctx, "docker", "compose", "--project-name", core.ProjectName, "--file", core.ComposePath,
+		"up", "--detach", "--wait", "--wait-timeout", "120", "mongo"); err != nil {
+		p.Say("⚠ Şifre değişti ama MongoDB container'ı yeniden oluşturulamadı: %v", err)
+	}
+	recordReset(h, "mongo.rotate-root")
+	p.Say("")
+	p.Say("🔑 Yeni MongoDB root şifresi (bir kez gösteriliyor, Vaultwarden'daki 'H1 MongoDB root' kaydını güncelle):")
+	p.Say("   %s", pw)
+	p.Say("Sitelerin kendi veritabanı kullanıcıları etkilenmez.")
+	return nil
+}
+
+// jsString quotes s for JavaScript (JSON is valid JS).
+func jsString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }

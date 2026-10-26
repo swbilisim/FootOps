@@ -37,6 +37,7 @@ Commands:
   agent            Run the privileged agent (normally started by systemd)
   reset-password   Reset the panel password (run as root over SSH)
   reset-2fa        Reset two-factor authentication (run as root over SSH)
+  rotate-mongo-root  Give the MongoDB root user a new password (run as root)
   self-update      Download, verify and install the latest release
   version          Print version information
   help             Show this help
@@ -85,6 +86,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		err = runRecovery(install.ResetPassword, stdout)
 	case "reset-2fa":
 		err = runRecovery(install.Reset2FA, stdout)
+	case "rotate-mongo-root":
+		err = runRecovery(install.RotateMongoRoot, stdout)
 	case "self-update":
 		err = errNotImplemented
 	default:

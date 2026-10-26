@@ -162,13 +162,14 @@ services:
 	)
 	if c.Tunnel {
 		// Host networking: cloudflared must reach the panel on 127.0.0.1, and it only
-		// makes outbound connections, so no port is published.
+		// makes outbound connections, so no port is published. Its metrics endpoint
+		// defaults to all interfaces inside containers; keep it on loopback.
 		fmt.Fprintf(&b, `
   cloudflared:
     image: %s
     container_name: footops-cloudflared
     restart: unless-stopped
-    command: ["tunnel", "--no-autoupdate", "run"]
+    command: ["tunnel", "--no-autoupdate", "--metrics", "127.0.0.1:20241", "run"]
     env_file: %s
     network_mode: host
     cap_drop: [ALL]

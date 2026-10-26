@@ -256,3 +256,71 @@ func TestUnitsSeparatePrivileges(t *testing.T) {
 		}
 	}
 }
+
+func TestRotateMongoRoot(t *testing.T) {
+	var stdin string
+	h, f := newTestHost(t, nil)
+	f.handle = func(cmd string) (string, error) {
+		if strings.Contains(cmd, "mongosh") {
+			return "FOOTOPS_OK\n", nil
+		}
+		return "", nil
+	}
+	put(t, h, core.MongoSecretPath, core.MongoSecretEnv("OldPassword123"))
+	p, out := prompter("e\n")
+	if err := rotateMongoRoot(ctx, h, p); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range f.calls {
+		if strings.Contains(c.cmd, "mongosh") {
+			stdin = c.stdin
+		}
+		if strings.Contains(c.cmd, "OldPassword123") {
+			t.Fatalf("password on the command line: %s", c.cmd)
+		}
+	}
+	newPW := core.MongoPasswordFromEnv(read(t, h, core.MongoSecretPath))
+	if newPW == "OldPassword123" || len(newPW) != 32 {
+		t.Fatalf("secret file not updated: %q", newPW)
+	}
+	if !strings.Contains(stdin, `"OldPassword123"`) || !strings.Contains(stdin, `changeUserPassword("root","`+newPW+`")`) {
+		t.Errorf("script = %s", stdin)
+	}
+	if !strings.Contains(out.String(), newPW) {
+		t.Error("new password not shown")
+	}
+	if !f.ran("docker compose --project-name footops-core --file /srv/core/compose.yaml up --detach --wait") {
+		t.Error("mongo container not recreated with the new env file")
+	}
+}
+
+func TestRotateMongoRootKeepsOldPasswordOnFailure(t *testing.T) {
+	h, f := newTestHost(t, nil)
+	f.handle = func(cmd string) (string, error) {
+		if strings.Contains(cmd, "mongosh") {
+			return "FOOTOPS_ERR Authentication failed.\n", errExit
+		}
+		return "", nil
+	}
+	put(t, h, core.MongoSecretPath, core.MongoSecretEnv("OldPassword123"))
+	p, _ := prompter("e\n")
+	err := rotateMongoRoot(ctx, h, p)
+	if err == nil || !strings.Contains(err.Error(), "Authentication failed") {
+		t.Fatalf("err = %v", err)
+	}
+	if core.MongoPasswordFromEnv(read(t, h, core.MongoSecretPath)) != "OldPassword123" {
+		t.Error("secret file changed although MongoDB kept the old password")
+	}
+}
+
+func TestRotateMongoRootDeclined(t *testing.T) {
+	h, f := newTestHost(t, nil)
+	put(t, h, core.MongoSecretPath, core.MongoSecretEnv("OldPassword123"))
+	p, _ := prompter("\n") // default: no
+	if err := rotateMongoRoot(ctx, h, p); !errors.Is(err, ErrAborted) {
+		t.Fatalf("err = %v", err)
+	}
+	if len(f.calls) != 0 {
+		t.Errorf("ran commands after declining: %v", f.cmds())
+	}
+}

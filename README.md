@@ -173,6 +173,7 @@ recreating the core containers heals itself.
 | `footops install` | Prepare the server and install FootOps (interactive, root) |
 | `footops reset-password` | New panel password, lifts a lockout (root over SSH) |
 | `footops reset-2fa` | Enrol a new authenticator, new recovery codes (root over SSH) |
+| `footops rotate-mongo-root` | New MongoDB root password; verified before the secret file is replaced (root) |
 | `footops agent` / `footops web` | The services (started by systemd) |
 | `footops doctor` | Basic checks (more to come) |
 | `footops self-update` | Not implemented yet |
