@@ -2,11 +2,11 @@
 <div class="page-head">
   <div>
     <h1>Siteler</h1>
-    <span class="sub muted small">{{len .Data.Sites}} site</span>
+    <p class="sub">{{len .Data.Sites}} site</p>
   </div>
-  <a class="btn" href="/sites/new">+ Yeni site</a>
+  {{if .Data.Sites}}<a class="btn primary" href="/sites/new">{{icon "plus"}}Yeni site</a>{{end}}
 </div>
-{{with .Data.Err}}<p class="notice bad">Agent'a ulaşılamadı: {{.}}</p>{{end}}
+{{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>Agent'a ulaşılamadı: {{.}}</div></div>{{end}}
 {{if .Data.Sites}}
 <div class="table-wrap">
 <table class="responsive">
@@ -14,18 +14,19 @@
   <tbody>
   {{range .Data.Sites}}
     <tr>
-      <td class="primary"><a href="/sites/{{.Spec.Name}}"><strong>{{.Spec.Name}}</strong></a><br><span class="muted small">{{.Spec.Image}}</span></td>
-      <td data-label="Grup">{{.Spec.Group}}</td>
-      <td data-label="Alan adları" class="small">{{range $i, $d := .Spec.Domains}}{{if $i}}<br>{{end}}{{$d}}{{end}}</td>
+      <td class="primary"><a class="cell-title" href="/sites/{{.Spec.Name}}">{{.Spec.Name}}</a><span class="cell-sub">{{.Spec.Image}}</span></td>
+      <td data-label="Grup"><span class="chip">{{.Spec.Group}}</span></td>
+      <td data-label="Alan adları"><span>{{range $i, $d := .Spec.Domains}}{{if $i}}<br>{{end}}{{$d}}{{end}}</span></td>
       <td data-label="Durum">{{with .Container}}{{template "state" .}}{{else}}<span class="badge bad">container yok</span>{{end}}</td>
-      <td data-label="RAM" class="num">{{with .Container}}{{if eq .State "running"}}{{bytes .MemUsage}} <span class="muted small">/ {{bytes .MemLimit}}</span>{{end}}{{end}}</td>
+      <td data-label="RAM" class="num">{{with .Container}}{{if eq .State "running"}}<span>{{bytes .MemUsage}} <span class="muted">/ {{bytes .MemLimit}}</span></span>{{else}}—{{end}}{{else}}—{{end}}</td>
     </tr>
   {{end}}
   </tbody>
 </table>
 </div>
 {{else if not .Data.Err}}
-<div class="empty-state">
+<div class="card empty-state">
+  <div class="icon-wrap">{{icon "globe"}}</div>
   <h2>Henüz site yok</h2>
   <p>Bir site eklemek üç adım:</p>
   <ol>
@@ -33,7 +34,7 @@
     <li>Sitenin Docker imajını GitHub Actions ile GHCR'ye gönder.</li>
     <li>Buradan siteyi oluştur; panel container'ı, ağı, Caddy'yi ve istersen veritabanını hazırlar.</li>
   </ol>
-  <p><a class="btn" href="/sites/new">+ Yeni site</a></p>
+  <div><a class="btn primary" href="/sites/new">{{icon "plus"}}Yeni site</a></div>
 </div>
 {{end}}
 {{template "bottom" .}}

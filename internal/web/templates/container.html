@@ -1,19 +1,19 @@
 {{template "top" .}}
 {{$n := .Data.Name}}
+<a class="crumb" href="/">{{icon "back"}}Sunucu</a>
 <div class="page-head">
   <div>
     <h1>{{$n}}</h1>
-    <span class="sub muted small">{{with .Data.C}}{{.Image}}{{if .Project}} · proje {{.Project}}{{end}}{{else}}container{{end}}</span>
+    <p class="sub">{{with .Data.C}}{{.Image}}{{if .Project}} · proje {{.Project}}{{end}}{{else}}container{{end}}</p>
   </div>
-  <div class="actions-row">
-    {{with .Data.Site}}<a class="btn secondary small" href="/sites/{{.}}">Site</a>{{end}}
-    <a class="btn secondary small" href="/containers/{{$n}}/logs">Loglar</a>
-    <a class="btn secondary small" href="/containers/{{$n}}/restart">Yeniden başlat</a>
+  <div class="page-actions">
+    {{template "live"}}
+    {{with .Data.Site}}<a class="btn" href="/sites/{{.}}">{{icon "globe"}}Site</a>{{end}}
+    <a class="btn" href="/containers/{{$n}}/logs">{{icon "logs"}}Loglar</a>
+    <a class="btn" href="/containers/{{$n}}/restart">{{icon "restart"}}Yeniden başlat</a>
   </div>
 </div>
-<p>{{template "live"}}</p>
-{{with .Data.Err}}<p class="notice bad">Agent'a ulaşılamadı: {{.}}</p>{{end}}
-{{with .Data.C}}{{template "facts" .}}{{else}}{{if not .Data.Err}}<p class="notice warn">Şu an bu adla bir container yok; aşağıda varsa geçmişi görünür.</p>{{end}}{{end}}
+{{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>Agent'a ulaşılamadı: {{.}}</div></div>{{end}}
+{{with .Data.C}}{{template "facts" .}}{{else}}{{if not .Data.Err}}<div class="notice warn">{{icon "info"}}<div>Şu an bu adla bir container yok; aşağıda varsa geçmişi görünür.</div></div>{{end}}{{end}}
 {{template "history" .Data.History}}
 {{template "bottom" .}}
-

@@ -2,10 +2,10 @@
 <div class="page-head">
   <div>
     <h1>Sertifikalar</h1>
-    <span class="sub muted small">Cloudflare Origin CA; Caddy hiç sertifika istemez</span>
+    <p class="sub">Cloudflare Origin CA; Caddy hiç sertifika istemez</p>
   </div>
 </div>
-{{with .Data.Err}}<p class="notice bad">{{.}}</p>{{end}}
+{{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
 {{$now := .Data.Now}}
 {{if .Data.Certs}}
 <div class="table-wrap">
@@ -14,38 +14,45 @@
   <tbody>
   {{range .Data.Certs}}
     <tr>
-      <td class="primary mono small">{{range $i, $n := .Names}}{{if $i}}<br>{{end}}{{$n}}{{end}}</td>
-      <td data-label="Veren" class="small">{{.Issuer}}</td>
+      <td class="primary mono">{{range $i, $n := .Names}}{{if $i}}<br>{{end}}{{$n}}{{end}}</td>
+      <td data-label="Veren" class="muted">{{.Issuer}}</td>
       <td data-label="Bitiş" class="nowrap">{{$d := daysLeft .NotAfter $now}}{{if lt $d 0}}<span class="badge bad">süresi doldu</span>{{else if lt $d 30}}<span class="badge warn">{{$d}} gün kaldı</span>{{else}}{{datefmt .NotAfter}}{{end}}</td>
-      <td class="actions"><a href="/certs/{{.ID}}/remove">Sil</a></td>
+      <td class="actions"><a class="btn sm" href="/certs/{{.ID}}/remove">{{icon "trash"}}Sil</a></td>
     </tr>
   {{end}}
   </tbody>
 </table>
 </div>
 {{else if not .Data.Err}}
-<div class="empty-state">
+<div class="card empty-state">
+  <div class="icon-wrap">{{icon "shield"}}</div>
   <h2>Henüz sertifika yok</h2>
   <p>Site eklemeden önce alan adının Origin sertifikasını aşağıdan yükle. Bir sertifika alan adının bütün alt alan adlarını (<span class="mono">*.alan.com</span>) kapsar.</p>
 </div>
 {{end}}
 
-<section class="form-page">
-  <h2 class="section">Cloudflare Origin sertifikası ekle</h2>
-  <ol class="steps">
-    <li>Cloudflare → alan adı (örn. ornek.com) → <strong>SSL/TLS → Origin Server → Create Certificate</strong></li>
-    <li>"Generate private key and CSR with Cloudflare", anahtar türü RSA, adlar: <span class="mono">*.alanadi.com</span> ve <span class="mono">alanadi.com</span>, süre 15 yıl → Create</li>
-    <li>Gösterilen <strong>Origin Certificate</strong> ve <strong>Private Key</strong>'i aşağıya yapıştır. Private key Cloudflare'de bir daha gösterilmez; istersen Vaultwarden'a da kaydet.</li>
-  </ol>
-  <form method="post" action="/certs" class="wide">
+<div class="form-page">
+  <div class="section-head"><h2>Cloudflare Origin sertifikası ekle</h2></div>
+  <form method="post" action="/certs" class="stack">
     <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
-    <label>Origin Certificate
-      <textarea name="cert" rows="8" class="mono" required placeholder="-----BEGIN CERTIFICATE-----"></textarea>
-    </label>
-    <label>Private Key
-      <textarea name="key" rows="8" class="mono" required placeholder="-----BEGIN PRIVATE KEY-----" autocomplete="off"></textarea>
-    </label>
-    <div class="form-actions"><button type="submit">Yükle</button></div>
+    <fieldset>
+      <legend>Nasıl alınır</legend>
+      <ol class="steps">
+        <li>Cloudflare → alan adı (örn. ornek.com) → <strong>SSL/TLS → Origin Server → Create Certificate</strong></li>
+        <li>"Generate private key and CSR with Cloudflare", anahtar türü RSA, adlar: <span class="mono">*.alanadi.com</span> ve <span class="mono">alanadi.com</span>, süre 15 yıl → Create</li>
+        <li>Gösterilen <strong>Origin Certificate</strong> ve <strong>Private Key</strong>'i aşağıya yapıştır. Private key Cloudflare'de bir daha gösterilmez; istersen Vaultwarden'a da kaydet.</li>
+      </ol>
+    </fieldset>
+    <fieldset>
+      <legend>Sertifika ve anahtar</legend>
+      <label class="field"><span>Origin Certificate</span>
+        <textarea name="cert" rows="7" class="mono" required placeholder="-----BEGIN CERTIFICATE-----" spellcheck="false"></textarea>
+      </label>
+      <label class="field"><span>Private Key</span>
+        <textarea name="key" rows="7" class="mono" required placeholder="-----BEGIN PRIVATE KEY-----" autocomplete="off" spellcheck="false"></textarea>
+      </label>
+    </fieldset>
+    <div class="form-actions"><button type="submit" class="primary">{{icon "shield"}}Yükle</button></div>
   </form>
-</section>
+</div>
 {{template "bottom" .}}

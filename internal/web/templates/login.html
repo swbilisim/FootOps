@@ -1,19 +1,22 @@
 {{template "top" .}}
-<section class="login">
-  <h1>Giriş</h1>
-  {{with .Data.Error}}<p class="notice bad" role="alert">{{.}}</p>{{end}}
+<div class="card login-card">
+  <div class="brand">{{logo}}<span>FootOps</span><span class="chip">{{.Server}}</span></div>
+  <h1>Panele giriş</h1>
+  <p class="sub">Şifre ve doğrulama uygulamandaki kod</p>
+  {{with .Data.Error}}<div class="notice bad" role="alert">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
   <form method="post" action="/login" autocomplete="on">
     <input type="hidden" name="csrf" value="{{.Data.CSRF}}">
-    <label>Kullanıcı adı
-      <input name="username" autocomplete="username" required autofocus>
+    <label class="field"><span>Kullanıcı adı</span>
+      <input name="username" autocomplete="username" autocapitalize="off" spellcheck="false" required autofocus>
     </label>
-    <label>Şifre
+    <label class="field"><span>Şifre</span>
       <input name="password" type="password" autocomplete="current-password" required>
     </label>
-    <label>Doğrulama kodu
+    <label class="field"><span>Doğrulama kodu</span>
       <input name="code" inputmode="numeric" autocomplete="one-time-code" required placeholder="6 haneli kod veya kurtarma kodu">
     </label>
-    <button type="submit">Giriş yap</button>
+    <button type="submit" class="primary">Giriş yap</button>
   </form>
-</section>
+</div>
+<p class="login-foot">{{icon "lock"}}Oturum 30 dakika işlem yapılmazsa kapanır</p>
 {{template "bottom" .}}

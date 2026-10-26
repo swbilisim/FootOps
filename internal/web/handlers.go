@@ -347,8 +347,11 @@ var funcs = template.FuncMap{
 	"daysLeft": func(t, now time.Time) int {
 		return int(math.Floor(t.Sub(now).Hours() / 24))
 	},
-	"level": levelOf,
-	"meter": meter,
+	"level":  levelOf,
+	"icon":   icon,
+	"logo":   func() template.HTML { return logo },
+	"sprite": func() template.HTML { return sprite },
+	"meter":  meter,
 	// limited reports whether a container has a memory limit of its own; without one
 	// Docker reports the host's memory.
 	"limited": func(limit, host uint64) bool { return limit > 0 && (host == 0 || limit < host) },

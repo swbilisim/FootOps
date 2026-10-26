@@ -10,10 +10,12 @@ package web
 
 import (
 	"context"
+	"fmt"
 	"html"
 	"math"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -181,8 +183,16 @@ func TestPreview(t *testing.T) {
 		if !strings.HasPrefix(src, "/") {
 			src = "/"
 		}
+		width, err := strconv.Atoi(r.URL.Query().Get("w"))
+		if err != nil || width < 200 || width > 2000 {
+			width = 390
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(`<!doctype html><body style="margin:0;background:#888"><iframe src="` + html.EscapeString(src) + `" width="390" height="3000" style="border:0;background:#fff"></iframe>`))
+		height, err := strconv.Atoi(r.URL.Query().Get("h"))
+		if err != nil || height < 200 || height > 8000 {
+			height = 4000
+		}
+		_, _ = fmt.Fprintf(w, `<!doctype html><body style="margin:0;background:#888"><iframe src="%s" width="%d" height="%d" style="border:0;background:#fff"></iframe>`, html.EscapeString(src), width, height)
 	})
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.ServeHTTP(frameable{w}, r)

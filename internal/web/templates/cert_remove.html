@@ -1,13 +1,17 @@
 {{template "top" .}}
-<section class="confirm">
-  <h1>Sertifika silinsin mi?</h1>
-  <p>Bu sertifikayı kullanan bir site varsa silme reddedilir.</p>
-  <form method="post" action="/certs/{{.Data.ID}}/remove">
-    <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
-    <div class="form-actions">
-      <button type="submit" class="danger">Sil</button>
-      <a class="btn secondary" href="/certs">Vazgeç</a>
-    </div>
-  </form>
-</section>
+<div class="dialog">
+  <a class="crumb" href="/certs">{{icon "back"}}Sertifikalar</a>
+  <div class="card">
+    <div class="dialog-icon bad">{{icon "trash"}}</div>
+    <h1>Sertifika silinsin mi?</h1>
+    <p>Bu sertifikayı kullanan bir site varsa silme reddedilir.</p>
+    <form method="post" action="/certs/{{.Data.ID}}/remove">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <div class="form-actions">
+        <button type="submit" class="danger">{{icon "trash"}}Sil</button>
+        <a class="btn" href="/certs">Vazgeç</a>
+      </div>
+    </form>
+  </div>
+</div>
 {{template "bottom" .}}

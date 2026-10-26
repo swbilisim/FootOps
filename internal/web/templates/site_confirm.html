@@ -1,31 +1,36 @@
 {{template "top" .}}
 {{$s := .Data.S.Spec}}
-<section class="confirm">
+<div class="dialog">
+  <a class="crumb" href="/sites/{{$s.Name}}">{{icon "back"}}{{$s.Name}}</a>
+  <div class="card">
   {{if eq .Data.Verb "remove"}}
-  <h1>{{$s.Name}} kaldırılsın mı?</h1>
-  <p>Site yayından kalkar: Caddy'den çıkarılır, container ve ağı silinir.</p>
-  <p><strong>Silinmeyenler:</strong> dosyalar <span class="mono">/srv/{{$s.Group}}/_removed/</span> altına taşınır{{if $s.Database}}, MongoDB veritabanı <span class="mono">{{$s.Name}}</span> olduğu gibi kalır{{end}}.</p>
-  {{with .Data.Problem}}<p class="notice bad">{{.}}</p>{{end}}
-  <form method="post" action="/sites/{{$s.Name}}/remove">
-    <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
-    <label>Onaylamak için site adını yaz: <strong>{{$s.Name}}</strong>
-      <input name="confirm" autocomplete="off" required>
-    </label>
-    <div class="form-actions">
-      <button type="submit" class="danger">Kaldır</button>
-      <a class="btn secondary" href="/sites/{{$s.Name}}">Vazgeç</a>
-    </div>
-  </form>
+    <div class="dialog-icon bad">{{icon "trash"}}</div>
+    <h1>{{$s.Name}} kaldırılsın mı?</h1>
+    <p>Site yayından kalkar: Caddy'den çıkarılır, container ve ağı silinir.</p>
+    <p><strong>Silinmeyenler:</strong> dosyalar <span class="mono">/srv/{{$s.Group}}/_removed/</span> altına taşınır{{if $s.Database}}, MongoDB veritabanı <span class="mono">{{$s.Name}}</span> olduğu gibi kalır{{end}}.</p>
+    {{with .Data.Problem}}<div class="notice bad">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
+    <form method="post" action="/sites/{{$s.Name}}/remove">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <label class="field"><span>Onaylamak için site adını yaz: <strong>{{$s.Name}}</strong></span>
+        <input name="confirm" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      </label>
+      <div class="form-actions">
+        <button type="submit" class="danger">{{icon "trash"}}Kaldır</button>
+        <a class="btn" href="/sites/{{$s.Name}}">Vazgeç</a>
+      </div>
+    </form>
   {{else}}
-  <h1>{{$s.Name}} yeniden dağıtılsın mı?</h1>
-  <p><span class="mono">{{$s.Image}}</span> imajı tekrar indirilir; değiştiyse container yenisiyle değiştirilir (birkaç saniye kesinti).</p>
-  <form method="post" action="/sites/{{$s.Name}}/redeploy">
-    <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
-    <div class="form-actions">
-      <button type="submit">Yeniden dağıt</button>
-      <a class="btn secondary" href="/sites/{{$s.Name}}">Vazgeç</a>
-    </div>
-  </form>
+    <div class="dialog-icon">{{icon "deploy"}}</div>
+    <h1>{{$s.Name}} yeniden dağıtılsın mı?</h1>
+    <p><span class="mono">{{$s.Image}}</span> imajı tekrar indirilir; değiştiyse container yenisiyle değiştirilir (birkaç saniye kesinti).</p>
+    <form method="post" action="/sites/{{$s.Name}}/redeploy">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <div class="form-actions">
+        <button type="submit" class="primary">{{icon "deploy"}}Yeniden dağıt</button>
+        <a class="btn" href="/sites/{{$s.Name}}">Vazgeç</a>
+      </div>
+    </form>
   {{end}}
-</section>
+  </div>
+</div>
 {{template "bottom" .}}

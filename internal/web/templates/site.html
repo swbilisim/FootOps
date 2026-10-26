@@ -1,49 +1,52 @@
 {{template "top" .}}
 {{$s := .Data.S.Spec}}
+<a class="crumb" href="/sites">{{icon "back"}}Siteler</a>
 <div class="page-head">
   <div>
     <h1>{{$s.Name}}</h1>
-    <span class="sub muted small">{{$s.Group}} · {{range $i, $d := $s.Domains}}{{if $i}}, {{end}}<a href="https://{{$d}}" rel="noreferrer">{{$d}}</a>{{end}}</span>
+    <p class="sub"><span class="chip">{{$s.Group}}</span> {{range $i, $d := $s.Domains}}{{if $i}} · {{end}}<a href="https://{{$d}}" rel="noreferrer" target="_blank">{{$d}}</a>{{end}}</p>
   </div>
-  <div class="actions-row">
-    <a class="btn secondary small" href="/containers/{{$s.Container}}/logs">Loglar</a>
-    <a class="btn secondary small" href="/containers/{{$s.Container}}/restart">Yeniden başlat</a>
-    <a class="btn secondary small" href="/sites/{{$s.Name}}/edit">Düzenle</a>
-    <a class="btn small" href="/sites/{{$s.Name}}/redeploy">Yeniden dağıt</a>
+  <div class="page-actions">
+    {{template "live"}}
+    <a class="btn" href="/containers/{{$s.Container}}/logs">{{icon "logs"}}Loglar</a>
+    <a class="btn" href="/containers/{{$s.Container}}/restart">{{icon "restart"}}Yeniden başlat</a>
+    <a class="btn" href="/sites/{{$s.Name}}/edit">{{icon "edit"}}Düzenle</a>
+    <a class="btn primary" href="/sites/{{$s.Name}}/redeploy">{{icon "deploy"}}Yeniden dağıt</a>
   </div>
 </div>
-<p>{{template "live"}}</p>
 
-{{with .Data.S.Container}}{{template "facts" .}}{{else}}<p class="notice bad">Bu sitenin container'ı yok. Yeniden dağıtmak container'ı tekrar oluşturur.</p>{{end}}
+{{with .Data.S.Container}}{{template "facts" .}}{{else}}<div class="notice bad">{{icon "alert"}}<div>Bu sitenin container'ı yok. Yeniden dağıtmak container'ı tekrar oluşturur.</div></div>{{end}}
 
 {{template "history" .Data.History}}
 
-<h2 class="section">Ayarlar</h2>
+<div class="section-head"><h2>Ayarlar</h2><a class="btn sm" href="/sites/{{$s.Name}}/edit">{{icon "edit"}}Düzenle</a></div>
 <div class="table-wrap">
 <table class="kv">
-  <tr><th>Alan adları</th><td>{{range $i, $d := $s.Domains}}{{if $i}}, {{end}}<a href="https://{{$d}}" rel="noreferrer">{{$d}}</a>{{end}}</td></tr>
+  <tr><th>Alan adları</th><td>{{range $i, $d := $s.Domains}}{{if $i}}, {{end}}<a href="https://{{$d}}" rel="noreferrer" target="_blank">{{$d}}</a>{{end}}</td></tr>
   <tr><th>İmaj</th><td class="mono">{{$s.Image}}</td></tr>
   <tr><th>Uygulama portu</th><td>{{$s.Port}}</td></tr>
   <tr><th>Bellek sınırı</th><td>{{$s.MemoryMB}} MB</td></tr>
   <tr><th>Kalıcı klasör</th><td>{{if $s.DataMount}}<span class="mono">/srv/{{$s.Group}}/{{$s.Name}}/data → {{$s.DataMount}}</span>{{else}}yok{{end}}</td></tr>
   <tr><th>Veritabanı</th><td>{{if $s.Database}}MongoDB <span class="mono">{{$s.Name}}</span> (kullanıcı <span class="mono">{{$s.Name}}</span>), adres <span class="mono">{{$s.DBVar}}</span> değişkeninde{{else}}yok{{end}}</td></tr>
-  <tr><th>Ortam değişkenleri</th><td class="mono small">{{range $i, $k := $s.EnvKeys}}{{if $i}}, {{end}}{{$k}}{{else}}—{{end}}</td></tr>
+  <tr><th>Ortam değişkenleri</th><td class="mono">{{range $i, $k := $s.EnvKeys}}{{if $i}}, {{end}}{{$k}}{{else}}—{{end}}</td></tr>
   <tr><th>Oluşturma</th><td>{{ts $s.CreatedAt}}</td></tr>
   <tr><th>Son güncelleme</th><td>{{ts $s.UpdatedAt}}</td></tr>
 </table>
 </div>
 
-<h2 class="section">Cloudflare'de yapılacaklar</h2>
-<ol class="steps">
-  <li>DNS: {{range $s.Domains}}<span class="mono">{{.}}</span> {{end}}için
-    {{with .Data.Server.IPv4}}<strong>A</strong> kaydı → <span class="mono">{{index . 0}}</span>{{else}}A kaydı → bu sunucunun IP'si{{end}},
-    <strong>Proxy açık</strong> (turuncu bulut).</li>
-  <li>SSL/TLS modu: <strong>Full (strict)</strong>. Zone genelinde değiştirmek diğer sunuculardaki siteleri etkileyecekse, sadece bu alan adları için bir Configuration Rule kullan.</li>
-</ol>
+<div class="section-head"><h2>Cloudflare'de yapılacaklar</h2></div>
+<div class="card">
+  <ol class="steps">
+    <li>DNS: {{range $s.Domains}}<span class="mono">{{.}}</span> {{end}}için
+      {{with .Data.Server.IPv4}}<strong>A</strong> kaydı → <span class="mono">{{index . 0}}</span>{{else}}A kaydı → bu sunucunun IP'si{{end}},
+      <strong>Proxy açık</strong> (turuncu bulut).</li>
+    <li>SSL/TLS modu: <strong>Full (strict)</strong>. Zone genelinde değiştirmek diğer sunuculardaki siteleri etkileyecekse, sadece bu alan adları için bir Configuration Rule kullan.</li>
+  </ol>
+</div>
 
-<h2 class="section">Tehlikeli bölge</h2>
-<div class="panel">
+<div class="section-head"><h2>Tehlikeli bölge</h2></div>
+<div class="card danger-zone">
   <p>Siteyi yayından kaldırır. Dosyalar <span class="mono">/srv/{{$s.Group}}/_removed/</span> altına taşınır{{if $s.Database}}, veritabanı silinmez{{end}}.</p>
-  <a class="btn danger small" href="/sites/{{$s.Name}}/remove">Siteyi kaldır…</a>
+  <a class="btn danger" href="/sites/{{$s.Name}}/remove">{{icon "trash"}}Siteyi kaldır…</a>
 </div>
 {{template "bottom" .}}

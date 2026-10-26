@@ -1,79 +1,80 @@
 {{template "top" .}}
-<section class="form-page">
-  <div class="page-head"><h1>Yeni site</h1></div>
-  {{with .Data.Problems}}
-  <div class="problems">
-    <strong>Düzeltilmesi gerekenler:</strong>
-    <ul>{{range .}}<li>{{.}}</li>{{end}}</ul>
+{{$f := .Data.F}}
+<div class="form-page">
+<a class="crumb" href="/sites">{{icon "back"}}Siteler</a>
+<div class="page-head">
+  <div>
+    <h1>Yeni site</h1>
+    <p class="sub">Panel container'ı, ağı, Caddy'yi ve istersen veritabanını hazırlar; bir adım başarısız olursa hepsi geri alınır.</p>
   </div>
-  {{end}}
-  {{$f := .Data.F}}
-  <form method="post" action="/sites/new" class="wide">
-    <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+</div>
+{{template "problems" .Data.Problems}}
+<form method="post" action="/sites/new" class="stack">
+  <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
 
-    <fieldset>
-      <legend>Site</legend>
-      <div class="row">
-        <label>Proje adı
-          <input name="name" value="{{$f.Name}}" required pattern="[a-z][a-z0-9-]{1,30}[a-z0-9]" placeholder="ornek-site">
-          <span class="hint">küçük harf, rakam, tire. Container ve veritabanı adı da bu olur.</span>
-        </label>
-        <label>Grup
-          <select name="group">
-            {{range .Data.Groups}}<option value="{{.}}"{{if eq . $f.Group}} selected{{end}}>{{.}}</option>{{end}}
-          </select>
-          <span class="hint">klasör: /srv/&lt;grup&gt;/&lt;proje&gt;</span>
-        </label>
-      </div>
-      <label>Alan adları
-        <textarea name="domains" rows="3" required placeholder="ornek.com&#10;www.ornek.com">{{$f.Domains}}</textarea>
-        <span class="hint">her satıra bir tane; hepsi için yüklenmiş bir Cloudflare Origin sertifikası olmalı</span>
+  <fieldset>
+    <legend>Site</legend>
+    <div class="row">
+      <label class="field"><span>Proje adı</span>
+        <input name="name" value="{{$f.Name}}" required pattern="[a-z][a-z0-9-]{1,30}[a-z0-9]" placeholder="ornek-site" autocapitalize="off" spellcheck="false">
+        <span class="hint">küçük harf, rakam, tire. Container ve veritabanı adı da bu olur.</span>
       </label>
-    </fieldset>
-
-    <fieldset>
-      <legend>Uygulama</legend>
-      <label>Docker imajı
-        <input name="image" value="{{$f.Image}}" required placeholder="ghcr.io/kullanici/ornek-site:main">
-        <span class="hint">GitHub Actions'ın GHCR'ye yüklediği imaj (şimdilik public olmalı)</span>
+      <label class="field"><span>Grup</span>
+        <select name="group">
+          {{range .Data.Groups}}<option value="{{.}}"{{if eq . $f.Group}} selected{{end}}>{{.}}</option>{{end}}
+        </select>
+        <span class="hint">klasör: /srv/&lt;grup&gt;/&lt;proje&gt;</span>
       </label>
-      <div class="row">
-        <label>Uygulama portu
-          <input name="port" value="{{$f.Port}}" inputmode="numeric" required>
-          <span class="hint">uygulamanın container içinde dinlediği port</span>
-        </label>
-        <label>Bellek sınırı (MB)
-          <input name="memory_mb" value="{{$f.MemoryMB}}" inputmode="numeric" required>
-          <span class="hint">aşarsa container yeniden başlatılır</span>
-        </label>
-      </div>
-      <label>Kalıcı klasör (container içindeki yol, isteğe bağlı)
-        <input name="data_mount" value="{{$f.DataMount}}" placeholder="/app/uploads">
-        <span class="hint">yüklenen dosyalar burada kalır; sunucuda /srv/&lt;grup&gt;/&lt;proje&gt;/data</span>
-      </label>
-    </fieldset>
-
-    <fieldset>
-      <legend>Veritabanı</legend>
-      <label class="check"><input type="checkbox" name="database"{{if $f.Database}} checked{{end}}> MongoDB veritabanı ve kullanıcısı oluştur</label>
-      <label>Bağlantı adresinin verileceği değişken
-        <input name="db_var" value="{{$f.DBVar}}">
-        <span class="hint">uygulamanın okuduğu ad (MONGODB_URI, MONGO_URL...)</span>
-      </label>
-    </fieldset>
-
-    <fieldset>
-      <legend>Ortam değişkenleri</legend>
-      <label>KEY=DEĞER, her satıra bir tane
-        <textarea name="env" rows="8" class="mono" placeholder="NODE_ENV=production&#10;SESSION_SECRET=...">{{$f.Env}}</textarea>
-        <span class="hint">değerler sunucuda sadece root'un okuyabildiği dosyada saklanır ve panelde tekrar gösterilmez</span>
-      </label>
-    </fieldset>
-
-    <div class="form-actions">
-      <button type="submit">Siteyi oluştur</button>
-      <a class="btn secondary" href="/sites">Vazgeç</a>
     </div>
-  </form>
-</section>
+    <label class="field"><span>Alan adları</span>
+      <textarea name="domains" rows="3" required placeholder="ornek.com&#10;www.ornek.com" autocapitalize="off" spellcheck="false">{{$f.Domains}}</textarea>
+      <span class="hint">her satıra bir tane; hepsi için yüklenmiş bir Cloudflare Origin sertifikası olmalı</span>
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Uygulama</legend>
+    <label class="field"><span>Docker imajı</span>
+      <input name="image" value="{{$f.Image}}" required placeholder="ghcr.io/kullanici/ornek-site:main" class="mono" autocapitalize="off" spellcheck="false">
+      <span class="hint">GitHub Actions'ın GHCR'ye yüklediği imaj (şimdilik public olmalı)</span>
+    </label>
+    <div class="row">
+      <label class="field"><span>Uygulama portu</span>
+        <input name="port" value="{{$f.Port}}" inputmode="numeric" required>
+        <span class="hint">uygulamanın container içinde dinlediği port</span>
+      </label>
+      <label class="field"><span>Bellek sınırı (MB)</span>
+        <input name="memory_mb" value="{{$f.MemoryMB}}" inputmode="numeric" required>
+        <span class="hint">aşarsa container yeniden başlatılır</span>
+      </label>
+    </div>
+    <label class="field"><span>Kalıcı klasör (isteğe bağlı)</span>
+      <input name="data_mount" value="{{$f.DataMount}}" placeholder="/app/uploads" class="mono" autocapitalize="off" spellcheck="false">
+      <span class="hint">container içindeki yol; yüklenen dosyalar burada kalır (sunucuda /srv/&lt;grup&gt;/&lt;proje&gt;/data)</span>
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Veritabanı</legend>
+    <label class="check"><input type="checkbox" name="database"{{if $f.Database}} checked{{end}}> MongoDB veritabanı ve kullanıcısı oluştur</label>
+    <label class="field"><span>Bağlantı adresinin verileceği değişken</span>
+      <input name="db_var" value="{{$f.DBVar}}" class="mono" autocapitalize="off" spellcheck="false">
+      <span class="hint">uygulamanın okuduğu ad (MONGODB_URI, MONGO_URL...)</span>
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Ortam değişkenleri</legend>
+    <label class="field"><span>KEY=DEĞER, her satıra bir tane</span>
+      <textarea name="env" rows="8" class="mono" placeholder="NODE_ENV=production&#10;SESSION_SECRET=..." autocapitalize="off" spellcheck="false">{{$f.Env}}</textarea>
+      <span class="hint">değerler sunucuda sadece root'un okuyabildiği dosyada saklanır ve panelde tekrar gösterilmez</span>
+    </label>
+  </fieldset>
+
+  <div class="form-actions">
+    <button type="submit" class="primary">{{icon "plus"}}Siteyi oluştur</button>
+    <a class="btn" href="/sites">Vazgeç</a>
+  </div>
+</form>
+</div>
 {{template "bottom" .}}
