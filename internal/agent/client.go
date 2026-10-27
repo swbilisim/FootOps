@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -66,6 +67,11 @@ func (c *Client) call(ctx context.Context, method, path string, body, out any) e
 	if err != nil {
 		return fmt.Errorf("agent'a ulaşılamadı: %w", err)
 	}
+	return decode(resp, out)
+}
+
+// decode reads an agent response into out, or its error.
+func decode(resp *http.Response, out any) error {
 	defer drain(resp.Body)
 	if resp.StatusCode/100 != 2 {
 		var e errorResponse
@@ -79,6 +85,34 @@ func (c *Client) call(ctx context.Context, method, path string, body, out any) e
 		return nil
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+func (c *Client) long() Doer {
+	if c.Long != nil {
+		return c.Long
+	}
+	return c.Doer
+}
+
+// send streams body (length bytes, -1 if unknown) to the agent without buffering it.
+// The caller's context bounds it, not a client timeout: a chunk may take minutes.
+func (c *Client) send(ctx context.Context, method, path string, hdr http.Header, body io.Reader, length int64, out any) error {
+	req, err := http.NewRequestWithContext(ctx, method, "http://agent"+path, body)
+	if err != nil {
+		return err
+	}
+	req.ContentLength = length
+	if length == 0 {
+		req.Body = http.NoBody
+	}
+	for k, v := range hdr {
+		req.Header[k] = v
+	}
+	resp, err := c.long().Do(req)
+	if err != nil {
+		return fmt.Errorf("agent'a ulaşılamadı: %w", err)
+	}
+	return decode(resp, out)
 }
 
 func (c *Client) Overview(ctx context.Context) (Overview, error) {
@@ -175,8 +209,16 @@ func (c *Client) TakeSnapshot(ctx context.Context, site string, a Actor) (string
 // DownloadSnapshot opens a copy for streaming. Range and If-Range from hdr are passed on,
 // so a broken download can resume. The caller closes the body.
 func (c *Client) DownloadSnapshot(ctx context.Context, site, id string, a Actor, hdr http.Header) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		"http://agent/v1/sites/"+url.PathEscape(site)+"/snapshots/"+url.PathEscape(id)+"/download", nil)
+	return c.download(ctx, "/v1/sites/"+url.PathEscape(site)+"/snapshots/"+url.PathEscape(id)+"/download", a, hdr)
+}
+
+// DownloadExport opens an export for streaming, like DownloadSnapshot.
+func (c *Client) DownloadExport(ctx context.Context, site, id string, a Actor, hdr http.Header) (*http.Response, error) {
+	return c.download(ctx, "/v1/sites/"+url.PathEscape(site)+"/exports/"+url.PathEscape(id)+"/download", a, hdr)
+}
+
+func (c *Client) download(ctx context.Context, path string, a Actor, hdr http.Header) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://agent"+path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -187,11 +229,7 @@ func (c *Client) DownloadSnapshot(ctx context.Context, site, id string, a Actor,
 	}
 	actor, _ := json.Marshal(a)
 	req.Header.Set(ActorHeader, string(actor))
-	d := c.Long
-	if d == nil {
-		d = c.Doer
-	}
-	resp, err := d.Do(req)
+	resp, err := c.long().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("agent'a ulaşılamadı: %w", err)
 	}
@@ -205,6 +243,94 @@ func (c *Client) DownloadSnapshot(ctx context.Context, site, id string, a Actor,
 		return nil, &Error{Status: resp.StatusCode, Message: e.Error}
 	}
 	return resp, nil
+}
+
+// CreateUpload announces a file to be sent in chunks.
+func (c *Client) CreateUpload(ctx context.Context, site, name string, size int64, a Actor) (UploadStatus, error) {
+	var st UploadStatus
+	err := c.call(ctx, http.MethodPost, "/v1/sites/"+url.PathEscape(site)+"/uploads", CreateUploadRequest{Name: name, Size: size, Actor: a}, &st)
+	return st, err
+}
+
+// Upload returns an upload's state (which chunks are missing).
+func (c *Client) Upload(ctx context.Context, id string) (UploadStatus, error) {
+	var st UploadStatus
+	err := c.call(ctx, http.MethodGet, "/v1/uploads/"+url.PathEscape(id), nil, &st)
+	return st, err
+}
+
+// PutChunk streams chunk n (length bytes) with its hex SHA-256.
+func (c *Client) PutChunk(ctx context.Context, id string, n int, sum string, body io.Reader, length int64) (UploadStatus, error) {
+	var st UploadStatus
+	err := c.send(ctx, http.MethodPut, "/v1/uploads/"+url.PathEscape(id)+"/chunks/"+strconv.Itoa(n),
+		http.Header{ChunkSumHeader: {sum}}, body, length, &st)
+	return st, err
+}
+
+// FinishUpload closes an upload whose chunks are all in.
+func (c *Client) FinishUpload(ctx context.Context, id string, a Actor) (UploadStatus, error) {
+	var st UploadStatus
+	err := c.call(ctx, http.MethodPost, "/v1/uploads/"+url.PathEscape(id)+"/finish", RestartRequest{Actor: a}, &st)
+	return st, err
+}
+
+// RemoveUpload deletes an upload.
+func (c *Client) RemoveUpload(ctx context.Context, id string) error {
+	return c.call(ctx, http.MethodDelete, "/v1/uploads/"+url.PathEscape(id), nil, nil)
+}
+
+// SingleUpload streams a whole file in one request (the panel without JavaScript).
+func (c *Client) SingleUpload(ctx context.Context, site, name string, body io.Reader, a Actor) (UploadStatus, error) {
+	var st UploadStatus
+	actor, _ := json.Marshal(a)
+	err := c.send(ctx, http.MethodPost, "/v1/sites/"+url.PathEscape(site)+"/uploads/single?"+url.Values{"name": {name}}.Encode(),
+		http.Header{ActorHeader: {string(actor)}}, body, -1, &st)
+	return st, err
+}
+
+// CheckImport starts checking an upload for the site's database.
+func (c *Client) CheckImport(ctx context.Context, site, upload, sourceDB string, a Actor) (string, error) {
+	var r JobResponse
+	err := c.call(ctx, http.MethodPost, "/v1/sites/"+url.PathEscape(site)+"/imports",
+		ImportRequest{Upload: upload, SourceDB: sourceDB, Actor: a}, &r)
+	return r.JobID, err
+}
+
+// Import returns the result of an upload's latest check.
+func (c *Client) Import(ctx context.Context, site, upload string) (ImportCheck, error) {
+	var ic ImportCheck
+	err := c.call(ctx, http.MethodGet, "/v1/sites/"+url.PathEscape(site)+"/imports/"+url.PathEscape(upload), nil, &ic)
+	return ic, err
+}
+
+// ApplyImport starts applying a checked upload; confirm is the site's name as typed.
+func (c *Client) ApplyImport(ctx context.Context, site, upload, mode, confirm string, a Actor) (string, error) {
+	var r JobResponse
+	err := c.call(ctx, http.MethodPost, "/v1/sites/"+url.PathEscape(site)+"/imports/"+url.PathEscape(upload)+"/apply",
+		ApplyImportRequest{Mode: mode, Confirm: confirm, Actor: a}, &r)
+	return r.JobID, err
+}
+
+// RestoreSnapshot starts putting one of the site's copies back.
+func (c *Client) RestoreSnapshot(ctx context.Context, site, id, confirm string, a Actor) (string, error) {
+	var r JobResponse
+	err := c.call(ctx, http.MethodPost, "/v1/sites/"+url.PathEscape(site)+"/snapshots/"+url.PathEscape(id)+"/restore",
+		ConfirmRequest{Confirm: confirm, Actor: a}, &r)
+	return r.JobID, err
+}
+
+// Export starts making a FootOps archive of the site.
+func (c *Client) Export(ctx context.Context, site string, a Actor) (string, error) {
+	var r JobResponse
+	err := c.call(ctx, http.MethodPost, "/v1/sites/"+url.PathEscape(site)+"/exports", RestartRequest{Actor: a}, &r)
+	return r.JobID, err
+}
+
+// Exports lists the site's archives waiting for download.
+func (c *Client) Exports(ctx context.Context, site string) ([]ExportInfo, error) {
+	var out []ExportInfo
+	err := c.call(ctx, http.MethodGet, "/v1/sites/"+url.PathEscape(site)+"/exports", nil, &out)
+	return out, err
 }
 
 // CancelJob asks a running job to stop.

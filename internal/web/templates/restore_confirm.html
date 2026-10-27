@@ -1,0 +1,23 @@
+{{template "top" .}}
+{{$s := .Data.S}}{{$n := .Data.Snap}}
+<div class="dialog">
+  <a class="crumb" href="/sites/{{$s.Name}}">{{icon "back"}}{{$s.Name}}</a>
+  <div class="card">
+    <div class="dialog-icon">{{icon "undo"}}</div>
+    <h1>Kopya geri yüklensin mi?</h1>
+    <p><strong>{{ts $n.Created}}</strong> tarihli kopya ({{reasonTR $n.Reason}}): {{len $n.Collections}} koleksiyon, {{$n.Documents}} belge, {{bytes $n.Bytes}}.</p>
+    <p>Sitenin <span class="mono">{{$s.Name}}</span> veritabanı bu kopyanın aynısı olur; sonradan eklenen kayıtlar gider. Önce şu anki halin de kopyası alınır, yani bu işlem de geri alınabilir. Site birkaç saniye durur.</p>
+    {{with .Data.Problem}}<div class="notice bad">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
+    <form method="post" action="/sites/{{$s.Name}}/snapshots/{{$n.ID}}/restore">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <label class="field"><span>Onaylamak için site adını yaz: <strong>{{$s.Name}}</strong></span>
+        <input name="confirm" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      </label>
+      <div class="form-actions">
+        <button type="submit" class="primary">{{icon "undo"}}Geri yükle</button>
+        <a class="btn" href="/sites/{{$s.Name}}">Vazgeç</a>
+      </div>
+    </form>
+  </div>
+</div>
+{{template "bottom" .}}

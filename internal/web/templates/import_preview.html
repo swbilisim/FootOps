@@ -1,0 +1,95 @@
+{{template "top" .}}
+{{$s := .Data.S}}
+<div class="form-page">
+<a class="crumb" href="/sites/{{$s.Name}}">{{icon "back"}}{{$s.Name}}</a>
+<div class="page-head">
+  <div>
+    <h1>İçe aktarma önizlemesi</h1>
+    {{with .Data.U}}<p class="sub"><span class="mono">{{.Name}}</span> · {{bytes .Size}} · yüklendi {{ts .Created}}</p>{{end}}
+  </div>
+</div>
+
+{{if .Data.Gone}}
+<div class="notice warn">{{icon "alert"}}<div>Bu yükleme bulunamadı: içe aktarılmış ya da 24 saatten eski olduğu için silinmiş olabilir.</div></div>
+<div class="form-actions"><a class="btn primary" href="/sites/{{$s.Name}}/import">{{icon "upload"}}Yeni dosya yükle</a></div>
+{{else if .Data.Unchecked}}
+<div class="notice info">{{icon "info"}}<div>Dosya yüklendi ama henüz kontrol edilmedi.</div></div>
+<form method="post" action="/sites/{{$s.Name}}/import/{{.Data.ID}}/check" class="form-actions">
+  <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+  <button type="submit" class="primary">{{icon "check"}}Kontrol et</button>
+</form>
+{{else if .Data.Err}}
+<div class="notice bad">{{icon "alert"}}<div>Kontrol sonucu okunamadı: {{.Data.Err}}</div></div>
+{{else}}
+{{$c := .Data.C}}
+<div class="table-wrap">
+<table class="kv">
+  <tr><th>Dosya türü</th><td>{{if eq $c.Format "footops"}}FootOps arşivi{{with $c.Manifest}} — {{.Site}} sitesinden, {{ts .Created}}{{end}}{{else}}mongodump arşivi{{end}}{{if $c.Section.Gzip}} (gzip){{end}}</td></tr>
+  <tr><th>Bütünlük</th><td><span class="badge ok">doğrulandı</span> <span class="mono small muted">sha256 {{$c.SHA256}}</span></td></tr>
+  <tr><th>Kaynak</th><td>MongoDB {{$c.ServerVersion}}, araç {{$c.ToolVersion}}</td></tr>
+  {{if $c.SourceDB}}<tr><th>Veritabanı</th><td><span class="mono">{{$c.SourceDB}}</span> → bu sitenin <span class="mono">{{$c.Target}}</span> veritabanı{{if ne $c.SourceDB $c.Target}} (ad otomatik değişir){{end}}</td></tr>{{end}}
+  {{with $c.Skipped}}<tr><th>Alınmayacak</th><td>Sistem koleksiyonları: {{range $i, $n := .}}{{if $i}}, {{end}}<span class="mono">{{$n}}</span>{{end}} (kullanıcılar, roller ve sistem verisi hiç içe aktarılmaz)</td></tr>{{end}}
+  {{if $c.HasFiles}}<tr><th>Dosyalar</th><td>Arşivde dosyalar da var; bu sürüm yalnız veritabanını içe aktarır (dosyalar sonraki sürümde).</td></tr>{{end}}
+</table>
+</div>
+
+{{if not $c.SourceDB}}
+<div class="section-head"><h2>Hangi veritabanı?</h2></div>
+<form method="post" action="/sites/{{$s.Name}}/import/{{.Data.ID}}/check" class="card stack">
+  <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+  <p>Arşivde birden çok veritabanı var. Bu siteye hangisi aktarılsın? Seçince yalnız o veritabanı deneme olarak yüklenip sayılır.</p>
+  <div class="checks">
+  {{range $d := $c.Databases}}<label class="check"><input type="radio" name="source_db" value="{{$d}}"{{if eq $d $s.Name}} checked{{end}} required> <span class="mono">{{$d}}</span></label>{{end}}
+  </div>
+  <div class="form-actions"><button type="submit" class="primary">{{icon "check"}}Seç ve kontrol et</button></div>
+</form>
+{{else}}
+<div class="section-head"><h2>Koleksiyonlar</h2></div>
+<p class="muted small">Arşivdeki sayılar deneme yüklemesinden (geçici veritabanı, sonra silindi); sitedeki sayılar kontrol anından ({{ts $c.Checked}}).</p>
+<div class="table-wrap">
+<table class="responsive">
+  <thead><tr><th>Koleksiyon</th><th>Arşivde</th><th>Sitede şu an</th><th>Not</th></tr></thead>
+  <tbody>
+  {{range .Data.Rows}}
+    <tr>
+      <td class="primary mono">{{.Name}}</td>
+      <td data-label="Arşivde">{{if .View}}{{if .InArchive}}görünüm{{else}}—{{end}}{{else if .InArchive}}{{.Archive}}{{else}}—{{end}}</td>
+      <td data-label="Sitede şu an">{{if .View}}{{if .Here}}görünüm{{else}}—{{end}}{{else if .Here}}{{.Now}}{{else}}—{{end}}</td>
+      <td data-label="Not"><span class="note-{{if eq .Note "aynı"}}same{{else if eq .Note "yeni"}}new{{else if eq .Note "farklı"}}diff{{else if eq .Note "görünüm"}}same{{else}}gone{{end}}">{{.Note}}</span></td>
+    </tr>
+  {{end}}
+    <tr><td class="primary"><strong>Toplam</strong></td><td data-label="Arşivde"><strong>{{$c.ArchiveDocs}}</strong></td><td data-label="Sitede şu an"><strong>{{$c.CurrentDocs}}</strong></td><td></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="section-head"><h2>Uygula</h2></div>
+{{with .Data.Problem}}<div class="notice bad" role="alert">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
+<form method="post" action="/sites/{{$s.Name}}/import/{{.Data.ID}}/apply" class="card stack">
+  <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+  <div class="choices" role="radiogroup" aria-label="Mod">
+    <label class="choice"><input type="radio" name="mode" value="replace"{{if ne $.Data.Mode "add"}} checked{{end}}>
+      <span><strong>Tamamen değiştir</strong> (önerilen)<br><span class="muted small">Veritabanı arşivdekinin aynısı olur; arşivde olmayan koleksiyonlar silinir.</span></span></label>
+    <label class="choice"><input type="radio" name="mode" value="add"{{if eq $.Data.Mode "add"}} checked{{end}}>
+      <span><strong>Yalnız olmayan koleksiyonları ekle</strong><br><span class="muted small">Sitede zaten olan koleksiyonlara hiç dokunulmaz; yalnız arşivdeki yeni koleksiyonlar eklenir.</span></span></label>
+  </div>
+  <p class="hint">Önce şu anki veritabanının güvenlik kopyası alınır (7 gün saklanır). Site birkaç saniye durur; sonra başlatılıp sayfası kontrol edilir. Sayımlar tutmazsa ya da site açılmazsa eski hali otomatik geri yüklenir.</p>
+  <label class="field"><span>Onaylamak için site adını yaz: <strong>{{$s.Name}}</strong></span>
+    <input name="confirm" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+  </label>
+  <div class="form-actions">
+    <button type="submit" class="primary">{{icon "database"}}İçe aktar</button>
+    <a class="btn" href="/sites/{{$s.Name}}">Vazgeç</a>
+  </div>
+</form>
+{{end}}
+{{end}}
+
+{{if not .Data.Gone}}
+<form method="post" action="/uploads/{{.Data.ID}}/cancel" class="form-actions">
+  <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+  <button type="submit" class="ghost sm">{{icon "trash"}}Yüklenen dosyayı sil</button>
+</form>
+{{end}}
+</div>
+{{template "bottom" .}}

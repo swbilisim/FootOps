@@ -37,8 +37,16 @@ func current(r *http.Request) Session {
 
 // requireSession admits requests with a valid session created on the same listener and,
 // for the tunnel, by the same Cloudflare Access identity. State-changing requests must
-// carry the session's CSRF token.
-func (s *Server) requireSession(h http.HandlerFunc) http.Handler {
+// carry the session's CSRF token: forms in a "csrf" field, upload.js in the X-CSRF-Token
+// header (its bodies are JSON or file chunks, never parsed as a form).
+func (s *Server) requireSession(h http.HandlerFunc) http.Handler { return s.session(h, false) }
+
+// requireStreamSession is for the one multipart form (an upload without JavaScript):
+// the handler reads the CSRF field itself, as the first part of the stream, because
+// parsing the form here would buffer the file.
+func (s *Server) requireStreamSession(h http.HandlerFunc) http.Handler { return s.session(h, true) }
+
+func (s *Server) session(h http.HandlerFunc, stream bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ri := info(r)
 		c, err := r.Cookie(sessionCookie)
@@ -59,7 +67,18 @@ func (s *Server) requireSession(h http.HandlerFunc) http.Handler {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
-		if r.Method == http.MethodPost {
+		switch tok := r.Header.Get(csrfHeader); {
+		case r.Method == http.MethodGet || r.Method == http.MethodHead:
+		case stream && r.Method == http.MethodPost:
+		case tok != "" || r.Method != http.MethodPost:
+			if subtle.ConstantTimeCompare([]byte(tok), []byte(sess.CSRF)) != 1 {
+				http.Error(w, "geçersiz istek (CSRF); sayfayı yenileyip tekrar dene", http.StatusForbidden)
+				return
+			}
+			if r.Method == http.MethodPost {
+				r.Body = http.MaxBytesReader(w, r.Body, maxAuthedForm)
+			}
+		default:
 			r.Body = http.MaxBytesReader(w, r.Body, maxAuthedForm)
 			if err := r.ParseForm(); err != nil ||
 				subtle.ConstantTimeCompare([]byte(r.PostFormValue("csrf")), []byte(sess.CSRF)) != 1 {
@@ -238,6 +257,7 @@ type alertSummary struct {
 var navOf = map[string]string{
 	"dashboard": "server", "container": "server", "logs": "server", "restart": "server",
 	"sites": "sites", "site": "sites", "site_new": "sites", "site_edit": "sites", "site_confirm": "sites", "job": "sites",
+	"import": "sites", "import_preview": "sites", "restore_confirm": "sites",
 	"certs": "certs", "cert_remove": "certs",
 	"audit": "audit",
 }
@@ -366,6 +386,18 @@ var funcs = template.FuncMap{
 	"daysLeft": func(t, now time.Time) int {
 		return int(math.Floor(t.Sub(now).Hours() / 24))
 	},
+	"jobTitle": func(kind string) string {
+		if t, ok := jobTitles[kind]; ok {
+			return t
+		}
+		return kind
+	},
+	"reasonTR": func(r string) string {
+		if t, ok := reasonNames[r]; ok {
+			return t
+		}
+		return r
+	},
 	"level":  levelOf,
 	"icon":   icon,
 	"logo":   func() template.HTML { return logo },
@@ -401,6 +433,13 @@ var funcs = template.FuncMap{
 }
 
 var (
+	jobTitles = map[string]string{
+		"site.create": "Site oluşturuluyor", "site.remove": "Site kaldırılıyor", "site.update": "Site güncelleniyor",
+		"site.redeploy": "Yeniden dağıtılıyor", "db.snapshot": "Veritabanı kopyası", "import.check": "İçe aktarma: kontrol",
+		"import.apply": "Veritabanı içe aktarılıyor", "db.restore": "Kopyadan geri yükleme", "site.export": "Dışa aktarma",
+		"db.recover": "Yarıda kalan işlemi tamamlama",
+	}
+	reasonNames = map[string]string{"manual": "elle", "before-import": "içe aktarmadan önce", "before-restore": "geri yüklemeden önce"}
 	stateNames  = map[string]string{"running": "çalışıyor", "exited": "durdu", "restarting": "yeniden başlıyor", "created": "oluşturuldu", "paused": "duraklatıldı", "dead": "ölü", "removing": "siliniyor"}
 	healthNames = map[string]string{"healthy": "sağlıklı", "unhealthy": "sağlıksız", "starting": "başlıyor"}
 )

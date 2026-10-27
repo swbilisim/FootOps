@@ -109,6 +109,19 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/sites/{name}/snapshots", s.listSnapshots)
 	mux.HandleFunc("POST /v1/sites/{name}/snapshots", s.takeSnapshot)
 	mux.HandleFunc("GET /v1/sites/{name}/snapshots/{id}/download", s.downloadSnapshot)
+	mux.HandleFunc("POST /v1/sites/{name}/snapshots/{id}/restore", s.restoreSnapshot)
+	mux.HandleFunc("POST /v1/sites/{name}/uploads", s.createUpload)
+	mux.HandleFunc("POST /v1/sites/{name}/uploads/single", s.singleUpload)
+	mux.HandleFunc("GET /v1/uploads/{id}", s.getUpload)
+	mux.HandleFunc("PUT /v1/uploads/{id}/chunks/{n}", s.putChunk)
+	mux.HandleFunc("POST /v1/uploads/{id}/finish", s.finishUpload)
+	mux.HandleFunc("DELETE /v1/uploads/{id}", s.removeUpload)
+	mux.HandleFunc("POST /v1/sites/{name}/imports", s.checkImport)
+	mux.HandleFunc("GET /v1/sites/{name}/imports/{id}", s.getImport)
+	mux.HandleFunc("POST /v1/sites/{name}/imports/{id}/apply", s.applyImport)
+	mux.HandleFunc("POST /v1/sites/{name}/exports", s.startExport)
+	mux.HandleFunc("GET /v1/sites/{name}/exports", s.listExports)
+	mux.HandleFunc("GET /v1/sites/{name}/exports/{id}/download", s.downloadExport)
 	mux.HandleFunc("GET /v1/jobs/{id}", s.getJob)
 	mux.HandleFunc("POST /v1/jobs/{id}/cancel", s.cancelJob)
 	mux.HandleFunc("GET /v1/certs", s.listCerts)
@@ -126,7 +139,7 @@ func (s *Server) checkPeer(next http.Handler) http.Handler {
 			writeErr(w, http.StatusForbidden, "forbidden")
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, maxBody)
+		r.Body = http.MaxBytesReader(w, r.Body, bodyLimit(r))
 		next.ServeHTTP(w, r)
 	})
 }
@@ -212,6 +225,15 @@ func (s *Server) restart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	entry := AuditEntry{Actor: req.Actor, Action: "container.restart", Target: name}
+	// A site stopped for a restore must stay stopped until the job starts it.
+	if s.Jobs != nil {
+		if j, busy := s.Jobs.Running(); busy && j.Target == name {
+			err := fmt.Errorf("%s için bir işlem sürüyor (%s); bitince tekrar dene", name, j.Kind)
+			s.record(entry, err)
+			writeErr(w, http.StatusConflict, err.Error())
+			return
+		}
+	}
 	if _, err := s.Docker.Inspect(r.Context(), name); err != nil {
 		s.record(entry, err)
 		s.dockerErr(w, err)
@@ -309,6 +331,7 @@ type Config struct {
 	JobsDir     string // finished jobs, so results survive a restart; empty keeps none
 	SnapshotDir string
 	StagingDir  string
+	RecoveryDir string // restores in progress, finished after an agent restart
 	PanelUser   string
 	PanelHost   string // refused as a site domain
 }
@@ -345,9 +368,11 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 	d := docker.New(docker.DefaultSocket)
 	ops := &SiteOps{Store: sites.Store{Root: "/"}, Docker: d, Run: run.Exec{}, PanelHost: cfg.PanelHost}
 	data := &DataOps{Store: ops.Store, Docker: d, Run: run.Exec{KillOnCancel: true}, Stream: run.StreamExec{},
-		Staging: staging.New(cfg.StagingDir, staging.DefaultMax), SnapshotDir: cfg.SnapshotDir}
+		Staging: staging.New(cfg.StagingDir, staging.DefaultMax), SnapshotDir: cfg.SnapshotDir,
+		RecoveryDir: cfg.RecoveryDir, Sites: ops}
 	audit := NewAudit(cfg.AuditPath)
 	jobs := NewJobs()
+	tempDBs := false
 	if cfg.JobsDir != "" {
 		j, interrupted, err := LoadJobs(cfg.JobsDir)
 		if err != nil {
@@ -356,6 +381,7 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 		jobs = j
 		for _, job := range interrupted {
 			logger.Printf("yarıda kalan iş: %s %s (%s)", job.Kind, job.Target, job.ID)
+			tempDBs = tempDBs || job.Kind == "import.check"
 			_ = audit.Record(AuditEntry{Actor: job.Actor, Action: job.Kind, Target: job.Target, Detail: job.Err})
 			// Its staging may hold a connection file with a password (rule K5).
 			if err := data.Staging.Remove(job.ID); err != nil {
@@ -369,6 +395,7 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 	for _, x := range data.SweepSnapshots(true) {
 		logger.Printf("yarım kalan veritabanı kopyası silindi: %s", x)
 	}
+	startRecovery(jobs, data, audit, tempDBs || data.TempLeft(), logger)
 	go housekeeping(ctx, jobs, data, logger)
 	sampler := NewSampler(d, nil)
 	sampler.Alerts = NewAlerter()
@@ -418,6 +445,58 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 	}
 	logger.Printf("agent listening on %s (uid %d allowed)", cfg.Socket, uid)
 	return s.Serve(ctx, l)
+}
+
+// startRecovery puts back what an agent stop interrupted, as a job (so it shows in the
+// panel and no other work starts meanwhile): temporary databases of a check are
+// dropped, restores cut short are rolled back to their safety copy.
+func startRecovery(jobs *Jobs, data *DataOps, audit *Audit, tempDBs bool, logger *log.Logger) {
+	recs := data.Recoveries()
+	if len(recs) == 0 && !tempDBs {
+		return
+	}
+	var targets []string
+	for _, r := range recs {
+		targets = append(targets, r.Site)
+	}
+	target := strings.Join(targets, ", ")
+	if target == "" {
+		target = "geçici veritabanları"
+	}
+	_, err := jobs.Start(JobSpec{Kind: "db.recover", Target: target, Actor: Actor{User: "footops", Via: "agent"}},
+		func(ctx context.Context, t *Task) error {
+			if err := data.WaitMongo(ctx); err != nil {
+				// Records are tried once: an old one must never be replayed over newer data.
+				for _, r := range recs {
+					t.Step(fmt.Sprintf("✗ %s: kurtarılamadı; site durmuş, veritabanı yarım olabilir. Veritabanı kopyaları → %s → Geri yükle",
+						r.Site, orDash(r.Snapshot)))
+					data.removeRecovery(r.Job)
+				}
+				return err
+			}
+			if tempDBs {
+				n, err := data.DropTempDatabases(ctx)
+				if err != nil {
+					t.Step("⚠ Geçici veritabanları silinemedi: " + err.Error())
+				} else {
+					t.Step("✓ Yarıda kalan kontrolün geçici veritabanı silindi (" + n + ")")
+				}
+			}
+			var errs []error
+			for _, r := range recs {
+				if err := data.Recover(ctx, t, r); err != nil {
+					t.Step("✗ " + err.Error())
+					errs = append(errs, err)
+				}
+			}
+			return errors.Join(errs...)
+		}, func(j Job) {
+			_ = audit.Record(AuditEntry{Actor: j.Actor, Action: j.Kind, Target: j.Target, OK: j.Err == "", Detail: j.Err})
+			logger.Printf("kurtarma bitti: %s %s", j.Target, map[bool]string{true: "başarılı", false: "HATA: " + j.Err}[j.Err == ""])
+		})
+	if err != nil {
+		logger.Printf("kurtarma başlatılamadı: %v", err)
+	}
 }
 
 // keepHistory saves the metric history every few minutes until ctx is done.
@@ -669,37 +748,15 @@ func (s *Server) takeSnapshot(w http.ResponseWriter, r *http.Request) {
 	s.jobResponse(w, id, err)
 }
 
-// downloadSnapshot serves a copy with Range support, so a broken download resumes. Only
-// downloads from the start are audited; a resumed one is the same download.
+// downloadSnapshot serves a copy (see serveDownload).
 func (s *Server) downloadSnapshot(w http.ResponseWriter, r *http.Request) {
 	snap, path, err := s.Data.SnapshotFile(r.PathValue("name"), r.PathValue("id"))
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err.Error())
 		return
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		writeErr(w, http.StatusNotFound, "kopya bulunamadı")
-		return
-	}
-	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if r.Method != http.MethodHead && !resumes(r.Header.Get("Range")) {
-		var a Actor
-		_ = json.Unmarshal([]byte(r.Header.Get(ActorHeader)), &a)
-		s.record(AuditEntry{Actor: a, Action: "db.snapshot.download", Target: snap.Site + " " + snap.ID,
-			Detail: humanBytes(st.Size())}, nil)
-	}
-	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(downloadTimeout))
-	h := w.Header()
-	h.Set("Content-Type", "application/gzip")
-	h.Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s-%s.archive.gz"`, snap.Site, snap.ID))
-	h.Set("X-Content-Sha256", snap.SHA256)
-	http.ServeContent(w, r, "", st.ModTime(), f)
+	s.serveDownload(w, r, path, download{Name: snap.Site + "-" + snap.ID + ".archive.gz", Type: "application/gzip",
+		SHA256: snap.SHA256, Action: "db.snapshot.download", Target: snap.Site + " " + snap.ID})
 }
 
 // resumes reports whether a Range header only asks for the rest of a file from a

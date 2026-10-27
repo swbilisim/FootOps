@@ -10,8 +10,12 @@ package web
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"html"
+	"io"
+	"log"
 	"math"
 	"net/http"
 	"path/filepath"
@@ -122,6 +126,18 @@ func (p *previewAgent) Snapshots(_ context.Context, site string) ([]agent.Snapsh
 func (p *previewAgent) Job(_ context.Context, id string) (agent.Job, error) {
 	j := agent.Job{ID: id, Kind: "db.snapshot", Target: "magaza", Cancellable: true, Started: time.Now().Add(-4 * time.Second),
 		Steps: []string{"✓ Veritabanı magaza: 10 koleksiyon, 89 belge, 41.2 KB veri", "… mongodump çalışıyor (sınır: 512 MB bellek, %50 CPU)"}, Bytes: 3 << 20}
+	if id == "import" {
+		return agent.Job{ID: id, Kind: "import.apply", Target: "magaza", Started: time.Now().Add(-9 * time.Second), Finished: time.Now(),
+			Done: true, Result: "20261027-110000", Usage: run.Usage{PeakMem: 96 << 20, CPU: 2 * time.Second},
+			Steps: []string{"✓ Veritabanı magaza: 4 koleksiyon, 2759 belge, 1.1 MB veri", "… mongodump çalışıyor (sınır: 512 MB bellek, %50 CPU)",
+				"✓ mongodump bitti: 4 koleksiyon, 2759 belge → 240.1 KB (0.9 sn, en çok 61.0 MB bellek, 210 ms CPU)",
+				"✓ Kopya doğrulandı (gzip bütünlüğü, mongodump arşivi)", "✓ Kopya hazır: 20261027-110000 (sunucuda 7 gün saklanır)",
+				"✓ Site durduruldu (bu sırada ziyaretçiler hata sayfası görür)", "… yüklenen dosya magaza-20261027-091500.footops.tar yükleniyor (tamamen değiştir)",
+				"✓ Arşivde olmayan 1 koleksiyon silindi: oturumlar", "… mongorestore çalışıyor (sınır: 512 MB bellek, %50 CPU)",
+				"✓ Yüklendi ve sayıldı: 4 koleksiyon, 2641 belge (önce 2759 belge) — 2.1 sn, en çok 96.0 MB bellek, 1.4 sn CPU",
+				"✓ Site başlatıldı", "✓ Site sağlıklı cevap veriyor", "✓ Yüklenen dosya sunucudan silindi",
+				"ℹ Geri almak için: site sayfası → Veritabanı kopyaları → 20261027-110000 → Geri yükle"}}, nil
+	}
 	if id == "done" {
 		j.Done, j.Finished, j.Result = true, time.Now(), "20261027-110000"
 		j.Usage = run.Usage{PeakMem: 38 << 20, CPU: 420 * time.Millisecond}
@@ -129,6 +145,59 @@ func (p *previewAgent) Job(_ context.Context, id string) (agent.Job, error) {
 			"✓ Kopya doğrulandı (gzip bütünlüğü, mongodump arşivi)", "✓ Kopya hazır: 20261027-110000 (sunucuda 7 gün saklanır)")
 	}
 	return j, nil
+}
+
+// Imports: /sites/magaza/import/<testUpload> shows a checked upload; /jobs/import shows
+// a finished import.
+func (p *previewAgent) Upload(_ context.Context, id string) (agent.UploadStatus, error) {
+	return agent.UploadStatus{Upload: agent.Upload{ID: id, Site: "magaza", Name: "magaza-20261027-091500.footops.tar",
+		Size: 9 << 20, Finished: true, Created: time.Now().Add(-3 * time.Minute)}}, nil
+}
+
+// CreateUpload and PutChunk check what upload.js sends: every chunk's SHA-256.
+func (p *previewAgent) CreateUpload(_ context.Context, site, name string, size int64, a agent.Actor) (agent.UploadStatus, error) {
+	st := agent.UploadStatus{Upload: agent.Upload{ID: testUpload, Site: site, Name: name, Size: size, Chunk: agent.UploadChunk}}
+	for i := 0; i < st.Chunks(); i++ {
+		st.Got, st.Missing = append(st.Got, false), append(st.Missing, i)
+	}
+	return st, nil
+}
+
+func (p *previewAgent) PutChunk(_ context.Context, id string, n int, sum string, body io.Reader, length int64) (agent.UploadStatus, error) {
+	h := sha256.New()
+	got, err := io.Copy(h, body)
+	if err != nil {
+		return agent.UploadStatus{}, err
+	}
+	ok := hex.EncodeToString(h.Sum(nil)) == sum
+	log.Printf("preview: chunk %d, %d bytes, sha256 ok=%v", n, got, ok)
+	if !ok {
+		return agent.UploadStatus{}, &agent.Error{Status: 422, Message: "parça bozuk geldi"}
+	}
+	return agent.UploadStatus{}, nil
+}
+
+func (p *previewAgent) FinishUpload(_ context.Context, id string, a agent.Actor) (agent.UploadStatus, error) {
+	log.Printf("preview: upload %s finished", id)
+	return agent.UploadStatus{Upload: agent.Upload{ID: id, Site: "magaza", Finished: true}}, nil
+}
+
+func (p *previewAgent) Import(context.Context, string, string) (agent.ImportCheck, error) {
+	return agent.ImportCheck{Upload: testUpload, Site: "magaza", Format: agent.FormatFootOps,
+		SHA256:        "9f2c4e0b7d1a5c3e8f6b2a4d0c9e7f1b3a5d8c2e6f0b4a7d9c1e3f5a8b2d6c0e",
+		Manifest:      &agent.ExportManifest{Site: "magaza", Created: time.Now().Add(-26 * time.Hour)},
+		ServerVersion: "7.0.45", ToolVersion: "100.10.0", Databases: []string{"magaza"}, SourceDB: "magaza", Target: "magaza",
+		Archive: map[string]int64{"urunler": 412, "kategoriler": 18, "siparisler": 2210, "ayarlar": 1}, ArchiveDocs: 2641, Views: []string{"ucuz_urunler"},
+		Current: map[string]int64{"urunler": 415, "kategoriler": 18, "siparisler": 2230, "oturumlar": 96}, CurrentDocs: 2759,
+		Checked: time.Now().Add(-time.Minute)}, nil
+}
+
+func (p *previewAgent) Exports(_ context.Context, site string) ([]agent.ExportInfo, error) {
+	if site != "magaza" {
+		return nil, nil
+	}
+	return []agent.ExportInfo{{ID: "exp1", Site: site, File: "magaza-20261027-091500.footops.tar", Bytes: 9 << 20,
+		Created: time.Now().Add(-40 * time.Minute), Collections: 4, Documents: 2641}}, nil
 }
 
 func (p *previewAgent) Certs(context.Context) ([]sites.Cert, error) {

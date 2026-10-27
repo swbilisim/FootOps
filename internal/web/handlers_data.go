@@ -29,14 +29,8 @@ func (s *Server) snapshotTake(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/jobs/"+id, http.StatusSeeOther)
 }
 
-// snapshotDownload streams a copy from the agent. Range requests pass through, so a
-// browser can resume a broken download; nothing is buffered or written to disk here.
+// snapshotDownload streams a copy from the agent.
 func (s *Server) snapshotDownload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet { // GET patterns also match HEAD; a HEAD would pull the whole file
-		w.Header().Set("Allow", http.MethodGet)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	st, ok := s.findSite(w, r)
 	if !ok {
 		return
@@ -46,7 +40,20 @@ func (s *Server) snapshotDownload(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	resp, err := s.agent.DownloadSnapshot(r.Context(), st.Spec.Name, id, s.actor(r), r.Header)
+	s.passDownload(w, r, func() (*http.Response, error) {
+		return s.agent.DownloadSnapshot(r.Context(), st.Spec.Name, id, s.actor(r), r.Header)
+	})
+}
+
+// passDownload streams a file from the agent. Range requests pass through, so a browser
+// can resume a broken download; nothing is buffered or written to disk here.
+func (s *Server) passDownload(w http.ResponseWriter, r *http.Request, open func() (*http.Response, error)) {
+	if r.Method != http.MethodGet { // GET patterns also match HEAD; a HEAD would pull the whole file
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	resp, err := open()
 	if err != nil {
 		var ae *agent.Error
 		if errors.As(err, &ae) && (ae.Status == http.StatusNotFound || ae.Status == http.StatusRequestedRangeNotSatisfiable) {

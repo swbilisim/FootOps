@@ -52,3 +52,4 @@ docker cp "$WORK/footops" "$NAME:/root/footops"
 python3 install.py "$NAME" "$WORK/id_it.pub" "$WORK/login"
 docker exec "$NAME" rm -f /root/footops
 python3 f0.py "$NAME" "$WORK/login"
+python3 f2.py "$NAME" "$WORK/login"

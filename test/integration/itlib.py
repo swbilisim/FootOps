@@ -1,0 +1,78 @@
+"""Helpers shared by the scenario scripts: commands in the test container, the agent API,
+waiting, measuring, TOTP. The container name is the first command-line argument."""
+import base64
+import hashlib
+import hmac
+import json
+import struct
+import subprocess
+import sys
+import time
+
+C = sys.argv[1]
+SITE, DOMAIN = "itsite", "it.example.com"
+
+
+def sh(cmd, stdin=None, check=True):
+    p = subprocess.run(["docker", "exec", "-i", C, "sh", "-c", cmd], input=stdin, capture_output=True)
+    if check and p.returncode != 0:
+        fail("command failed: %s\n%s%s" % (cmd, p.stdout.decode(errors="replace"), p.stderr.decode(errors="replace")))
+    return p.stdout.decode(errors="replace")
+
+
+def fail(msg):
+    print("FAIL:", msg)
+    sys.exit(1)
+
+
+def ok(msg):
+    print("  ✓", msg)
+
+
+def api(method, path, body=None, check=True):
+    data = json.dumps(body).encode() if body is not None else b""
+    out = sh("curl -sS -w '\\n%%{http_code}' -X %s -H 'Content-Type: application/json' --data-binary @- "
+             "--unix-socket /run/footops/agent.sock http://agent%s" % (method, path), stdin=data)
+    text, code = out.rsplit("\n", 1)
+    code = int(code)
+    if check and code // 100 != 2:
+        fail("%s %s -> %d %s" % (method, path, code, text))
+    return code, (json.loads(text) if text.strip() else None)
+
+
+ACTOR = {"user": "it", "ip": "test", "via": "ssh"}
+
+
+def wait_job(jid, timeout=600):
+    end = time.time() + timeout
+    while time.time() < end:
+        _, j = api("GET", "/v1/jobs/" + jid)
+        if j["done"]:
+            return j
+        time.sleep(0.5)
+    fail("job %s did not finish" % jid)
+
+
+def wait(cond, what, timeout=120):
+    end = time.time() + timeout
+    while time.time() < end:
+        if cond():
+            return
+        time.sleep(0.3)
+    fail("timed out waiting for " + what)
+
+
+def tools():
+    return sh("docker ps -a --filter name=footops-job- --format '{{.Names}}'").split()
+
+
+def rss(pattern):
+    out = sh("ps -eo rss=,args= | grep '%s' | grep -v grep || true" % pattern)
+    return max([int(l.split()[0]) for l in out.splitlines() if l.strip()] or [0]) * 1024
+
+
+def totp(secret):
+    key = base64.b32decode(secret.upper() + "=" * (-len(secret) % 8))
+    h = hmac.new(key, struct.pack(">Q", int(time.time() // 30)), hashlib.sha1).digest()
+    o = h[-1] & 0x0F
+    return "%06d" % ((struct.unpack(">I", h[o:o + 4])[0] & 0x7FFFFFFF) % 1000000)

@@ -1,10 +1,10 @@
 {{template "top" .}}
 {{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
 {{with .Data.J}}
-{{if eq .Kind "site.create" "site.remove"}}<a class="crumb" href="/sites">{{icon "back"}}Siteler</a>{{else}}<a class="crumb" href="/sites/{{.Target}}">{{icon "back"}}{{.Target}}</a>{{end}}
+{{if eq .Kind "site.create" "site.remove" "db.recover"}}<a class="crumb" href="/sites">{{icon "back"}}Siteler</a>{{else}}<a class="crumb" href="/sites/{{.Target}}">{{icon "back"}}{{.Target}}</a>{{end}}
 <div class="page-head">
   <div>
-    <h1>{{if eq .Kind "site.create"}}Site oluşturuluyor{{else if eq .Kind "site.remove"}}Site kaldırılıyor{{else if eq .Kind "site.update"}}Site güncelleniyor{{else if eq .Kind "db.snapshot"}}Veritabanı kopyası{{else}}Yeniden dağıtılıyor{{end}}: {{.Target}}</h1>
+    <h1>{{jobTitle .Kind}}: {{.Target}}</h1>
     <p class="sub">başlama {{ts .Started}}{{if .Done}} · süre {{took (.Finished.Sub .Started)}}{{end}}</p>
   </div>
   <div class="page-actions" data-live-id="job-state">
@@ -26,8 +26,15 @@
 {{if .Done}}
 {{if or .Usage.PeakMem .Usage.CPU}}<p class="hint">Kaynak kullanımı: en çok {{bytes .Usage.PeakMem}} bellek, {{took .Usage.CPU}} CPU{{if .Bytes}}, {{bytes .Bytes}} yazıldı{{end}}.</p>{{end}}
 <div class="form-actions">
-  {{if and (eq .Kind "db.snapshot") (not .Err) .Result}}<a class="btn primary" href="/sites/{{.Target}}/snapshots/{{.Result}}/download" download>{{icon "download"}}Kopyayı indir</a>{{end}}
-  {{if and (not .Err) (ne .Kind "site.remove")}}<a class="btn{{if ne .Kind "db.snapshot"}} primary{{end}}" href="/sites/{{.Target}}">Siteye git</a>{{end}}
+  {{$linked := and (not .Err) .Result (eq .Kind "db.snapshot" "import.check" "import.apply" "db.restore" "site.export")}}
+  {{if $linked}}
+    {{if eq .Kind "db.snapshot"}}<a class="btn primary" href="/sites/{{.Target}}/snapshots/{{.Result}}/download" download>{{icon "download"}}Kopyayı indir</a>
+    {{else if eq .Kind "import.check"}}<a class="btn primary" href="/sites/{{.Target}}/import/{{.Result}}">{{icon "check"}}Önizlemeye geç</a>
+    {{else if eq .Kind "site.export"}}<a class="btn primary" href="/sites/{{.Target}}/exports/{{.Result}}/download" download>{{icon "download"}}Arşivi indir</a>
+    {{else}}<a class="btn" href="/sites/{{.Target}}/snapshots/{{.Result}}/restore">{{icon "undo"}}Geri al…</a>{{end}}
+  {{end}}
+  {{if and .Err (eq .Kind "import.check" "import.apply")}}<a class="btn" href="/sites/{{.Target}}/import">{{icon "upload"}}Başka dosya yükle</a>{{end}}
+  {{if and (not .Err) (not (eq .Kind "site.remove" "db.recover"))}}<a class="btn{{if not $linked}} primary{{end}}" href="/sites/{{.Target}}">Siteye git</a>{{end}}
   <a class="btn" href="/sites">Siteler</a>
 </div>
 {{end}}

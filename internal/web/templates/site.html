@@ -36,13 +36,42 @@
 
 {{if $s.Database}}
 <div class="section-head">
+  <h2>Veri aktarımı</h2>
+  <div class="page-actions">
+    <a class="btn sm" href="/sites/{{$s.Name}}/import">{{icon "upload"}}İçe aktar…</a>
+    <form method="post" action="/sites/{{$s.Name}}/exports">
+      <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+      <button type="submit" class="btn sm">{{icon "download"}}Dışa aktar</button>
+    </form>
+  </div>
+</div>
+<p class="muted small"><strong>Dışa aktar</strong> veritabanını taşınabilir bir FootOps arşivine (<span class="mono">.footops.tar</span>) yazar; sunucuda 24 saat indirilebilir, başka bir FootOps sunucusuna ya da bu siteye geri içe aktarılabilir. <strong>İçe aktar</strong> böyle bir arşivi ya da bir mongodump arşivini önce kontrol eder, önizleme gösterir, onaydan sonra güvenlik kopyası alıp uygular.</p>
+{{with .Data.Exports}}
+<div class="table-wrap">
+<table class="responsive">
+  <thead><tr><th>Arşiv</th><th>Boyut</th><th>İçerik</th><th></th></tr></thead>
+  <tbody>
+  {{range .}}
+    <tr>
+      <td class="primary"><span class="mono">{{.File}}</span><div class="cell-sub muted">{{since .Created}}</div></td>
+      <td data-label="Boyut" class="nowrap">{{bytes .Bytes}}</td>
+      <td data-label="İçerik">{{.Collections}} koleksiyon, {{.Documents}} belge</td>
+      <td class="actions"><a class="btn sm" href="/sites/{{$s.Name}}/exports/{{.ID}}/download" download>{{icon "download"}}İndir</a></td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{end}}
+
+<div class="section-head">
   <h2>Veritabanı kopyaları</h2>
   <form method="post" action="/sites/{{$s.Name}}/snapshots">
     <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
     <button type="submit" class="btn sm primary">{{icon "database"}}Kopya al</button>
   </form>
 </div>
-<p class="muted small">MongoDB veritabanı <span class="mono">{{$s.Name}}</span> bu sunucuda bir dosyaya kopyalanır (site çalışmaya devam eder); istersen bilgisayarına indirebilirsin. Kopyalar {{.Data.KeepDays}} gün saklanır, en yenisi hep kalır. Bu bir uzak yedek değildir: sunucu giderse kopyalar da gider.</p>
+<p class="muted small">MongoDB veritabanı <span class="mono">{{$s.Name}}</span> bu sunucuda bir dosyaya kopyalanır (site çalışmaya devam eder); istersen bilgisayarına indirebilirsin. Kopyalar {{.Data.KeepDays}} gün saklanır, en yenisi hep kalır; içe aktarma ve geri yüklemeden önce de otomatik kopya alınır. <strong>Geri yükle</strong> veritabanını o kopyanın aynısı yapar (önce o anki halin kopyası alınır). Bu bir uzak yedek değildir: sunucu giderse kopyalar da gider.</p>
 {{with .Data.SnapshotsErr}}<div class="notice bad">{{icon "alert"}}<div>Kopyalar okunamadı: {{.}}</div></div>{{end}}
 {{with .Data.Snapshots}}
 <div class="table-wrap">
@@ -54,8 +83,8 @@
       <td class="primary nowrap">{{ts .Created}}<div class="cell-sub muted">{{since .Created}}</div></td>
       <td data-label="Boyut" class="nowrap">{{bytes .Bytes}}</td>
       <td data-label="İçerik">{{len .Collections}} koleksiyon, {{.Documents}} belge</td>
-      <td data-label="Ayrıntı" class="muted">{{.Actor}}{{if .Usage.Wall}} · {{took .Usage.Wall}}{{end}}{{if .Usage.PeakMem}} · en çok {{bytes .Usage.PeakMem}}{{end}}</td>
-      <td class="actions"><a class="btn sm" href="/sites/{{$s.Name}}/snapshots/{{.ID}}/download" download>{{icon "download"}}İndir</a></td>
+      <td data-label="Ayrıntı" class="muted">{{reasonTR .Reason}}{{if and .Reason .Actor}} · {{end}}{{.Actor}}{{if .Usage.Wall}} · {{took .Usage.Wall}}{{end}}{{if .Usage.PeakMem}} · en çok {{bytes .Usage.PeakMem}}{{end}}</td>
+      <td class="actions"><a class="btn sm" href="/sites/{{$s.Name}}/snapshots/{{.ID}}/download" download>{{icon "download"}}İndir</a><a class="btn sm" href="/sites/{{$s.Name}}/snapshots/{{.ID}}/restore">{{icon "undo"}}Geri yükle…</a></td>
     </tr>
   {{end}}
   </tbody>

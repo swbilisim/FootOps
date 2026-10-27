@@ -73,11 +73,18 @@ type DataOps struct {
 	Stream      run.Streamer
 	Staging     *staging.Area
 	SnapshotDir string
+	RecoveryDir string
 	Limits      run.Limits
+	// Sites stops and starts sites around a restore.
+	Sites siteControl
 
 	now       func() time.Time
 	checkFree func(path string, need int64) error
 	initOnce  sync.Once
+
+	mu          sync.Mutex
+	uploadLocks map[string]*uploadLock
+	chunk       int64 // upload chunk size; tests use small ones
 }
 
 func (d *DataOps) init() {
@@ -90,6 +97,10 @@ func (d *DataOps) init() {
 		}
 		if d.Limits == (run.Limits{}) {
 			d.Limits = run.DefaultLimits
+		}
+		d.uploadLocks = map[string]*uploadLock{}
+		if d.chunk == 0 {
+			d.chunk = UploadChunk
 		}
 	})
 }
@@ -363,7 +374,8 @@ func (d *DataOps) toolConfig(jobID string, c dbCreds) (string, error) {
 	}
 	uri := (&url.URL{Scheme: "mongodb", User: url.UserPassword(c.User, c.Password), Host: "127.0.0.1:27017", Path: "/",
 		RawQuery: url.Values{"authSource": {c.DB}}.Encode()}).String()
-	if err := os.WriteFile(filepath.Join(dir, "mongo.yaml"), []byte("uri: "+q(uri)+"\n"), 0o600); err != nil {
+	// Rewritten in place for another user within the same job; the tool reads it at start.
+	if err := writeFile(filepath.Join(dir, "mongo.yaml"), "uri: "+q(uri)+"\n", 0o600); err != nil {
 		return "", err
 	}
 	return dir, nil
@@ -374,17 +386,30 @@ func (d *DataOps) toolConfig(jobID string, c dbCreds) (string, error) {
 // capabilities, read-only root, memory/CPU/PID limits, lowest I/O and CPU priority.
 // Its output is not logged by Docker (--log-driver none): it is the data itself.
 func (d *DataOps) toolCmd(ctx context.Context, jobID, cfgDir string, args ...string) run.Cmd {
+	return d.tool(ctx, jobID, cfgDir, nil, args...)
+}
+
+// toolCmdIn is toolCmd with the tool reading in (a restore streamed from a file).
+func (d *DataOps) toolCmdIn(ctx context.Context, jobID, cfgDir string, in io.Reader, args ...string) run.Cmd {
+	return d.tool(ctx, jobID, cfgDir, in, args...)
+}
+
+func (d *DataOps) tool(ctx context.Context, jobID, cfgDir string, in io.Reader, args ...string) run.Cmd {
 	name := toolPrefix + jobID
-	full := []string{"run", "--rm", "--name", name, "--label", "footops.job=" + jobID,
-		"--network", "container:" + mongoContainer, "--log-driver", "none",
-		"--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges"}
+	full := []string{"run", "--rm"}
+	if in != nil {
+		full = append(full, "--interactive")
+	}
+	full = append(full, "--name", name, "--label", "footops.job="+jobID,
+		"--network", "container:"+mongoContainer, "--log-driver", "none",
+		"--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges")
 	full = append(full, d.Limits.DockerFlags()...)
 	full = append(full, "--volume", cfgDir+":/run/footops:ro", "--entrypoint", "ionice", core.MongoImage,
 		"-c", "3", "nice", "-n", "10")
 	full = append(full, args...)
 	var cg string
 	return run.Cmd{
-		Name: "docker", Args: full,
+		Name: "docker", Args: full, Stdin: in,
 		Stop: func() {
 			stop, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()

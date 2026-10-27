@@ -77,7 +77,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		err = runService(func(ctx context.Context, l *log.Logger) error {
 			cfg := agent.Config{Socket: agent.DefaultSocket, AuditPath: agent.DefaultAuditPath,
 				HistoryPath: agent.DefaultHistory, JobsDir: agent.DefaultJobsDir, SnapshotDir: agent.DefaultSnapshotDir,
-				StagingDir: staging.DefaultRoot, PanelUser: agent.PanelUser}
+				StagingDir: staging.DefaultRoot, RecoveryDir: agent.DefaultRecoveryDir, PanelUser: agent.PanelUser}
 			if p, err := config.Load(config.Path); err == nil {
 				cfg.PanelHost = p.PanelHost
 			}

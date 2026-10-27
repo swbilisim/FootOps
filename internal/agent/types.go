@@ -125,3 +125,30 @@ type ServerInfo struct {
 	IPv4 []string `json:"ipv4"`
 	IPv6 []string `json:"ipv6"`
 }
+
+// CreateUploadRequest announces a file to be uploaded in chunks.
+type CreateUploadRequest struct {
+	Name  string `json:"name"`
+	Size  int64  `json:"size"`
+	Actor Actor  `json:"actor"`
+}
+
+// ImportRequest starts checking an upload; SourceDB picks one of several databases.
+type ImportRequest struct {
+	Upload   string `json:"upload"`
+	SourceDB string `json:"source_db,omitempty"`
+	Actor    Actor  `json:"actor"`
+}
+
+// ApplyImportRequest applies a checked upload. Confirm must be the site's name.
+type ApplyImportRequest struct {
+	Mode    string `json:"mode"`
+	Confirm string `json:"confirm"`
+	Actor   Actor  `json:"actor"`
+}
+
+// ConfirmRequest is an action confirmed by typing the site's name.
+type ConfirmRequest struct {
+	Confirm string `json:"confirm"`
+	Actor   Actor  `json:"actor"`
+}

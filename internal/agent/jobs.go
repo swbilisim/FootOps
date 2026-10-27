@@ -64,7 +64,12 @@ const (
 var (
 	defaultJobTimeout = 20 * time.Minute
 	jobTimeouts       = map[string]time.Duration{
-		"db.snapshot": time.Hour,
+		"db.snapshot":  time.Hour,
+		"site.export":  time.Hour,
+		"import.check": time.Hour,
+		"import.apply": 2 * time.Hour, // a copy, the restore and, on failure, the rollback
+		"db.restore":   2 * time.Hour,
+		"db.recover":   2 * time.Hour,
 	}
 )
 
@@ -163,6 +168,13 @@ func (t *Task) AddUsage(u run.Usage) {
 	t.j.mu.Lock()
 	t.job.Usage = t.job.Usage.Add(u)
 	t.j.mu.Unlock()
+}
+
+// Usage is what the job's commands have used so far.
+func (t *Task) Usage() run.Usage {
+	t.j.mu.Lock()
+	defer t.j.mu.Unlock()
+	return t.job.Usage
 }
 
 // SetResult records what the job produced.

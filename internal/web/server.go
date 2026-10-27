@@ -8,6 +8,7 @@ import (
 	"embed"
 	"errors"
 	"html/template"
+	"io"
 	"io/fs"
 	"log"
 	"net"
@@ -43,6 +44,19 @@ type AgentAPI interface {
 	Snapshots(ctx context.Context, site string) ([]agent.Snapshot, error)
 	TakeSnapshot(ctx context.Context, site string, a agent.Actor) (string, error)
 	DownloadSnapshot(ctx context.Context, site, id string, a agent.Actor, hdr http.Header) (*http.Response, error)
+	RestoreSnapshot(ctx context.Context, site, id, confirm string, a agent.Actor) (string, error)
+	CreateUpload(ctx context.Context, site, name string, size int64, a agent.Actor) (agent.UploadStatus, error)
+	Upload(ctx context.Context, id string) (agent.UploadStatus, error)
+	PutChunk(ctx context.Context, id string, n int, sum string, body io.Reader, length int64) (agent.UploadStatus, error)
+	FinishUpload(ctx context.Context, id string, a agent.Actor) (agent.UploadStatus, error)
+	RemoveUpload(ctx context.Context, id string) error
+	SingleUpload(ctx context.Context, site, name string, body io.Reader, a agent.Actor) (agent.UploadStatus, error)
+	CheckImport(ctx context.Context, site, upload, sourceDB string, a agent.Actor) (string, error)
+	Import(ctx context.Context, site, upload string) (agent.ImportCheck, error)
+	ApplyImport(ctx context.Context, site, upload, mode, confirm string, a agent.Actor) (string, error)
+	Export(ctx context.Context, site string, a agent.Actor) (string, error)
+	Exports(ctx context.Context, site string) ([]agent.ExportInfo, error)
+	DownloadExport(ctx context.Context, site, id string, a agent.Actor, hdr http.Header) (*http.Response, error)
 	Certs(ctx context.Context) ([]sites.Cert, error)
 	InstallCert(ctx context.Context, certPEM, keyPEM string, a agent.Actor) (sites.Cert, error)
 	RemoveCert(ctx context.Context, id string, a agent.Actor) error
@@ -131,6 +145,20 @@ func (s *Server) Handler(via string) http.Handler {
 	mux.Handle("POST /sites/{name}/remove", s.requireSession(s.siteAction("remove")))
 	mux.Handle("POST /sites/{name}/snapshots", s.requireSession(s.snapshotTake))
 	mux.Handle("GET /sites/{name}/snapshots/{id}/download", s.requireSession(s.snapshotDownload))
+	mux.Handle("GET /sites/{name}/snapshots/{id}/restore", s.requireSession(s.restoreConfirm))
+	mux.Handle("POST /sites/{name}/snapshots/{id}/restore", s.requireSession(s.restoreSnapshot))
+	mux.Handle("GET /sites/{name}/import", s.requireSession(s.importPage))
+	mux.Handle("POST /sites/{name}/import/form", s.requireStreamSession(s.importForm))
+	mux.Handle("GET /sites/{name}/import/{id}", s.requireSession(s.importPreview))
+	mux.Handle("POST /sites/{name}/import/{id}/check", s.requireSession(s.importRecheck))
+	mux.Handle("POST /sites/{name}/import/{id}/apply", s.requireSession(s.importApply))
+	mux.Handle("POST /sites/{name}/uploads", s.requireSession(s.uploadCreate))
+	mux.Handle("GET /uploads/{id}", s.requireSession(s.uploadStatus))
+	mux.Handle("PUT /uploads/{id}/{n}", s.requireSession(s.uploadChunk))
+	mux.Handle("POST /uploads/{id}/finish", s.requireSession(s.uploadFinish))
+	mux.Handle("POST /uploads/{id}/cancel", s.requireSession(s.uploadCancel))
+	mux.Handle("POST /sites/{name}/exports", s.requireSession(s.exportStart))
+	mux.Handle("GET /sites/{name}/exports/{id}/download", s.requireSession(s.exportDownload))
 	mux.Handle("GET /jobs/{id}", s.requireSession(s.job))
 	mux.Handle("POST /jobs/{id}/cancel", s.requireSession(s.jobCancel))
 	mux.Handle("GET /certs", s.requireSession(s.certs))

@@ -414,7 +414,7 @@ textarea { resize: vertical; line-height: 1.45; }
 textarea.mono, input.mono { font-family: var(--mono); font-size: .84rem; }
 input::placeholder, textarea::placeholder { color: var(--text-3); opacity: .8; }
 input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
-input[type="checkbox"] { display: inline-block; width: 16px; height: 16px; min-height: 0; margin: 0; padding: 0; accent-color: var(--primary); }
+input[type="checkbox"], input[type="radio"] { display: inline-block; flex: none; width: 16px; height: 16px; min-height: 0; margin: 0; padding: 0; accent-color: var(--primary); }
 .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 14px; }
 .row:last-child { margin-bottom: 0; }
 .row > .field { margin-bottom: 0; }
@@ -473,3 +473,17 @@ pre.logs mark { background: rgba(242, 184, 75, .35); color: inherit; border-radi
   .toolbar select { width: 100%; }
   .toolbar .btn, .toolbar button { width: 100%; }
 }
+
+/* ---- data import / export ---- */
+.choices { display: grid; gap: 10px; margin: 2px 0 4px; }
+.choice { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; }
+.choice:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.choice input { margin-top: 4px; flex: none; }
+.upload-progress { margin: 4px 0 8px; }
+.upload-progress progress { display: block; width: 100%; height: 10px; accent-color: var(--primary); }
+.upload-progress.failed [data-upload-status] { color: var(--bad); }
+.note-new { color: var(--ok); font-weight: 500; }
+.note-diff { color: var(--warn); font-weight: 500; }
+.note-gone { color: var(--bad); font-weight: 500; }
+.note-same { color: var(--text-3); }
+.section-head .page-actions form { display: contents; }

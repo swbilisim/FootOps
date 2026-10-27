@@ -6,85 +6,23 @@ cancellation, an agent restart in the middle of a job, and the panel's download 
 Usage: f0.py <container> <login-file>   (install.py writes the login file)
 Prints measurements as JSON at the end; exits non-zero on the first failed check.
 """
-import base64
-import hashlib
-import hmac
 import json
 import re
-import struct
 import subprocess
 import sys
 import threading
 import time
 
+from itlib import ACTOR, DOMAIN, SITE, api, fail, ok, rss, sh, tools, totp, wait, wait_job
+
 C, LOGIN = sys.argv[1], sys.argv[2]
-SITE, DOMAIN = "itsite", "it.example.com"
 measure = {}
 
 
-def sh(cmd, stdin=None, check=True):
-    p = subprocess.run(["docker", "exec", "-i", C, "sh", "-c", cmd], input=stdin, capture_output=True)
-    if check and p.returncode != 0:
-        fail("command failed: %s\n%s%s" % (cmd, p.stdout.decode(errors="replace"), p.stderr.decode(errors="replace")))
-    return p.stdout.decode(errors="replace")
-
-
-def fail(msg):
-    print("FAIL:", msg)
-    sys.exit(1)
-
-
-def ok(msg):
-    print("  ✓", msg)
-
-
-def api(method, path, body=None, check=True):
-    data = json.dumps(body).encode() if body is not None else b""
-    out = sh("curl -sS -w '\\n%%{http_code}' -X %s -H 'Content-Type: application/json' --data-binary @- "
-             "--unix-socket /run/footops/agent.sock http://agent%s" % (method, path), stdin=data)
-    text, code = out.rsplit("\n", 1)
-    code = int(code)
-    if check and code // 100 != 2:
-        fail("%s %s -> %d %s" % (method, path, code, text))
-    return code, (json.loads(text) if text.strip() else None)
-
-
-ACTOR = {"user": "it", "ip": "test", "via": "ssh"}
-
-
-def wait_job(jid, timeout=600):
-    end = time.time() + timeout
-    while time.time() < end:
-        _, j = api("GET", "/v1/jobs/" + jid)
-        if j["done"]:
-            return j
-        time.sleep(0.5)
-    fail("job %s did not finish" % jid)
-
-
-def wait(cond, what, timeout=120):
-    end = time.time() + timeout
-    while time.time() < end:
-        if cond():
-            return
-        time.sleep(0.3)
-    fail("timed out waiting for " + what)
-
-
-def tools():
-    return sh("docker ps -a --filter name=footops-job- --format '{{.Names}}'").split()
-
-
-def rss(pattern):
-    out = sh("ps -eo rss=,args= | grep '%s' | grep -v grep || true" % pattern)
-    return max([int(l.split()[0]) for l in out.splitlines() if l.strip()] or [0]) * 1024
-
-
-def totp(secret):
-    key = base64.b32decode(secret.upper() + "=" * (-len(secret) % 8))
-    h = hmac.new(key, struct.pack(">Q", int(time.time() // 30)), hashlib.sha1).digest()
-    o = h[-1] & 0x0F
-    return "%06d" % ((struct.unpack(">I", h[o:o + 4])[0] & 0x7FFFFFFF) % 1000000)
+def job_staging():
+    """Job directories in the staging area (they hold connection files); exports and
+    uploads (exp-*, upl-*) stay there for a day by design."""
+    return [d for d in sh("ls -A /var/lib/footops/staging").split() if not d.startswith(("exp-", "upl-"))]
 
 
 print("F0 senaryoları")
@@ -112,7 +50,7 @@ password = re.match(r"mongodb://[^:]+:([^@]+)@", uri).group(1)
 local = uri.replace("@mongo:27017", "@127.0.0.1:27017")
 seed = """
 const d = db.getSiblingDB("%s");
-d.small.drop(); d.big.drop(); d.media.drop();
+d.getCollectionNames().filter(n => !n.startsWith("system.")).forEach(n => d.getCollection(n).drop());
 for (let i = 0; i < 10; i++) d.small.insertOne({i, ad: "çğıöşü " + i});
 // Random text compresses poorly, so the copy takes long enough to be cancelled.
 const rnd = () => Array.from({length: 16}, () => Math.random().toString(36).slice(2)).join("");
@@ -169,7 +107,7 @@ if s["documents"] != 200015 or s["collections"] != {"small": 10, "big": 200000, 
 ok("manifest: 3 koleksiyon, 200.015 belge")
 if tools():
     fail("tool container left: %s" % tools())
-if sh("ls -A /var/lib/footops/staging").strip():
+if job_staging():
     fail("staging not empty")
 if sh("stat -c %a /var/lib/footops/snapshots/" + SITE).strip() != "700":
     fail("snapshot dir mode")
@@ -230,7 +168,7 @@ if not any(a["action"] == "db.snapshot" and "yarıda" in a.get("detail", "") for
 _, snaps = api("GET", "/v1/sites/%s/snapshots" % SITE)
 if len(snaps) != before or sh("ls /var/lib/footops/snapshots/%s | wc -l" % SITE).strip() != str(before):
     fail("half-written copy left")
-if sh("ls -A /var/lib/footops/staging").strip():
+if job_staging():
     fail("staging (connection file) left after the restart")
 ok("agent yeniden başladı: iş 'yarıda kaldı' oldu, denetime yazıldı; artık container, yarım kopya ve geçici dosyalar silindi")
 

@@ -163,6 +163,7 @@ func (s *Server) site(w http.ResponseWriter, r *http.Request) {
 	if st.Spec.Database && !lightRefresh(r) {
 		snaps, err := s.agent.Snapshots(r.Context(), st.Spec.Name)
 		data["Snapshots"], data["SnapshotsErr"], data["KeepDays"] = snaps, errString(err), int(agent.SnapshotKeep.Hours()/24)
+		data["Exports"], _ = s.agent.Exports(r.Context(), st.Spec.Name)
 	}
 	s.render(w, r, "site", data)
 }

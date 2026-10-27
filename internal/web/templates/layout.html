@@ -11,6 +11,7 @@
 <title>{{if .Title}}{{.Title}} · {{end}}FootOps {{.Server}}</title>
 <link rel="stylesheet" href="/static/style.css">
 <script src="/static/live.js" defer></script>
+{{if .Data.Upload}}<script src="/static/upload.js" defer></script>{{end}}
 </head>
 <body class="{{if .Session.ID}}app{{else}}bare{{end}}">
 {{sprite}}

@@ -119,6 +119,10 @@ func (a *Area) Used() int64 { return treeSize(a.Root) }
 // Allow reports whether need more bytes may be staged now.
 func (a *Area) Allow(need int64) error {
 	a.init()
+	// The first upload on a server comes before any job has created the area.
+	if err := os.MkdirAll(a.Root, 0o700); err != nil {
+		return err
+	}
 	free, total, err := a.disk(a.Root)
 	if err != nil {
 		return err

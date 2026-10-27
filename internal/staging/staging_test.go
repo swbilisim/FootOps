@@ -96,3 +96,14 @@ func TestSweepRemovesOnlyStale(t *testing.T) {
 		t.Errorf("used = %d", a.Used())
 	}
 }
+
+// The first upload on a server comes before any job: the area does not exist yet.
+func TestAllowCreatesTheArea(t *testing.T) {
+	a := New(filepath.Join(t.TempDir(), "staging"), DefaultMax)
+	if err := a.Allow(1); err != nil {
+		t.Fatalf("Allow on a missing area: %v", err)
+	}
+	if st, err := os.Stat(a.Root); err != nil || st.Mode().Perm() != 0o700 {
+		t.Errorf("area: %v %v", st, err)
+	}
+}

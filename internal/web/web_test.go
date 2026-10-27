@@ -43,6 +43,18 @@ type fakeAgent struct {
 	taken     []agent.Actor
 	downloads []http.Header
 	dlActors  []agent.Actor
+	// imports and exports
+	upload    agent.UploadStatus
+	chunks    map[int][]byte
+	sums      map[int]string
+	single    []byte
+	checks    []string // upload/sourceDB
+	check     *agent.ImportCheck
+	applies   []string // mode/confirm
+	restores  []string
+	exports   []agent.ExportInfo
+	exported  int
+	removedUp []string
 }
 
 func (f *fakeAgent) Overview(context.Context) (agent.Overview, error) {
@@ -166,6 +178,114 @@ func (f *fakeAgent) DownloadSnapshot(_ context.Context, site, id string, a agent
 		req.Header.Set("Range", v)
 	}
 	http.ServeContent(rec, req, "", time.Time{}, strings.NewReader(snapshotBody))
+	return rec.Result(), nil
+}
+
+const testUpload = "Up0123456789abcdefghijkl"
+
+func (f *fakeAgent) CreateUpload(_ context.Context, site, name string, size int64, a agent.Actor) (agent.UploadStatus, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.upload = agent.UploadStatus{Upload: agent.Upload{ID: testUpload, Site: site, Name: name, Size: size, Chunk: 8 << 20, Actor: a}, Missing: []int{0}}
+	return f.upload, nil
+}
+
+func (f *fakeAgent) Upload(_ context.Context, id string) (agent.UploadStatus, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if id != testUpload || f.upload.ID == "" {
+		return agent.UploadStatus{}, &agent.Error{Status: 404, Message: "yükleme bulunamadı"}
+	}
+	return f.upload, nil
+}
+
+func (f *fakeAgent) PutChunk(_ context.Context, id string, n int, sum string, body io.Reader, length int64) (agent.UploadStatus, error) {
+	b, err := io.ReadAll(body)
+	if err != nil {
+		return agent.UploadStatus{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.chunks == nil {
+		f.chunks, f.sums = map[int][]byte{}, map[int]string{}
+	}
+	f.chunks[n], f.sums[n] = b, sum
+	return f.upload, nil
+}
+
+func (f *fakeAgent) FinishUpload(_ context.Context, id string, a agent.Actor) (agent.UploadStatus, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.upload.Finished = true
+	return f.upload, nil
+}
+
+func (f *fakeAgent) RemoveUpload(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.removedUp = append(f.removedUp, id)
+	return nil
+}
+
+func (f *fakeAgent) SingleUpload(_ context.Context, site, name string, body io.Reader, a agent.Actor) (agent.UploadStatus, error) {
+	b, err := io.ReadAll(body)
+	if err != nil {
+		return agent.UploadStatus{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.single = b
+	f.upload = agent.UploadStatus{Upload: agent.Upload{ID: testUpload, Site: site, Name: name, Size: int64(len(b)), Finished: true}}
+	return f.upload, nil
+}
+
+func (f *fakeAgent) CheckImport(_ context.Context, site, upload, sourceDB string, a agent.Actor) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.checks = append(f.checks, upload+"/"+sourceDB)
+	return "jobcheck", nil
+}
+
+func (f *fakeAgent) Import(_ context.Context, site, upload string) (agent.ImportCheck, error) {
+	if f.check == nil {
+		return agent.ImportCheck{}, &agent.Error{Status: 404, Message: "bu yükleme için kontrol sonucu yok"}
+	}
+	return *f.check, nil
+}
+
+func (f *fakeAgent) ApplyImport(_ context.Context, site, upload, mode, confirm string, a agent.Actor) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.applies = append(f.applies, mode+"/"+confirm)
+	return "jobapply", nil
+}
+
+func (f *fakeAgent) RestoreSnapshot(_ context.Context, site, id, confirm string, a agent.Actor) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.restores = append(f.restores, id+"/"+confirm)
+	return "jobrestore", nil
+}
+
+func (f *fakeAgent) Export(_ context.Context, site string, a agent.Actor) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.exported++
+	return "jobexport", nil
+}
+
+func (f *fakeAgent) Exports(context.Context, string) ([]agent.ExportInfo, error) {
+	return f.exports, nil
+}
+
+func (f *fakeAgent) DownloadExport(_ context.Context, site, id string, a agent.Actor, hdr http.Header) (*http.Response, error) {
+	if id != "jobexport" {
+		return nil, &agent.Error{Status: 404, Message: "arşiv bulunamadı"}
+	}
+	rec := httptest.NewRecorder()
+	rec.Header().Set("Content-Type", "application/x-tar")
+	rec.Header().Set("Content-Disposition", `attachment; filename="enisparta-20261027-110000.footops.tar"`)
+	http.ServeContent(rec, httptest.NewRequest("GET", "/", nil), "", time.Time{}, strings.NewReader(snapshotBody))
 	return rec.Result(), nil
 }
 

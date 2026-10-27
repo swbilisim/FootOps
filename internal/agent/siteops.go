@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -56,6 +57,7 @@ type SiteOps struct {
 	// probes are replaceable in tests.
 	dial  func(ctx context.Context, addr string) error
 	https func(ctx context.Context, domain string) (int, error)
+	page  func(ctx context.Context, domain string) (int, int64, error) // status, body bytes
 	sleep func(ctx context.Context, d time.Duration) error
 }
 
@@ -71,6 +73,9 @@ func (o *SiteOps) init() {
 	}
 	if o.https == nil {
 		o.https = localHTTPS
+	}
+	if o.page == nil {
+		o.page = localPage
 	}
 	if o.sleep == nil {
 		o.sleep = sleepCtx
@@ -497,16 +502,22 @@ func (o *SiteOps) dropMongoUser(ctx context.Context, s sites.Spec) error {
 }
 
 func (o *SiteOps) mongo(ctx context.Context, body string) error {
-	env, err := os.ReadFile(o.path(core.MongoSecretPath))
+	_, err := rootMongosh(ctx, o.Run, o.path(core.MongoSecretPath), body)
+	return err
+}
+
+// rootMongosh runs a script as MongoDB's root user, whose password is read from the
+// secrets file. Root is only for managing users and databases (rule K4).
+func rootMongosh(ctx context.Context, r run.Runner, secretFile, body string) (string, error) {
+	env, err := os.ReadFile(secretFile)
 	if err != nil {
-		return err
+		return "", err
 	}
 	rootPW := core.MongoPasswordFromEnv(string(env))
 	if rootPW == "" {
-		return errors.New("MongoDB root şifresi bulunamadı")
+		return "", errors.New("MongoDB root şifresi bulunamadı")
 	}
-	_, err = mongosh(ctx, o.Run, core.MongoRootUser, rootPW, "admin", body)
-	return err
+	return mongosh(ctx, r, core.MongoRootUser, rootPW, "admin", body)
 }
 
 // mongosh runs a script in the MongoDB container as the given user. The script, which
@@ -655,10 +666,17 @@ func dialTCP(ctx context.Context, addr string) error {
 	return c.Close()
 }
 
-// localHTTPS requests https://domain/ from this server's own Caddy. Certificate checks
-// are skipped on purpose: Origin CA certificates are trusted only by Cloudflare, and
-// this probe only verifies routing on 127.0.0.1.
+// localHTTPS requests https://domain/ from this server's own Caddy and returns the status.
 func localHTTPS(ctx context.Context, domain string) (int, error) {
+	code, _, err := localPage(ctx, domain)
+	return code, err
+}
+
+// localPage requests https://domain/ from this server's own Caddy and returns the status
+// and how many body bytes came (read up to 64 KB). Certificate checks are skipped on
+// purpose: Origin CA certificates are trusted only by Cloudflare, and this probe only
+// verifies routing on 127.0.0.1.
+func localPage(ctx context.Context, domain string) (int, int64, error) {
 	tr := &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			var d net.Dialer
@@ -671,14 +689,15 @@ func localHTTPS(ctx context.Context, domain string) (int, error) {
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+domain+"/", nil)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	resp, err := c.Do(req)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	resp.Body.Close()
-	return resp.StatusCode, nil
+	defer resp.Body.Close()
+	n, _ := io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+	return resp.StatusCode, n, nil
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) error {
