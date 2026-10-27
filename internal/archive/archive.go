@@ -114,6 +114,58 @@ type Summary struct {
 	Size       int64 `json:"size"`       // uncompressed: member bytes, or the whole stream
 	Files      int   `json:"files"`
 	Dirs       int   `json:"dirs"`
+	// Hidden counts the files Hidden reports (they are never extracted); HiddenBytes is
+	// their size.
+	Hidden      int   `json:"hidden"`
+	HiddenBytes int64 `json:"hidden_bytes"`
+	// Prefix is the one top-level folder every other member is in ("uploads" for a
+	// zipped uploads folder), "" when there is none.
+	Prefix string `json:"prefix,omitempty"`
+	// BSON counts .bson files: an archive of a mongodump folder, not of site files.
+	BSON int `json:"bson,omitempty"`
+
+	top   string
+	mixed bool
+}
+
+// Hidden reports whether a cleaned member name is left out when files are extracted:
+// a component starting with a dot (.htaccess, .DS_Store, ._x, .git) or macOS's
+// __MACOSX folder, wherever it is (a stripped top folder may have held it).
+func Hidden(name string) bool {
+	for _, c := range strings.Split(name, "/") {
+		if strings.HasPrefix(c, ".") || c == "__MACOSX" {
+			return true
+		}
+	}
+	return false
+}
+
+// note records a member's name for Hidden and Prefix.
+func (s *Summary) note(name string, dir bool, size int64) {
+	if Hidden(name) {
+		if !dir {
+			s.Hidden++
+			s.HiddenBytes += size
+		}
+		return
+	}
+	if !dir && (strings.HasSuffix(name, ".bson") || strings.HasSuffix(name, ".bson.gz")) {
+		s.BSON++
+	}
+	top, _, nested := strings.Cut(name, "/")
+	switch {
+	case !nested && !dir:
+		s.mixed = true // a file at the top level
+	case s.top == "":
+		s.top = top
+	case s.top != top:
+		s.mixed = true
+	}
+	if s.mixed {
+		s.Prefix = ""
+	} else {
+		s.Prefix = s.top
+	}
 }
 
 // Check verifies a whole archive file against l. Mongo archives are checked for
@@ -176,6 +228,9 @@ func checkGzipFile(path string, l Limits, s *Summary) error {
 	return checkRatio(s.Size, s.Compressed, l)
 }
 
+// CheckRatio refuses a decompression bomb: far more output than input, above a floor.
+func CheckRatio(size, compressed int64, l Limits) error { return checkRatio(size, compressed, l) }
+
 func checkRatio(size, compressed int64, l Limits) error {
 	if size > ratioFloor && l.MaxRatio > 0 && size > compressed*l.MaxRatio {
 		return fmt.Errorf("sıkıştırma oranı şüpheli (%d:1, sınır %d:1) — sıkıştırma bombası olabilir", size/max(compressed, 1), l.MaxRatio)
@@ -234,6 +289,7 @@ func CheckTar(r io.Reader, l Limits, s *Summary) error {
 		case tar.TypeDir:
 			if !skip {
 				s.Dirs++
+				s.note(name, true, 0)
 			}
 			if err := m.count(); err != nil {
 				return err
@@ -251,6 +307,7 @@ func CheckTar(r io.Reader, l Limits, s *Summary) error {
 		if err := m.file(name, h.Size); err != nil {
 			return err
 		}
+		s.note(name, false, h.Size)
 		n, err := io.Copy(io.Discard, tr)
 		if err != nil {
 			return fmt.Errorf("%s: okunamadı: %w", name, err)
@@ -294,6 +351,7 @@ func checkZip(path string, l Limits, s *Summary) error {
 		case mode.IsDir() || strings.HasSuffix(f.Name, "/"):
 			if !skip {
 				s.Dirs++
+				s.note(name, true, 0)
 			}
 			if err := m.count(); err != nil {
 				return err
@@ -312,6 +370,7 @@ func checkZip(path string, l Limits, s *Summary) error {
 		if err := m.file(name, size); err != nil {
 			return err
 		}
+		s.note(name, false, size)
 		rc, err := f.Open()
 		if err != nil {
 			return fmt.Errorf("%s: açılamadı: %w", name, err)

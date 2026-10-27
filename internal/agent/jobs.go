@@ -64,12 +64,13 @@ const (
 var (
 	defaultJobTimeout = 20 * time.Minute
 	jobTimeouts       = map[string]time.Duration{
-		"db.snapshot":  time.Hour,
-		"site.export":  time.Hour,
-		"import.check": time.Hour,
-		"import.apply": 2 * time.Hour, // a copy, the restore and, on failure, the rollback
-		"db.restore":   2 * time.Hour,
-		"db.recover":   2 * time.Hour,
+		"db.snapshot":   time.Hour,
+		"site.export":   time.Hour,
+		"import.check":  time.Hour,
+		"import.apply":  2 * time.Hour, // a copy, the restore and, on failure, the rollback
+		"db.restore":    2 * time.Hour,
+		"db.recover":    2 * time.Hour,
+		"files.restore": time.Hour,
 	}
 )
 

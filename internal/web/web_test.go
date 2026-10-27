@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -55,6 +56,8 @@ type fakeAgent struct {
 	exports   []agent.ExportInfo
 	exported  int
 	removedUp []string
+	backups   []agent.FilesBackup
+	dataSite  bool // the site has a data directory
 }
 
 func (f *fakeAgent) Overview(context.Context) (agent.Overview, error) {
@@ -103,7 +106,8 @@ func (f *fakeAgent) AuditTail(context.Context, int) ([]agent.AuditEntry, error) 
 
 func (f *fakeAgent) Sites(context.Context) ([]agent.SiteStatus, error) {
 	return []agent.SiteStatus{{Spec: sites.Spec{Name: "enisparta", Group: "musteri", Domains: []string{"enisparta.com"},
-		Image: "ghcr.io/x/enisparta:main", Port: 3000, MemoryMB: 256, EnvKeys: []string{"NODE_ENV"}, Database: f.dbSite}}}, nil
+		Image: "ghcr.io/x/enisparta:main", Port: 3000, MemoryMB: 256, EnvKeys: []string{"NODE_ENV"}, Database: f.dbSite,
+		DataMount: map[bool]string{true: "/app/uploads", false: ""}[f.dataSite]}}}, nil
 }
 
 func (f *fakeAgent) CreateSite(_ context.Context, req agent.CreateSiteRequest) (string, error) {
@@ -253,11 +257,22 @@ func (f *fakeAgent) Import(_ context.Context, site, upload string) (agent.Import
 	return *f.check, nil
 }
 
-func (f *fakeAgent) ApplyImport(_ context.Context, site, upload, mode, confirm string, a agent.Actor) (string, error) {
+func (f *fakeAgent) ApplyImport(_ context.Context, site, upload string, opt agent.ApplyOptions, confirm string, a agent.Actor) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.applies = append(f.applies, mode+"/"+confirm)
+	f.applies = append(f.applies, fmt.Sprintf("db=%v:%s files=%v:%s strip=%v/%s", opt.DB, opt.DBMode, opt.Files, opt.FilesMode, opt.Strip, confirm))
 	return "jobapply", nil
+}
+
+func (f *fakeAgent) FilesBackups(context.Context, string) ([]agent.FilesBackup, error) {
+	return f.backups, nil
+}
+
+func (f *fakeAgent) RestoreFiles(_ context.Context, site, id, confirm string, a agent.Actor) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.restores = append(f.restores, "files:"+id+"/"+confirm)
+	return "jobfiles", nil
 }
 
 func (f *fakeAgent) RestoreSnapshot(_ context.Context, site, id, confirm string, a agent.Actor) (string, error) {

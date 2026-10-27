@@ -61,6 +61,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprint(stdout, usage)
 	case "doctor":
 		err = runDoctor(stdout)
+	case "data-pack", "data-extract": // hidden: run by the agent only
+		err = runData(args[0], args[1:], stdout, stderr)
 	case "install":
 		err = runInstall(args[1:], stdout, stderr)
 		switch {

@@ -119,6 +119,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sites/{name}/imports", s.checkImport)
 	mux.HandleFunc("GET /v1/sites/{name}/imports/{id}", s.getImport)
 	mux.HandleFunc("POST /v1/sites/{name}/imports/{id}/apply", s.applyImport)
+	mux.HandleFunc("GET /v1/sites/{name}/files/backups", s.listFilesBackups)
+	mux.HandleFunc("POST /v1/sites/{name}/files/backups/{id}/restore", s.restoreFiles)
 	mux.HandleFunc("POST /v1/sites/{name}/exports", s.startExport)
 	mux.HandleFunc("GET /v1/sites/{name}/exports", s.listExports)
 	mux.HandleFunc("GET /v1/sites/{name}/exports/{id}/download", s.downloadExport)
@@ -465,16 +467,16 @@ func startRecovery(jobs *Jobs, data *DataOps, audit *Audit, tempDBs bool, logger
 	}
 	_, err := jobs.Start(JobSpec{Kind: "db.recover", Target: target, Actor: Actor{User: "footops", Via: "agent"}},
 		func(ctx context.Context, t *Task) error {
-			if err := data.WaitMongo(ctx); err != nil {
-				// Records are tried once: an old one must never be replayed over newer data.
-				for _, r := range recs {
-					t.Step(fmt.Sprintf("✗ %s: kurtarılamadı; site durmuş, veritabanı yarım olabilir. Veritabanı kopyaları → %s → Geri yükle",
-						r.Site, orDash(r.Snapshot)))
-					data.removeRecovery(r.Job)
-				}
-				return err
+			// MongoDB is only needed for databases: files are put back without it.
+			needMongo := tempDBs
+			for _, r := range recs {
+				needMongo = needMongo || r.DB
 			}
-			if tempDBs {
+			mongoErr := error(nil)
+			if needMongo {
+				mongoErr = data.WaitMongo(ctx)
+			}
+			if tempDBs && mongoErr == nil {
 				n, err := data.DropTempDatabases(ctx)
 				if err != nil {
 					t.Step("⚠ Geçici veritabanları silinemedi: " + err.Error())
@@ -484,6 +486,23 @@ func startRecovery(jobs *Jobs, data *DataOps, audit *Audit, tempDBs bool, logger
 			}
 			var errs []error
 			for _, r := range recs {
+				if r.DB && mongoErr != nil {
+					// The files can still go back; the site stays stopped (its database may be
+					// half-written). Records are tried once: an old one must never be replayed
+					// over newer data later.
+					if r.Files != nil {
+						filesOnly := r
+						filesOnly.DB, filesOnly.Running = false, false
+						if err := data.Recover(ctx, t, filesOnly); err != nil {
+							t.Step("✗ " + err.Error())
+						}
+					}
+					t.Step(fmt.Sprintf("✗ %s: MongoDB cevap vermediği için veritabanı kurtarılamadı; site durmuş, veritabanı yarım olabilir. Veritabanı kopyaları → %s → Geri yükle",
+						r.Site, orDash(r.Snapshot)))
+					data.removeRecovery(r.Job)
+					errs = append(errs, mongoErr)
+					continue
+				}
 				if err := data.Recover(ctx, t, r); err != nil {
 					t.Step("✗ " + err.Error())
 					errs = append(errs, err)
@@ -527,6 +546,9 @@ func housekeeping(ctx context.Context, jobs *Jobs, data *DataOps, logger *log.Lo
 			}
 			for _, x := range data.SweepSnapshots(false) {
 				logger.Printf("süresi dolan veritabanı kopyası silindi: %s", x)
+			}
+			for _, x := range data.SweepFiles() {
+				logger.Printf("süresi dolan dosya kopyası silindi: %s", x)
 			}
 		}
 		select {

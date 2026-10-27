@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/swbilisim/FootOps/internal/agent"
@@ -386,6 +387,18 @@ var funcs = template.FuncMap{
 	"daysLeft": func(t, now time.Time) int {
 		return int(math.Floor(t.Sub(now).Hours() / 24))
 	},
+	// undoLinks reads a restore job's result ("<copy id> files-<backup id>").
+	"undoLinks": func(result string) []undoLink {
+		var out []undoLink
+		for _, p := range strings.Fields(result) {
+			if id, ok := strings.CutPrefix(p, "files-"); ok {
+				out = append(out, undoLink{"files/" + id, "Dosyaları geri al…"})
+			} else {
+				out = append(out, undoLink{"snapshots/" + p, "Veritabanını geri al…"})
+			}
+		}
+		return out
+	},
 	"jobTitle": func(kind string) string {
 		if t, ok := jobTitles[kind]; ok {
 			return t
@@ -432,12 +445,15 @@ var funcs = template.FuncMap{
 	},
 }
 
+// undoLink is a link to undo part of a restore.
+type undoLink struct{ Path, Label string }
+
 var (
 	jobTitles = map[string]string{
 		"site.create": "Site oluşturuluyor", "site.remove": "Site kaldırılıyor", "site.update": "Site güncelleniyor",
 		"site.redeploy": "Yeniden dağıtılıyor", "db.snapshot": "Veritabanı kopyası", "import.check": "İçe aktarma: kontrol",
-		"import.apply": "Veritabanı içe aktarılıyor", "db.restore": "Kopyadan geri yükleme", "site.export": "Dışa aktarma",
-		"db.recover": "Yarıda kalan işlemi tamamlama",
+		"import.apply": "İçe aktarılıyor", "db.restore": "Kopyadan geri yükleme", "site.export": "Dışa aktarma",
+		"db.recover": "Yarıda kalan işlemi tamamlama", "files.restore": "Dosyaları geri yükleme",
 	}
 	reasonNames = map[string]string{"manual": "elle", "before-import": "içe aktarmadan önce", "before-restore": "geri yüklemeden önce"}
 	stateNames  = map[string]string{"running": "çalışıyor", "exited": "durdu", "restarting": "yeniden başlıyor", "created": "oluşturuldu", "paused": "duraklatıldı", "dead": "ölü", "removing": "siliniyor"}

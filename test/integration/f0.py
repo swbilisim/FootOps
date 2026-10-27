@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 
-from itlib import ACTOR, DOMAIN, SITE, api, fail, ok, rss, sh, tools, totp, wait, wait_job
+from itlib import ACTOR, DOMAIN, SITE, api, fail, fresh_totp, ok, rss, sh, tools, wait, wait_job
 
 C, LOGIN = sys.argv[1], sys.argv[2]
 measure = {}
@@ -179,7 +179,7 @@ sh("rm -f %s" % jar)
 page = sh("curl -sS -c %s -b %s http://localhost:7701/login" % (jar, jar))
 csrf = re.search(r'name="csrf" value="([^"]+)"', page).group(1)
 sh("curl -sS -o /dev/null -c %s -b %s --data-urlencode csrf=%s --data-urlencode username=%s "
-   "--data-urlencode password@- --data-urlencode code=%s http://localhost:7701/login" % (jar, jar, csrf, user, totp(secret)),
+   "--data-urlencode password@- --data-urlencode code=%s http://localhost:7701/login" % (jar, jar, csrf, user, fresh_totp(secret)),
    stdin=pw.encode())
 page = sh("curl -sS -b %s http://localhost:7701/sites/%s" % (jar, SITE))
 if "Veritabanı kopyaları" not in page or s["id"] + "/download" not in page:

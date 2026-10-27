@@ -300,7 +300,8 @@ Wants=docker.service
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/footops agent
-User=root
+# Runs as root without User=root: with User= set, systemd drops CAP_SETUID while applying
+# the sandbox below, and the file helpers could no longer switch to a site's user.
 Group=footops
 # docker CLI keeps its config (and later registry logins) here; /root is hidden by ProtectHome.
 Environment=DOCKER_CONFIG=/var/lib/footops/docker

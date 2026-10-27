@@ -304,10 +304,25 @@ func (c *Client) Import(ctx context.Context, site, upload string) (ImportCheck, 
 }
 
 // ApplyImport starts applying a checked upload; confirm is the site's name as typed.
-func (c *Client) ApplyImport(ctx context.Context, site, upload, mode, confirm string, a Actor) (string, error) {
+func (c *Client) ApplyImport(ctx context.Context, site, upload string, opt ApplyOptions, confirm string, a Actor) (string, error) {
 	var r JobResponse
 	err := c.call(ctx, http.MethodPost, "/v1/sites/"+url.PathEscape(site)+"/imports/"+url.PathEscape(upload)+"/apply",
-		ApplyImportRequest{Mode: mode, Confirm: confirm, Actor: a}, &r)
+		ApplyImportRequest{Options: opt, Confirm: confirm, Actor: a}, &r)
+	return r.JobID, err
+}
+
+// FilesBackups lists the site's previous data directories.
+func (c *Client) FilesBackups(ctx context.Context, site string) ([]FilesBackup, error) {
+	var out []FilesBackup
+	err := c.call(ctx, http.MethodGet, "/v1/sites/"+url.PathEscape(site)+"/files/backups", nil, &out)
+	return out, err
+}
+
+// RestoreFiles starts putting a previous data directory back.
+func (c *Client) RestoreFiles(ctx context.Context, site, id, confirm string, a Actor) (string, error) {
+	var r JobResponse
+	err := c.call(ctx, http.MethodPost, "/v1/sites/"+url.PathEscape(site)+"/files/backups/"+url.PathEscape(id)+"/restore",
+		ConfirmRequest{Confirm: confirm, Actor: a}, &r)
 	return r.JobID, err
 }
 

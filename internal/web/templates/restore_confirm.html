@@ -4,11 +4,17 @@
   <a class="crumb" href="/sites/{{$s.Name}}">{{icon "back"}}{{$s.Name}}</a>
   <div class="card">
     <div class="dialog-icon">{{icon "undo"}}</div>
+    {{with .Data.Files}}
+    <h1>Dosyalar geri yüklensin mi?</h1>
+    <p>Kalıcı klasör <strong>{{ts .Created}}</strong> tarihli haline getirilir (<span class="mono">data.old-{{.ID}}</span>).</p>
+    <p>Şu anki hali silinmez, dosya kopyası olarak kalır; yani bu işlem de geri alınabilir. Site birkaç saniye durur.</p>
+    {{else}}{{with .Data.Snap}}
     <h1>Kopya geri yüklensin mi?</h1>
-    <p><strong>{{ts $n.Created}}</strong> tarihli kopya ({{reasonTR $n.Reason}}): {{len $n.Collections}} koleksiyon, {{$n.Documents}} belge, {{bytes $n.Bytes}}.</p>
+    <p><strong>{{ts .Created}}</strong> tarihli kopya ({{reasonTR .Reason}}): {{len .Collections}} koleksiyon, {{.Documents}} belge, {{bytes .Bytes}}.</p>
     <p>Sitenin <span class="mono">{{$s.Name}}</span> veritabanı bu kopyanın aynısı olur; sonradan eklenen kayıtlar gider. Önce şu anki halin de kopyası alınır, yani bu işlem de geri alınabilir. Site birkaç saniye durur.</p>
+    {{end}}{{end}}
     {{with .Data.Problem}}<div class="notice bad">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
-    <form method="post" action="/sites/{{$s.Name}}/snapshots/{{$n.ID}}/restore">
+    <form method="post" action="{{with .Data.Files}}/sites/{{$s.Name}}/files/{{.ID}}/restore{{else}}/sites/{{$s.Name}}/snapshots/{{$n.ID}}/restore{{end}}">
       <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
       <label class="field"><span>Onaylamak için site adını yaz: <strong>{{$s.Name}}</strong></span>
         <input name="confirm" autocomplete="off" autocapitalize="off" spellcheck="false" required>

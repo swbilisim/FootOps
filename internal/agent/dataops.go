@@ -77,8 +77,11 @@ type DataOps struct {
 	Limits      run.Limits
 	// Sites stops and starts sites around a restore.
 	Sites siteControl
+	// Self is the footops binary the file helpers run (default: this executable).
+	Self string
 
 	now       func() time.Time
+	sleep     func(time.Duration)
 	checkFree func(path string, need int64) error
 	initOnce  sync.Once
 
@@ -91,6 +94,9 @@ func (d *DataOps) init() {
 	d.initOnce.Do(func() {
 		if d.now == nil {
 			d.now = time.Now
+		}
+		if d.sleep == nil {
+			d.sleep = time.Sleep
 		}
 		if d.checkFree == nil {
 			d.checkFree = staging.CheckFree

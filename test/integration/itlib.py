@@ -76,3 +76,10 @@ def totp(secret):
     h = hmac.new(key, struct.pack(">Q", int(time.time() // 30)), hashlib.sha1).digest()
     o = h[-1] & 0x0F
     return "%06d" % ((struct.unpack(">I", h[o:o + 4])[0] & 0x7FFFFFFF) % 1000000)
+
+
+def fresh_totp(secret):
+    """A code from a TOTP step no earlier login used: codes are single-use, and the
+    scenarios log in one after another."""
+    time.sleep(31 - time.time() % 30)
+    return totp(secret)

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -24,6 +25,7 @@ import (
 	"time"
 
 	"github.com/swbilisim/FootOps/internal/archive"
+	"github.com/swbilisim/FootOps/internal/datafs"
 	"github.com/swbilisim/FootOps/internal/run"
 	"github.com/swbilisim/FootOps/internal/sites"
 	"github.com/swbilisim/FootOps/internal/staging"
@@ -43,7 +45,9 @@ type fakeMongo struct {
 	failRestore int  // the n-th restore fails half-way (1-based; 0 never)
 	lieNext     bool // the next restore writes one document less than it reports
 	scripts     []string
-	failDrop    bool        // dropping a temporary database fails
+	failDrop    bool // dropping a temporary database fails
+	helpers     int
+	failHelper  int         // the n-th file helper fails
 	onDump      func()      // called when a mongodump starts
 	onRestore   func(n int) // called when the n-th mongorestore starts
 }
@@ -236,6 +240,8 @@ func (m *fakeMongo) Stream(ctx context.Context, c run.Cmd) (run.Usage, error) {
 		return u, nil
 	case contains(c.Args, "mongorestore"):
 		return u, m.restore(c)
+	case c.Name == "systemd-run":
+		return u, m.helper(c)
 	}
 	return u, fmt.Errorf("unexpected tool: %v", c.Args)
 }
@@ -312,6 +318,79 @@ func (m *fakeMongo) restore(c run.Cmd) error {
 	return nil
 }
 
+// helper runs the file helper's work in-process with the real datafs code (without the
+// systemd scope and the change of user).
+func (m *fakeMongo) helper(c run.Cmd) error {
+	m.mu.Lock()
+	m.helpers++
+	fail := m.helpers == m.failHelper
+	m.mu.Unlock()
+	if fail {
+		return errors.New("exit status 1: helper killed")
+	}
+	report := func(kind string, st datafs.Stats) {
+		b, _ := json.Marshal(st)
+		c.Stderr("FOOTOPS_" + kind + " " + string(b))
+	}
+	root := func(f *os.File) (*os.Root, error) { return os.OpenRoot(f.Name()) }
+	switch {
+	case contains(c.Args, "data-pack"):
+		src, err := root(c.ExtraFiles[0])
+		if err != nil {
+			return err
+		}
+		defer src.Close()
+		st, err := datafs.Pack(src, c.Stdout, datafs.Options{})
+		if err != nil {
+			return err
+		}
+		report("STATS", st)
+		return nil
+	case contains(c.Args, "data-extract"):
+		dst, err := root(c.ExtraFiles[1])
+		if err != nil {
+			return err
+		}
+		defer dst.Close()
+		opt := datafs.Options{}
+		if v := argValue(c.Args, "--strip="); len(v) > 0 {
+			opt.Strip = v[0]
+		}
+		var in io.Reader = c.Stdin
+		if !contains(c.Args, "--stdin") {
+			in = c.ExtraFiles[0]
+		}
+		var st datafs.Stats
+		switch argValue(c.Args, "--format=")[0] {
+		case "zip":
+			info, _ := c.ExtraFiles[0].Stat()
+			st, err = datafs.ExtractZip(c.ExtraFiles[0], info.Size(), dst, opt)
+		case "tgz":
+			st, err = datafs.ExtractTarGz(in, dst, opt)
+		default:
+			st, err = datafs.ExtractTar(in, dst, opt)
+		}
+		if err != nil {
+			return err
+		}
+		if contains(c.Args, "--merge") {
+			cur, err := root(c.ExtraFiles[2])
+			if err != nil {
+				return err
+			}
+			defer cur.Close()
+			kept, err := datafs.Fill(cur, dst)
+			if err != nil {
+				return err
+			}
+			report("KEPT", kept)
+		}
+		report("STATS", st)
+		return nil
+	}
+	return fmt.Errorf("unexpected helper: %v", c.Args)
+}
+
 // fakeSites plays the site's container.
 type fakeSites struct {
 	mu       sync.Mutex
@@ -321,6 +400,7 @@ type fakeSites struct {
 	health   func(started int) error
 	startErr error
 	stopErr  error
+	onStop   func()
 }
 
 func (f *fakeSites) Running(context.Context, string) (bool, error) {
@@ -330,6 +410,9 @@ func (f *fakeSites) Running(context.Context, string) (bool, error) {
 }
 
 func (f *fakeSites) Stop(context.Context, string) error {
+	if f.onStop != nil {
+		f.onStop()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, "stop")
@@ -401,6 +484,9 @@ func (f *f2Env) task() *Task {
 }
 
 func steps(t *Task) string { return strings.Join(t.job.Steps, "\n") }
+
+// dbOpt applies only the database part.
+func dbOpt(mode string) ApplyOptions { return ApplyOptions{DB: true, DBMode: mode} }
 
 // upload sends data in chunks (the last one first, to show order does not matter).
 func (f *f2Env) upload(t *testing.T, name string, data []byte) string {
@@ -584,9 +670,13 @@ func TestImportReplace(t *testing.T) {
 	}
 
 	at := f.task()
-	snap, err := f.data.ApplyImport(ctx, at, "magaza", id, ModeReplace, Actor{User: "furkan"})
+	res, err := f.data.ApplyImport(ctx, at, "magaza", id, dbOpt(ModeReplace), Actor{User: "furkan"})
 	if err != nil {
 		t.Fatalf("%v\n%s", err, steps(at))
+	}
+	snap, _, err := f.data.SnapshotFile("magaza", res.Snapshot)
+	if err != nil || res.FilesOld != "" {
+		t.Fatalf("%+v %v", res, err)
 	}
 	if got := f.mongo.get("magaza"); !reflect.DeepEqual(got, want) {
 		t.Errorf("after replace: %v (eski must be gone)", got)
@@ -628,7 +718,7 @@ func TestImportAddOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	at := f.task()
-	if _, err := f.data.ApplyImport(ctx, at, "magaza", id, ModeAdd, Actor{}); err != nil {
+	if _, err := f.data.ApplyImport(ctx, at, "magaza", id, dbOpt(ModeAdd), Actor{}); err != nil {
 		t.Fatalf("%v\n%s", err, steps(at))
 	}
 	if got := f.mongo.get("magaza"); !reflect.DeepEqual(got, map[string]int64{"urunler": 3, "sayfalar": 2, "eski": 7, "yorumlar": 5}) {
@@ -663,7 +753,7 @@ func TestImportRollsBack(t *testing.T) {
 			}
 			setup(f)
 			at := f.task()
-			_, err := f.data.ApplyImport(ctx, at, "magaza", id, ModeReplace, Actor{})
+			_, err := f.data.ApplyImport(ctx, at, "magaza", id, dbOpt(ModeReplace), Actor{})
 			if err == nil || !strings.Contains(err.Error(), "geri alındı") {
 				if name == "site does not start" && err != nil && strings.Contains(err.Error(), "başlatılamadı") {
 					// the rollback restored the data but the site still cannot start
@@ -692,7 +782,7 @@ func TestImportUnhealthyBeforeIsNoReason(t *testing.T) {
 		t.Fatal(err)
 	}
 	at := f.task()
-	if _, err := f.data.ApplyImport(ctx, at, "magaza", id, ModeReplace, Actor{}); err != nil {
+	if _, err := f.data.ApplyImport(ctx, at, "magaza", id, dbOpt(ModeReplace), Actor{}); err != nil {
 		t.Fatalf("%v\n%s", err, steps(at))
 	}
 	if got := f.mongo.get("magaza"); !reflect.DeepEqual(got, map[string]int64{"urunler": 10}) {
@@ -710,7 +800,7 @@ func TestImportStoppedSiteStaysStopped(t *testing.T) {
 	if _, err := f.data.CheckImport(ctx, f.task(), "magaza", id, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.data.ApplyImport(ctx, f.task(), "magaza", id, ModeReplace, Actor{}); err != nil {
+	if _, err := f.data.ApplyImport(ctx, f.task(), "magaza", id, dbOpt(ModeReplace), Actor{}); err != nil {
 		t.Fatal(err)
 	}
 	if len(f.sites.calls) != 0 || f.sites.running {
@@ -726,7 +816,7 @@ func TestImportChoosesDatabase(t *testing.T) {
 	if err != nil || ic.SourceDB != "" || !reflect.DeepEqual(ic.Databases, []string{"blog", "magaza"}) || ic.Archive != nil {
 		t.Fatalf("check = %+v %v", ic, err)
 	}
-	if _, err := f.data.ApplyImport(ctx, f.task(), "magaza", id, ModeReplace, Actor{}); err == nil {
+	if _, err := f.data.ApplyImport(ctx, f.task(), "magaza", id, dbOpt(ModeReplace), Actor{}); err == nil {
 		t.Error("applied without a chosen database")
 	}
 	if _, err := f.data.CheckImport(ctx, f.task(), "magaza", id, "admin"); err == nil {
@@ -752,7 +842,6 @@ func TestImportRefusesOtherFiles(t *testing.T) {
 	for name, data := range map[string][]byte{
 		"zip":          zipped.Bytes(),
 		"text":         []byte("merhaba"),
-		"plain tar":    plainTar.Bytes(),
 		"truncated gz": trunc[:len(trunc)-5],
 		"only system":  gzipped(fakeArchive(map[string]map[string]int64{"admin": {"x": 1}, "local": {"y": 1}}, nil)),
 	} {
@@ -798,16 +887,17 @@ func TestExportRoundTrip(t *testing.T) {
 		}
 		names = append(names, h.Name)
 		body, _ := io.ReadAll(tr)
-		if h.Name == memberManifest {
+		switch h.Name {
+		case memberManifest:
 			json.Unmarshal(body, &man)
-		} else {
+		case memberDB:
 			dump = body
 		}
 	}
 	if sum := sha256.Sum256(dump); man.Members[memberDB].SHA256 != hex.EncodeToString(sum[:]) || man.Members[memberDB].Size != int64(len(dump)) {
 		t.Errorf("manifest member %+v", man.Members)
 	}
-	if !reflect.DeepEqual(names, []string{memberDB, memberManifest}) || man.Format != 1 || man.Site != "magaza" ||
+	if !reflect.DeepEqual(names, []string{memberDB, memberFiles, memberManifest}) || man.Format != 1 || man.Site != "magaza" ||
 		!reflect.DeepEqual(man.Collections, map[string]int64{"urunler": 3, "sayfalar": 2, "eski": 7}) || man.Documents != 12 {
 		t.Fatalf("archive: %v %+v", names, man)
 	}
@@ -823,7 +913,7 @@ func TestExportRoundTrip(t *testing.T) {
 	if ic.Format != FormatFootOps || ic.Manifest == nil || ic.Section.Offset != 512 || ic.SHA256 != info.SHA256 {
 		t.Fatalf("check = %+v", ic)
 	}
-	if _, err := f.data.ApplyImport(ctx, f.task(), "magaza", id, ModeReplace, Actor{}); err != nil {
+	if _, err := f.data.ApplyImport(ctx, f.task(), "magaza", id, dbOpt(ModeReplace), Actor{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.mongo.get("magaza"); !reflect.DeepEqual(got, map[string]int64{"urunler": 3, "sayfalar": 2, "eski": 7}) {
@@ -850,7 +940,7 @@ func TestRecoverAfterAgentStop(t *testing.T) {
 			// The agent stopped mid-restore: half-new data, site stopped.
 			f.mongo.set("magaza", map[string]int64{"urunler": 1})
 			f.sites.running = false
-			r := recovery{Job: "Dead1", Site: "magaza", Snapshot: snap.ID, Running: true, Phase: phase, Started: f.clock}
+			r := recovery{Job: "Dead1", Site: "magaza", DB: true, Snapshot: snap.ID, Running: true, Phase: phase, Started: f.clock}
 			if err := f.data.saveRecovery(r); err != nil {
 				t.Fatal(err)
 			}
@@ -942,13 +1032,13 @@ func TestDataEndpoints(t *testing.T) {
 	if err != nil || ic.ArchiveDocs != 12 {
 		t.Fatalf("import: %+v %v", ic, err)
 	}
-	if _, err := c.ApplyImport(ctx, "magaza", st.ID, ModeReplace, "magaz", a); err == nil || err.(*Error).Status != 422 {
+	if _, err := c.ApplyImport(ctx, "magaza", st.ID, dbOpt(ModeReplace), "magaz", a); err == nil || err.(*Error).Status != 422 {
 		t.Errorf("wrong confirmation: %v", err)
 	}
-	if _, err := c.ApplyImport(ctx, "magaza", st.ID, "merge", "magaza", a); err == nil {
+	if _, err := c.ApplyImport(ctx, "magaza", st.ID, dbOpt("merge"), "magaza", a); err == nil {
 		t.Error("unknown mode accepted")
 	}
-	id, err = c.ApplyImport(ctx, "magaza", st.ID, ModeReplace, "magaza", a)
+	id, err = c.ApplyImport(ctx, "magaza", st.ID, dbOpt(ModeReplace), "magaza", a)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1014,7 +1104,7 @@ func TestDataEndpoints(t *testing.T) {
 		}
 	}
 	for action, want := range map[string]string{
-		"upload": "eski.archive", "import.check": "kaynak eski", "import.apply": "güvenlik kopyası",
+		"upload": "eski.archive", "import.check": "veritabanı eski", "import.apply": "geri alma: 2026",
 		"db.restore": "geri yüklendi", "site.export": "FootOps arşivi", "site.export.download": "",
 	} {
 		if d, ok := seen[action]; !ok || !strings.Contains(d, want) {
@@ -1041,7 +1131,7 @@ func TestSafetyCopyWhileStopped(t *testing.T) {
 	}
 	var runningAtDump []bool
 	f.mongo.onDump = func() { runningAtDump = append(runningAtDump, f.running()) }
-	if _, err := f.data.ApplyImport(ctx, f.task(), "magaza", id, ModeReplace, Actor{}); err != nil {
+	if _, err := f.data.ApplyImport(ctx, f.task(), "magaza", id, dbOpt(ModeReplace), Actor{}); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(runningAtDump, []bool{false}) {
@@ -1070,7 +1160,7 @@ func TestRollbackPhaseInRecord(t *testing.T) {
 		}
 	}
 	at := f.task()
-	if _, err := f.data.ApplyImport(ctx, at, "magaza", id, ModeReplace, Actor{}); err == nil || !strings.Contains(err.Error(), "geri alındı") {
+	if _, err := f.data.ApplyImport(ctx, at, "magaza", id, dbOpt(ModeReplace), Actor{}); err == nil || !strings.Contains(err.Error(), "geri alındı") {
 		t.Fatalf("%v\n%s", err, steps(at))
 	}
 	// restore 1 is the trial (no record), 2 the import, 3 the rollback.
@@ -1086,7 +1176,7 @@ func TestStopFailureStartsSiteAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.sites.stopErr = errors.New("compose stop: timeout")
-	if _, err := f.data.ApplyImport(ctx, f.task(), "magaza", id, ModeReplace, Actor{}); err == nil {
+	if _, err := f.data.ApplyImport(ctx, f.task(), "magaza", id, dbOpt(ModeReplace), Actor{}); err == nil {
 		t.Fatal("apply succeeded although the site could not be stopped")
 	}
 	if !reflect.DeepEqual(f.sites.calls, []string{"health1", "stop", "start"}) || f.mongo.get("magaza")["eski"] != 7 {
@@ -1120,7 +1210,7 @@ func TestRestoreWithSystemCollection(t *testing.T) {
 
 func TestRecoverRecordIsTriedOnce(t *testing.T) {
 	f := newF2(t)
-	r := recovery{Job: "Dead2", Site: "magaza", Snapshot: "20200101-000000", Running: true, Phase: phaseRestoring}
+	r := recovery{Job: "Dead2", Site: "magaza", DB: true, Snapshot: "20200101-000000", Running: true, Phase: phaseRestoring}
 	if err := f.data.saveRecovery(r); err != nil {
 		t.Fatal(err)
 	}
@@ -1202,5 +1292,253 @@ func TestRestartRefusedDuringJob(t *testing.T) {
 	}
 	if d := s.Docker.(*fakeDocker); len(d.restarted) != 0 {
 		t.Error("restarted")
+	}
+}
+
+// dataDir is the test site's data directory.
+func (f *f2Env) dataDir() string { return filepath.Join(f.root, "srv/musteri/magaza/data") }
+
+func (f *f2Env) writeData(t *testing.T, files map[string]string) {
+	t.Helper()
+	for name, body := range files {
+		p := filepath.Join(f.dataDir(), name)
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func (f *f2Env) readData(t *testing.T) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	filepath.Walk(f.dataDir(), func(p string, info os.FileInfo, err error) error {
+		if err == nil && info.Mode().IsRegular() {
+			rel, _ := filepath.Rel(f.dataDir(), p)
+			b, _ := os.ReadFile(p)
+			out[rel] = string(b)
+		}
+		return nil
+	})
+	return out
+}
+
+func zipOf(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, name := range sortedStrKeys(files) {
+		w, _ := zw.Create(name)
+		w.Write([]byte(files[name]))
+	}
+	zw.Close()
+	return buf.Bytes()
+}
+
+func sortedStrKeys(m map[string]string) []string {
+	var out []string
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func filesOpt(mode string, strip bool) ApplyOptions {
+	return ApplyOptions{Files: true, FilesMode: mode, Strip: strip}
+}
+
+// Export with files, change them, import the archive back: files replaced, database too.
+func TestFilesRoundTrip(t *testing.T) {
+	f := newF2(t)
+	original := map[string]string{"ürün/çay.jpg": "jpeg", "ürün/alt/b.png": "png", "kök.txt": "merhaba"}
+	f.writeData(t, original)
+	info, err := f.data.Export(ctx, f.task(), "magaza")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Files != 3 || info.FileBytes != 14 {
+		t.Errorf("export info %+v", info)
+	}
+	_, path, _ := f.data.ExportFile("magaza", info.ID)
+	b, _ := os.ReadFile(path)
+	os.RemoveAll(filepath.Join(f.dataDir(), "ürün"))
+	f.writeData(t, map[string]string{"yeni.jpg": "sonradan"})
+	f.mongo.set("magaza", map[string]int64{"bambaska": 1})
+
+	id := f.upload(t, info.File, b)
+	ct := f.task()
+	ic, err := f.data.CheckImport(ctx, ct, "magaza", id, "")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, steps(ct))
+	}
+	if ic.Files == nil || ic.Files.Format != "tgz" || ic.Files.Expect().Files != 3 || ic.Files.Current.Files != 2 || ic.Files.StripDefault || !ic.HasDB {
+		t.Fatalf("check files = %+v", ic.Files)
+	}
+	at := f.task()
+	res, err := f.data.ApplyImport(ctx, at, "magaza", id, ApplyOptions{DB: true, DBMode: ModeReplace, Files: true, FilesMode: ModeReplace}, Actor{})
+	if err != nil {
+		t.Fatalf("%v\n%s", err, steps(at))
+	}
+	if got := f.readData(t); !reflect.DeepEqual(got, original) {
+		t.Errorf("data after import = %v", got)
+	}
+	if got := f.mongo.get("magaza"); got["eski"] != 7 {
+		t.Errorf("db after import = %v", got)
+	}
+	if res.FilesOld == "" || res.Snapshot == "" || at.job.Result != res.Snapshot+" files-"+res.FilesOld {
+		t.Errorf("applied %+v, result %q", res, at.job.Result)
+	}
+	backups, _ := f.data.FilesBackups("magaza")
+	if len(backups) != 1 || backups[0].ID != res.FilesOld {
+		t.Fatalf("backups = %+v", backups)
+	}
+	// Undo the files: the previous directory returns, the imported one is kept in turn.
+	rt := f.task()
+	undo, err := f.data.RestoreFiles(ctx, rt, "magaza", res.FilesOld, Actor{})
+	if err != nil {
+		t.Fatalf("%v\n%s", err, steps(rt))
+	}
+	if got := f.readData(t); !reflect.DeepEqual(got, map[string]string{"kök.txt": "merhaba", "yeni.jpg": "sonradan"}) {
+		t.Errorf("data after undo = %v", got)
+	}
+	if backups, _ := f.data.FilesBackups("magaza"); len(backups) != 1 || backups[0].ID != undo.FilesOld {
+		t.Errorf("backups after undo = %+v", backups)
+	}
+	if len(f.data.Recoveries()) != 0 {
+		t.Error("record left")
+	}
+}
+
+func TestFilesZipAddStrip(t *testing.T) {
+	f := newF2(t)
+	f.writeData(t, map[string]string{"a.jpg": "eski-a", "keep.jpg": "kalir"})
+	id := f.upload(t, "uploads.zip", zipOf(t, map[string]string{"uploads/a.jpg": "yeni-a", "uploads/b.jpg": "b", "__MACOSX/uploads/._a.jpg": "x"}))
+	ct := f.task()
+	ic, err := f.data.CheckImport(ctx, ct, "magaza", id, "")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, steps(ct))
+	}
+	if ic.HasDB || ic.Files.Archive.Prefix != "uploads" || !ic.Files.StripDefault || ic.Files.Expect().Files != 2 {
+		t.Fatalf("check = %+v", ic.Files)
+	}
+	f.mongo.onDump = func() { t.Error("database copied for a files-only import") }
+	at := f.task()
+	if _, err := f.data.ApplyImport(ctx, at, "magaza", id, filesOpt(ModeAdd, true), Actor{}); err != nil {
+		t.Fatalf("%v\n%s", err, steps(at))
+	}
+	if got := f.readData(t); !reflect.DeepEqual(got, map[string]string{"a.jpg": "yeni-a", "b.jpg": "b", "keep.jpg": "kalir"}) {
+		t.Errorf("merged = %v", got)
+	}
+}
+
+func TestFilesRollback(t *testing.T) {
+	cases := map[string]func(f *f2Env){
+		"site fails to start": func(f *f2Env) {
+			f.sites.health = func(started int) error {
+				if started == 1 {
+					return errors.New("HTTP 502")
+				}
+				return nil
+			}
+		},
+		"helper fails": func(f *f2Env) { f.mongo.failHelper = 1 },
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newF2(t)
+			f.writeData(t, map[string]string{"eski.jpg": "eski"})
+			id := f.upload(t, "x.zip", zipOf(t, map[string]string{"yeni.jpg": "yeni"}))
+			if _, err := f.data.CheckImport(ctx, f.task(), "magaza", id, ""); err != nil {
+				t.Fatal(err)
+			}
+			setup(f)
+			at := f.task()
+			if _, err := f.data.ApplyImport(ctx, at, "magaza", id, filesOpt(ModeReplace, false), Actor{}); err == nil {
+				t.Fatalf("succeeded\n%s", steps(at))
+			}
+			if got := f.readData(t); !reflect.DeepEqual(got, map[string]string{"eski.jpg": "eski"}) {
+				t.Errorf("data = %v\n%s", got, steps(at))
+			}
+			if !f.running() {
+				t.Error("site left stopped")
+			}
+			if _, err := os.Stat(filepath.Join(f.root, "srv/musteri/magaza", dataNew)); !os.IsNotExist(err) {
+				t.Error("data.new left")
+			}
+		})
+	}
+}
+
+func TestRecoverFilesSwap(t *testing.T) {
+	f := newF2(t)
+	f.writeData(t, map[string]string{"eski.jpg": "eski"})
+	site := filepath.Join(f.root, "srv/musteri/magaza")
+	// The agent died after the first rename: data is gone, the old directory is aside.
+	old := dataOldPrefix + "20261027-110000"
+	if err := os.Rename(f.dataDir(), filepath.Join(site, old)); err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Join(site, dataNew), 0o755)
+	r := recovery{Job: "Dead4", Site: "magaza", Running: true, Phase: phaseRestoring, Files: &filesRecovery{Old: old, Moved: true}}
+	f.sites.running = false
+	if err := f.data.Recover(ctx, f.task(), r); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.readData(t); !reflect.DeepEqual(got, map[string]string{"eski.jpg": "eski"}) || !f.running() {
+		t.Errorf("data = %v running = %v", got, f.running())
+	}
+	if _, err := os.Stat(filepath.Join(site, dataNew)); !os.IsNotExist(err) {
+		t.Error("data.new left")
+	}
+}
+
+func TestSweepFiles(t *testing.T) {
+	f := newF2(t)
+	site := filepath.Join(f.root, "srv/musteri/magaza")
+	for _, n := range []string{"data.old-20261019-100000", "data.old-20261026-100000", "data.failed-20261025-100000", "data.old-bozuk"} {
+		os.MkdirAll(filepath.Join(site, n), 0o755)
+	}
+	f.clock = time.Date(2026, 10, 27, 11, 0, 0, 0, time.UTC)
+	removed := f.data.SweepFiles()
+	sort.Strings(removed)
+	if !reflect.DeepEqual(removed, []string{"magaza/data.failed-20261025-100000", "magaza/data.old-20261019-100000"}) {
+		t.Errorf("removed %v", removed)
+	}
+	if _, err := os.Stat(filepath.Join(site, "data.old-20261026-100000")); err != nil {
+		t.Error("recent backup removed")
+	}
+}
+
+// A failed files restore marks its record as a rollback before undoing anything.
+func TestRestoreFilesRollbackPhase(t *testing.T) {
+	f := newF2(t)
+	f.writeData(t, map[string]string{"simdi.jpg": "simdi"})
+	os.MkdirAll(filepath.Join(f.root, "srv/musteri/magaza/data.old-20261026-100000"), 0o755)
+	os.WriteFile(filepath.Join(f.root, "srv/musteri/magaza/data.old-20261026-100000/eski.jpg"), []byte("eski"), 0o644)
+	f.sites.health = func(started int) error {
+		if started == 1 {
+			return errors.New("HTTP 500")
+		}
+		return nil
+	}
+	var phases []string
+	f.sites.onStop = func() {
+		for _, r := range f.data.Recoveries() {
+			phases = append(phases, r.Phase)
+		}
+	}
+	rt := f.task()
+	if _, err := f.data.RestoreFiles(ctx, rt, "magaza", "20261026-100000", Actor{}); err == nil {
+		t.Fatalf("succeeded\n%s", steps(rt))
+	}
+	if !reflect.DeepEqual(phases, []string{phasePrepare, phaseRollback}) {
+		t.Errorf("phases at stops = %v", phases)
+	}
+	if got := f.readData(t); !reflect.DeepEqual(got, map[string]string{"simdi.jpg": "simdi"}) {
+		t.Errorf("data = %v", got)
+	}
+	if b, _ := f.data.FilesBackups("magaza"); len(b) != 1 || b[0].ID != "20261026-100000" {
+		t.Errorf("the chosen backup did not return to its name: %+v", b)
 	}
 }

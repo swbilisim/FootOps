@@ -21,20 +21,19 @@
 {{else if .Data.Err}}
 <div class="notice bad">{{icon "alert"}}<div>Kontrol sonucu okunamadı: {{.Data.Err}}</div></div>
 {{else}}
-{{$c := .Data.C}}
+{{$c := .Data.C}}{{$f := .Data.Form}}
 <div class="table-wrap">
 <table class="kv">
-  <tr><th>Dosya türü</th><td>{{if eq $c.Format "footops"}}FootOps arşivi{{with $c.Manifest}} — {{.Site}} sitesinden, {{ts .Created}}{{end}}{{else}}mongodump arşivi{{end}}{{if $c.Section.Gzip}} (gzip){{end}}</td></tr>
+  <tr><th>Dosya türü</th><td>{{if eq $c.Format "footops"}}FootOps arşivi{{with $c.Manifest}} — {{.Site}} sitesinden, {{ts .Created}}{{end}}{{else if eq $c.Format "mongodump"}}mongodump arşivi{{if $c.Section.Gzip}} (gzip){{end}}{{else}}dosya arşivi ({{$c.Files.Format}}){{end}}</td></tr>
   <tr><th>Bütünlük</th><td><span class="badge ok">doğrulandı</span> <span class="mono small muted">sha256 {{$c.SHA256}}</span></td></tr>
-  <tr><th>Kaynak</th><td>MongoDB {{$c.ServerVersion}}, araç {{$c.ToolVersion}}</td></tr>
-  {{if $c.SourceDB}}<tr><th>Veritabanı</th><td><span class="mono">{{$c.SourceDB}}</span> → bu sitenin <span class="mono">{{$c.Target}}</span> veritabanı{{if ne $c.SourceDB $c.Target}} (ad otomatik değişir){{end}}</td></tr>{{end}}
-  {{with $c.Skipped}}<tr><th>Alınmayacak</th><td>Sistem koleksiyonları: {{range $i, $n := .}}{{if $i}}, {{end}}<span class="mono">{{$n}}</span>{{end}} (kullanıcılar, roller ve sistem verisi hiç içe aktarılmaz)</td></tr>{{end}}
-  {{if $c.HasFiles}}<tr><th>Dosyalar</th><td>Arşivde dosyalar da var; bu sürüm yalnız veritabanını içe aktarır (dosyalar sonraki sürümde).</td></tr>{{end}}
+  <tr><th>İçinde</th><td>{{if $c.HasDB}}veritabanı{{end}}{{if and $c.HasDB $c.Files}} ve {{end}}{{if $c.Files}}dosyalar{{end}}</td></tr>
 </table>
 </div>
+{{range $c.Notes}}<div class="notice warn">{{icon "info"}}<div>{{.}}</div></div>{{end}}
 
+{{if $c.HasDB}}
+<div class="section-head"><h2>Veritabanı</h2></div>
 {{if not $c.SourceDB}}
-<div class="section-head"><h2>Hangi veritabanı?</h2></div>
 <form method="post" action="/sites/{{$s.Name}}/import/{{.Data.ID}}/check" class="card stack">
   <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
   <p>Arşivde birden çok veritabanı var. Bu siteye hangisi aktarılsın? Seçince yalnız o veritabanı deneme olarak yüklenip sayılır.</p>
@@ -44,7 +43,13 @@
   <div class="form-actions"><button type="submit" class="primary">{{icon "check"}}Seç ve kontrol et</button></div>
 </form>
 {{else}}
-<div class="section-head"><h2>Koleksiyonlar</h2></div>
+<div class="table-wrap">
+<table class="kv">
+  <tr><th>Kaynak</th><td>MongoDB {{$c.ServerVersion}}, araç {{$c.ToolVersion}}</td></tr>
+  <tr><th>Veritabanı</th><td><span class="mono">{{$c.SourceDB}}</span> → bu sitenin <span class="mono">{{$c.Target}}</span> veritabanı{{if ne $c.SourceDB $c.Target}} (ad otomatik değişir){{end}}</td></tr>
+  {{with $c.Skipped}}<tr><th>Alınmayacak</th><td>Sistem koleksiyonları: {{range $i, $n := .}}{{if $i}}, {{end}}<span class="mono">{{$n}}</span>{{end}} (kullanıcılar, roller ve sistem verisi hiç içe aktarılmaz)</td></tr>{{end}}
+</table>
+</div>
 <p class="muted small">Arşivdeki sayılar deneme yüklemesinden (geçici veritabanı, sonra silindi); sitedeki sayılar kontrol anından ({{ts $c.Checked}}).</p>
 <div class="table-wrap">
 <table class="responsive">
@@ -62,18 +67,50 @@
   </tbody>
 </table>
 </div>
+{{end}}
+{{end}}
 
+{{with $c.Files}}
+<div class="section-head"><h2>Dosyalar</h2></div>
+<div class="table-wrap">
+<table class="kv">
+  <tr><th>Arşivde</th><td>{{.Expect.Files}} dosya, {{bytes .Expect.Bytes}}{{if .Archive.Hidden}} <span class="muted">({{.Archive.Hidden}} gizli dosya alınmaz: .htaccess, .DS_Store gibi)</span>{{end}}</td></tr>
+  <tr><th>Sitede şu an</th><td>{{.Current.Files}} dosya, {{bytes .Current.Bytes}} <span class="muted mono">(/srv/{{$s.Group}}/{{$s.Name}}/data → {{$s.DataMount}})</span></td></tr>
+  {{with .Archive.Prefix}}<tr><th>Üst klasör</th><td>Arşivdeki her şey <span class="mono">{{.}}/</span> klasörünün içinde.</td></tr>{{end}}
+</table>
+</div>
+{{end}}
+
+{{$dbReady := and $c.HasDB $c.SourceDB}}
+{{if or $dbReady $c.Files}}
 <div class="section-head"><h2>Uygula</h2></div>
 {{with .Data.Problem}}<div class="notice bad" role="alert">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
 <form method="post" action="/sites/{{$s.Name}}/import/{{.Data.ID}}/apply" class="card stack">
   <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
-  <div class="choices" role="radiogroup" aria-label="Mod">
-    <label class="choice"><input type="radio" name="mode" value="replace"{{if ne $.Data.Mode "add"}} checked{{end}}>
-      <span><strong>Tamamen değiştir</strong> (önerilen)<br><span class="muted small">Veritabanı arşivdekinin aynısı olur; arşivde olmayan koleksiyonlar silinir.</span></span></label>
-    <label class="choice"><input type="radio" name="mode" value="add"{{if eq $.Data.Mode "add"}} checked{{end}}>
-      <span><strong>Yalnız olmayan koleksiyonları ekle</strong><br><span class="muted small">Sitede zaten olan koleksiyonlara hiç dokunulmaz; yalnız arşivdeki yeni koleksiyonlar eklenir.</span></span></label>
-  </div>
-  <p class="hint">Önce şu anki veritabanının güvenlik kopyası alınır (7 gün saklanır). Site birkaç saniye durur; sonra başlatılıp sayfası kontrol edilir. Sayımlar tutmazsa ya da site açılmazsa eski hali otomatik geri yüklenir.</p>
+  {{if $dbReady}}
+  <fieldset>
+    <legend><label class="check"><input type="checkbox" name="db"{{if $f.DB}} checked{{end}}> Veritabanını içe aktar</label></legend>
+    <div class="choices" role="radiogroup" aria-label="Veritabanı modu">
+      <label class="choice"><input type="radio" name="db_mode" value="replace"{{if ne $f.DBMode "add"}} checked{{end}}>
+        <span><strong>Tamamen değiştir</strong> (önerilen)<br><span class="muted small">Veritabanı arşivdekinin aynısı olur; arşivde olmayan koleksiyonlar silinir.</span></span></label>
+      <label class="choice"><input type="radio" name="db_mode" value="add"{{if eq $f.DBMode "add"}} checked{{end}}>
+        <span><strong>Yalnız olmayan koleksiyonları ekle</strong><br><span class="muted small">Sitede zaten olan koleksiyonlara hiç dokunulmaz; yalnız arşivdeki yeni koleksiyonlar eklenir.</span></span></label>
+    </div>
+  </fieldset>
+  {{end}}
+  {{with $c.Files}}
+  <fieldset>
+    <legend><label class="check"><input type="checkbox" name="files"{{if $f.Files}} checked{{end}}> Dosyaları içe aktar</label></legend>
+    <div class="choices" role="radiogroup" aria-label="Dosya modu">
+      <label class="choice"><input type="radio" name="files_mode" value="replace"{{if ne $f.FilesMode "add"}} checked{{end}}>
+        <span><strong>Tamamen değiştir</strong><br><span class="muted small">Kalıcı klasör arşivdekinin aynısı olur. Önceki hali silinmez, {{$.Data.KeepDays}} gün “Dosya kopyaları”nda durur.</span></span></label>
+      <label class="choice"><input type="radio" name="files_mode" value="add"{{if eq $f.FilesMode "add"}} checked{{end}}>
+        <span><strong>Ekle ve üzerine yaz</strong><br><span class="muted small">Arşivdeki dosyalar eklenir, aynı adlı olanların yerine geçer; sitedeki diğer dosyalar kalır. Önceki hal de saklanır, ama değişmeyen dosyaları yeni klasörle paylaşır (kopyalanmaz): uygulama bir dosyayı yerinde değiştirirse ikisinde de değişir.</span></span></label>
+    </div>
+    {{with .Archive.Prefix}}<label class="check"><input type="checkbox" name="strip"{{if $f.Strip}} checked{{end}}> <span><span class="mono">{{.}}/</span> klasörünü atla: içindekiler doğrudan kalıcı klasöre gitsin</span></label>{{end}}
+  </fieldset>
+  {{end}}
+  <p class="hint">Site birkaç saniye durur. Önce değişecek olanın kopyası alınır (veritabanının güvenlik kopyası, kalıcı klasörün önceki hali); sayımlar tutmazsa ya da site açılmazsa hepsi otomatik geri konur.</p>
   <label class="field"><span>Onaylamak için site adını yaz: <strong>{{$s.Name}}</strong></span>
     <input name="confirm" autocomplete="off" autocapitalize="off" spellcheck="false" required>
   </label>

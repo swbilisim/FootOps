@@ -50,7 +50,7 @@ func jsonErr(w http.ResponseWriter, err error) {
 	jsonOut(w, status, map[string]string{"error": err.Error()})
 }
 
-// dbSiteOr404 finds a site with a database for the import pages.
+// dbSiteOr404 finds a site with a database (copies and their restore).
 func (s *Server) dbSiteOr404(w http.ResponseWriter, r *http.Request) (agent.SiteStatus, bool) {
 	st, ok := s.findSite(w, r)
 	if ok && !st.Spec.Database {
@@ -60,8 +60,18 @@ func (s *Server) dbSiteOr404(w http.ResponseWriter, r *http.Request) (agent.Site
 	return st, ok
 }
 
+// dataSiteOr404 finds a site with a database or a data directory (imports, exports).
+func (s *Server) dataSiteOr404(w http.ResponseWriter, r *http.Request) (agent.SiteStatus, bool) {
+	st, ok := s.findSite(w, r)
+	if ok && !st.Spec.Database && st.Spec.DataMount == "" {
+		http.Error(w, "bu sitenin ne veritabanı ne kalıcı klasörü var", http.StatusNotFound)
+		return st, false
+	}
+	return st, ok
+}
+
 func (s *Server) importPage(w http.ResponseWriter, r *http.Request) {
-	st, ok := s.dbSiteOr404(w, r)
+	st, ok := s.dataSiteOr404(w, r)
 	if !ok {
 		return
 	}
@@ -70,7 +80,7 @@ func (s *Server) importPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) uploadCreate(w http.ResponseWriter, r *http.Request) {
-	st, ok := s.dbSiteOr404(w, r)
+	st, ok := s.dataSiteOr404(w, r)
 	if !ok {
 		return
 	}
@@ -182,7 +192,7 @@ func (s *Server) uploadCancel(w http.ResponseWriter, r *http.Request) {
 // the CSRF token and whose second is the file, read as a stream (never parsed into
 // memory or temporary files).
 func (s *Server) importForm(w http.ResponseWriter, r *http.Request) {
-	st, ok := s.dbSiteOr404(w, r)
+	st, ok := s.dataSiteOr404(w, r)
 	if !ok {
 		return
 	}
@@ -276,16 +286,27 @@ func rowsOf(ic agent.ImportCheck) []collRow {
 }
 
 func (s *Server) importPreview(w http.ResponseWriter, r *http.Request) {
-	st, ok := s.dbSiteOr404(w, r)
+	st, ok := s.dataSiteOr404(w, r)
 	if !ok {
 		return
 	}
-	s.renderPreview(w, r, st, http.StatusOK, "", "")
+	s.renderPreview(w, r, st, http.StatusOK, "", nil)
 }
 
-func (s *Server) renderPreview(w http.ResponseWriter, r *http.Request, st agent.SiteStatus, status int, problem, mode string) {
+// applyForm is the apply form as submitted (or its defaults).
+type applyForm struct {
+	DB, Files, Strip  bool
+	DBMode, FilesMode string
+}
+
+func (f applyForm) options() agent.ApplyOptions {
+	return agent.ApplyOptions{DB: f.DB, DBMode: f.DBMode, Files: f.Files, FilesMode: f.FilesMode, Strip: f.Strip}
+}
+
+func (s *Server) renderPreview(w http.ResponseWriter, r *http.Request, st agent.SiteStatus, status int, problem string, form *applyForm) {
 	id := r.PathValue("id")
-	data := map[string]any{"Title": st.Spec.Name + " içe aktarma", "S": st.Spec, "ID": id, "Problem": problem, "Mode": mode}
+	data := map[string]any{"Title": st.Spec.Name + " içe aktarma", "S": st.Spec, "ID": id, "Problem": problem,
+		"KeepDays": int(agent.FilesKeep.Hours() / 24)}
 	if !reUploadID.MatchString(id) {
 		http.NotFound(w, r)
 		return
@@ -306,15 +327,17 @@ func (s *Server) renderPreview(w http.ResponseWriter, r *http.Request, st agent.
 		data["Err"] = err.Error()
 	default:
 		data["C"], data["Rows"] = ic, rowsOf(ic)
-	}
-	if mode == "" {
-		data["Mode"] = agent.ModeReplace
+		if form == nil {
+			form = &applyForm{DB: ic.HasDB && ic.SourceDB != "", DBMode: agent.ModeReplace, Files: ic.Files != nil,
+				FilesMode: agent.ModeReplace, Strip: ic.Files != nil && ic.Files.StripDefault}
+		}
+		data["Form"] = form
 	}
 	s.renderStatus(w, r, status, "import_preview", data)
 }
 
 func (s *Server) importRecheck(w http.ResponseWriter, r *http.Request) {
-	st, ok := s.dbSiteOr404(w, r)
+	st, ok := s.dataSiteOr404(w, r)
 	if !ok {
 		return
 	}
@@ -327,22 +350,28 @@ func (s *Server) importRecheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) importApply(w http.ResponseWriter, r *http.Request) {
-	st, ok := s.dbSiteOr404(w, r)
+	st, ok := s.dataSiteOr404(w, r)
 	if !ok {
 		return
 	}
-	id, mode := r.PathValue("id"), r.PostFormValue("mode")
+	id := r.PathValue("id")
 	if !reUploadID.MatchString(id) {
 		http.NotFound(w, r)
 		return
 	}
-	if r.PostFormValue("confirm") != st.Spec.Name {
-		s.renderPreview(w, r, st, http.StatusUnprocessableEntity, "Onay için site adını aynen yaz.", mode)
+	f := &applyForm{DB: r.PostFormValue("db") == "on", DBMode: r.PostFormValue("db_mode"), Files: r.PostFormValue("files") == "on",
+		FilesMode: r.PostFormValue("files_mode"), Strip: r.PostFormValue("strip") == "on"}
+	switch {
+	case !f.DB && !f.Files:
+		s.renderPreview(w, r, st, http.StatusUnprocessableEntity, "Veritabanı ya da dosyalardan en az birini seç.", f)
+		return
+	case r.PostFormValue("confirm") != st.Spec.Name:
+		s.renderPreview(w, r, st, http.StatusUnprocessableEntity, "Onay için site adını aynen yaz.", f)
 		return
 	}
-	job, err := s.agent.ApplyImport(r.Context(), st.Spec.Name, id, mode, r.PostFormValue("confirm"), s.actor(r))
+	job, err := s.agent.ApplyImport(r.Context(), st.Spec.Name, id, f.options(), r.PostFormValue("confirm"), s.actor(r))
 	if err != nil {
-		s.renderPreview(w, r, st, http.StatusUnprocessableEntity, err.Error(), mode)
+		s.renderPreview(w, r, st, http.StatusUnprocessableEntity, err.Error(), f)
 		return
 	}
 	http.Redirect(w, r, "/jobs/"+job, http.StatusSeeOther)
@@ -406,8 +435,66 @@ func (s *Server) restoreSnapshot(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/jobs/"+job, http.StatusSeeOther)
 }
 
+// filesBackupOf finds one of the site's previous data directories.
+func (s *Server) filesBackupOf(w http.ResponseWriter, r *http.Request, site string) (agent.FilesBackup, bool) {
+	id := r.PathValue("id")
+	if !reSnapshotID.MatchString(id) {
+		http.NotFound(w, r)
+		return agent.FilesBackup{}, false
+	}
+	list, err := s.agent.FilesBackups(r.Context(), site)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return agent.FilesBackup{}, false
+	}
+	for _, b := range list {
+		if b.ID == id {
+			return b, true
+		}
+	}
+	http.NotFound(w, r)
+	return agent.FilesBackup{}, false
+}
+
+func (s *Server) filesRestoreConfirm(w http.ResponseWriter, r *http.Request) {
+	st, ok := s.findSite(w, r)
+	if !ok {
+		return
+	}
+	b, ok := s.filesBackupOf(w, r, st.Spec.Name)
+	if !ok {
+		return
+	}
+	s.render(w, r, "restore_confirm", map[string]any{"Title": st.Spec.Name + " dosyaları geri yükle", "S": st.Spec, "Files": b})
+}
+
+func (s *Server) filesRestore(w http.ResponseWriter, r *http.Request) {
+	st, ok := s.findSite(w, r)
+	if !ok {
+		return
+	}
+	b, ok := s.filesBackupOf(w, r, st.Spec.Name)
+	if !ok {
+		return
+	}
+	again := func(problem string) {
+		s.renderStatus(w, r, http.StatusUnprocessableEntity, "restore_confirm",
+			map[string]any{"Title": st.Spec.Name + " dosyaları geri yükle", "S": st.Spec, "Files": b, "Problem": problem})
+	}
+	if r.PostFormValue("confirm") != st.Spec.Name {
+		again("Onay için site adını aynen yaz.")
+		return
+	}
+	job, err := s.agent.RestoreFiles(r.Context(), st.Spec.Name, b.ID, r.PostFormValue("confirm"), s.actor(r))
+	if err != nil {
+		again(err.Error())
+		return
+	}
+	http.Redirect(w, r, "/jobs/"+job, http.StatusSeeOther)
+}
+
 func (s *Server) exportStart(w http.ResponseWriter, r *http.Request) {
-	st, ok := s.dbSiteOr404(w, r)
+	st, ok := s.dataSiteOr404(w, r)
 	if !ok {
 		return
 	}

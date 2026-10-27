@@ -53,6 +53,9 @@ type Cmd struct {
 	// Stdin and Stdout are copied without buffering the whole stream.
 	Stdin  io.Reader
 	Stdout io.Writer
+	// ExtraFiles become descriptors 3, 4, … of the command (files it may not be able to
+	// open by path itself).
+	ExtraFiles []*os.File
 	// Stderr receives each line the command writes to stderr. The last lines are also
 	// kept for the error message.
 	Stderr func(line string)
@@ -94,6 +97,7 @@ func (r StreamExec) Stream(ctx context.Context, c Cmd) (Usage, error) {
 	cmd.Env = append(os.Environ(), execEnv...)
 	cmd.Stdin = c.Stdin
 	cmd.Stdout = c.Stdout
+	cmd.ExtraFiles = c.ExtraFiles
 	setOwnProcessGroup(cmd)
 	errPipe, err := cmd.StderrPipe()
 	if err != nil {

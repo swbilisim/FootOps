@@ -4,8 +4,8 @@
 <a class="crumb" href="/sites/{{$s.Name}}">{{icon "back"}}{{$s.Name}}</a>
 <div class="page-head">
   <div>
-    <h1>Veritabanını içe aktar</h1>
-    <p class="sub">Dosya önce yüklenir ve kontrol edilir; site bu sırada etkilenmez. Ne değişeceğini önizlemede görüp onaylamadan hiçbir şey yazılmaz.</p>
+    <h1>İçe aktar</h1>
+    <p class="sub">{{if .Data.S.Database}}Veritabanı{{end}}{{if and .Data.S.Database .Data.S.DataMount}} ve {{end}}{{if .Data.S.DataMount}}kalıcı klasördeki dosyalar{{end}}. Arşiv önce yüklenir ve kontrol edilir; site bu sırada etkilenmez. Ne değişeceğini önizlemede görüp onaylamadan hiçbir şey yazılmaz.</p>
   </div>
 </div>
 <form method="post" action="/sites/{{$s.Name}}/import/form" enctype="multipart/form-data" class="stack"
@@ -15,8 +15,8 @@
     <legend>Dosya</legend>
     <label class="field"><span>Arşiv</span>
       <input type="file" name="file" required>
-      <span class="hint">FootOps arşivi (<span class="mono">.footops.tar</span>, panelin “Dışa aktar”ı) ya da mongodump arşivi
-        (<span class="mono">mongodump --archive=yedek.gz --gzip</span>). En çok {{bytes .Data.MaxSize}}.</span>
+      <span class="hint">FootOps arşivi (<span class="mono">.footops.tar</span>, panelin “Dışa aktar”ı){{if .Data.S.Database}}, mongodump arşivi
+        (<span class="mono">mongodump --archive=yedek.gz --gzip</span>){{end}}{{if .Data.S.DataMount}}, dosyaların zip ya da tar.gz arşivi{{end}}. En çok {{bytes .Data.MaxSize}}.</span>
     </label>
     <div class="upload-progress" data-upload-progress hidden>
       <progress max="1000" value="0" aria-label="Yükleme ilerlemesi"></progress>
@@ -28,9 +28,9 @@
   <div class="card">
     <h2>Sonra ne olacak?</h2>
     <ol class="steps">
-      <li><strong>Kontrol</strong> (site çalışmaya devam eder): dosyanın türü ve bütünlüğü, içindeki veritabanları; arşiv geçici bir veritabanına deneme olarak yüklenip sayılır.</li>
-      <li><strong>Önizleme:</strong> koleksiyon koleksiyon arşivde ve sitede kaç belge olduğu; mod seçimi ve onay.</li>
-      <li><strong>Uygulama:</strong> önce sitenin veritabanının güvenlik kopyası alınır, site kısa süre durur, veri yüklenip sayılır, site başlar ve sayfası kontrol edilir. Bir şey ters giderse kopya otomatik geri yüklenir.</li>
+      <li><strong>Kontrol</strong> (site çalışmaya devam eder): dosyanın türü ve bütünlüğü, içindekiler; veritabanı geçici bir veritabanına deneme olarak yüklenip sayılır, dosyaların adları ve boyutları denetlenir.</li>
+      <li><strong>Önizleme:</strong> arşivde ve sitede ne olduğu (koleksiyonlar, belge ve dosya sayıları); neyin nasıl aktarılacağını seçip onaylarsın.</li>
+      <li><strong>Uygulama:</strong> site kısa süre durur; önce değişecek olanın kopyası alınır (veritabanının güvenlik kopyası, kalıcı klasörün önceki hali), veri yüklenip sayılır, site başlar ve sayfası kontrol edilir. Bir şey ters giderse kopyalar otomatik geri konur.</li>
     </ol>
   </div>
   <div class="form-actions">

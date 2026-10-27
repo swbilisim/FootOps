@@ -16,7 +16,7 @@ import sys
 import tempfile
 import time
 
-from itlib import ACTOR, SITE, api, fail, ok, rss, sh, tools, totp, wait, wait_job
+from itlib import ACTOR, SITE, api, fail, fresh_totp, ok, rss, sh, tools, wait, wait_job
 
 C, LOGIN = sys.argv[1], sys.argv[2]
 measure = {}
@@ -103,13 +103,12 @@ ok("veritabanı değiştirildi: %s" % CHANGED)
 
 # ---- upload through the panel, in chunks ----
 user, pw, secret = open(LOGIN).read().split()
-time.sleep(31 - time.time() % 30)  # a fresh TOTP step: f0 used the current one, and codes are single-use
 jar = "/tmp/jar2"
 sh("rm -f %s" % jar)
 page = sh("curl -sS -c %s -b %s http://localhost:7701/login" % (jar, jar))
 csrf = re.search(r'name="csrf" value="([^"]+)"', page).group(1)
 sh("curl -sS -o /dev/null -c %s -b %s --data-urlencode csrf=%s --data-urlencode username=%s "
-   "--data-urlencode password@- --data-urlencode code=%s http://localhost:7701/login" % (jar, jar, csrf, user, totp(secret)),
+   "--data-urlencode password@- --data-urlencode code=%s http://localhost:7701/login" % (jar, jar, csrf, user, fresh_totp(secret)),
    stdin=pw.encode())
 page = sh("curl -sS -b %s http://localhost:7701/sites/%s/import" % (jar, SITE))
 if "upload.js" not in page:
@@ -171,7 +170,7 @@ code, text = panel("POST", "/sites/%s/import/%s/apply" % (SITE, up["id"]), b"mod
                    ("Content-Type: application/x-www-form-urlencoded",))
 if code != 422:
     fail("wrong confirmation: %d" % code)
-_, r = api("POST", "/v1/sites/%s/imports/%s/apply" % (SITE, up["id"]), {"mode": "replace", "confirm": SITE, "actor": ACTOR})
+_, r = api("POST", "/v1/sites/%s/imports/%s/apply" % (SITE, up["id"]), {"options": {"db": True, "db_mode": "replace"}, "confirm": SITE, "actor": ACTOR})
 code, _ = api("POST", "/v1/sites/%s/exports" % SITE, {"actor": ACTOR}, check=False)
 if code != 409:
     fail("a second job started during the import: %d" % code)
@@ -185,7 +184,7 @@ _, audit = api("GET", "/v1/audit?limit=10")
 a = next(a for a in audit if a["action"] == "import.apply")
 if counts() != ORIGINAL or not site_running():
     fail("after apply: %s running=%s" % (counts(), site_running()))
-snap_before = re.search(r"güvenlik kopyası (\d{8}-\d{6})", a["detail"]).group(1)
+snap_before = re.search(r"geri alma: (\d{8}-\d{6})", a["detail"]).group(1)
 clean_after("apply")
 code, _ = api("GET", "/v1/sites/%s/imports/%s" % (SITE, up["id"]), check=False)
 if code != 404:
@@ -209,7 +208,7 @@ _, r = api("POST", "/v1/sites/%s/imports" % SITE, {"upload": single["id"], "acto
 j = wait_job(r["job_id"])
 if j.get("error"):
     fail("check (add): %s" % j["error"])
-_, r = api("POST", "/v1/sites/%s/imports/%s/apply" % (SITE, single["id"]), {"mode": "add", "confirm": SITE, "actor": ACTOR})
+_, r = api("POST", "/v1/sites/%s/imports/%s/apply" % (SITE, single["id"]), {"options": {"db": True, "db_mode": "add"}, "confirm": SITE, "actor": ACTOR})
 j = wait_job(r["job_id"])
 want = {"small": 15, "big": 200000, "extra": 2, "media": 5}
 if j.get("error") or counts() != want:
@@ -226,7 +225,7 @@ _, r = api("POST", "/v1/sites/%s/imports" % SITE, {"upload": broken["id"], "acto
 j = wait_job(r["job_id"])
 if not j.get("error") or counts() != want:
     fail("broken archive accepted: %s" % j)
-code, _ = api("POST", "/v1/sites/%s/imports/%s/apply" % (SITE, broken["id"]), {"mode": "replace", "confirm": SITE, "actor": ACTOR}, check=False)
+code, _ = api("POST", "/v1/sites/%s/imports/%s/apply" % (SITE, broken["id"]), {"options": {"db": True, "db_mode": "replace"}, "confirm": SITE, "actor": ACTOR}, check=False)
 if code != 404:
     fail("apply of an unchecked upload: %d" % code)
 clean_after("broken")
@@ -241,7 +240,7 @@ wait_job(r["job_id"])
 before_restart = counts()
 _, audit = api("GET", "/v1/audit?limit=1000")
 recovers_before = len([a for a in audit if a["action"] == "db.recover"])
-_, r = api("POST", "/v1/sites/%s/imports/%s/apply" % (SITE, again["id"]), {"mode": "replace", "confirm": SITE, "actor": ACTOR})
+_, r = api("POST", "/v1/sites/%s/imports/%s/apply" % (SITE, again["id"]), {"options": {"db": True, "db_mode": "replace"}, "confirm": SITE, "actor": ACTOR})
 jid = r["job_id"]
 
 

@@ -23,7 +23,9 @@ import (
 
 	"github.com/swbilisim/FootOps/internal/archive"
 	"github.com/swbilisim/FootOps/internal/core"
+	"github.com/swbilisim/FootOps/internal/datafs"
 	"github.com/swbilisim/FootOps/internal/run"
+	"github.com/swbilisim/FootOps/internal/sites"
 )
 
 // Database imports (F2). An upload is first checked (rule K2): its type, its integrity,
@@ -43,6 +45,7 @@ const (
 
 	FormatFootOps   = "footops"
 	FormatMongodump = "mongodump"
+	FormatFiles     = "files" // a zip, tar or tar.gz of files
 )
 
 // dbSection is where a mongodump archive lies inside a file: a whole upload or copy, or
@@ -65,9 +68,14 @@ type ImportCheck struct {
 	SHA256   string          `json:"sha256"`
 	Format   string          `json:"format"`
 	Manifest *ExportManifest `json:"manifest,omitempty"`
-	Section  dbSection       `json:"section"`
-	DataSize int64           `json:"data_size"` // the archive uncompressed
-	HasFiles bool            `json:"has_files"` // files are imported by a later version (F2b)
+	// HasDB: the upload holds a mongodump archive (Section, DataSize describe it).
+	HasDB    bool      `json:"has_db"`
+	Section  dbSection `json:"section"`
+	DataSize int64     `json:"data_size"` // the database archive uncompressed
+	// Files describes files to put into the site's data directory, nil if none.
+	Files *FilesCheck `json:"files,omitempty"`
+	// Notes are things the operator should know (a part that cannot be used here).
+	Notes []string `json:"notes,omitempty"`
 
 	ServerVersion string   `json:"server_version"`
 	ToolVersion   string   `json:"tool_version"`
@@ -90,6 +98,22 @@ type ImportCheck struct {
 	Usage   run.Usage `json:"usage"`
 }
 
+// FilesCheck is the files part of an upload.
+type FilesCheck struct {
+	Format  string          `json:"format"` // "zip", "tar", "tgz"
+	Section dbSection       `json:"section"`
+	Archive archive.Summary `json:"archive"`
+	Current datafs.Stats    `json:"current"` // the site's data directory at the time of the check
+	// StripDefault suggests removing the archive's single top-level folder (a zipped
+	// "uploads" folder) because the site has no folder of that name.
+	StripDefault bool `json:"strip_default"`
+}
+
+// Expect is what extracting the archive produces (hidden entries are left out).
+func (f FilesCheck) Expect() datafs.Stats {
+	return datafs.Stats{Files: f.Archive.Files - f.Archive.Hidden, Bytes: f.Archive.Size - f.Archive.HiddenBytes}
+}
+
 // siteControl stops and starts sites around data work. *SiteOps implements it.
 type siteControl interface {
 	Running(ctx context.Context, name string) (bool, error)
@@ -100,13 +124,13 @@ type siteControl interface {
 
 // ---- checking ----
 
-// CheckImport checks an upload for a site's database. sourceDB picks the database when
-// the archive holds several; empty chooses the only one, or leaves the choice to the
-// operator. The site is not touched.
+// CheckImport checks an upload for a site: its database part, its files part, or both.
+// sourceDB picks the database when the archive holds several; empty chooses the only one
+// or leaves the choice to the operator. The site is not touched.
 func (d *DataOps) CheckImport(ctx context.Context, t *Task, site, uploadID, sourceDB string) (ic ImportCheck, err error) {
 	d.init()
 	defer d.dropStaging(t)
-	spec, creds, err := d.siteDB(site)
+	spec, err := d.Store.Get(site)
 	if err != nil {
 		return ic, err
 	}
@@ -115,49 +139,109 @@ func (d *DataOps) CheckImport(ctx context.Context, t *Task, site, uploadID, sour
 		return ic, err
 	}
 	t.Step(fmt.Sprintf("✓ Dosya: %s (%s)", u.Name, humanBytes(u.Size)))
-	ic = ImportCheck{Upload: u.ID, Job: t.ID(), Site: spec.Name, File: u.Name, Size: u.Size, Target: creds.DB}
+	ic = ImportCheck{Upload: u.ID, Job: t.ID(), Site: spec.Name, File: u.Name, Size: u.Size}
 
 	t.Step("… Dosya okunuyor: tür, bütünlük, içindekiler")
 	p, err := d.inspect(ctx, t, path, &ic)
 	if err != nil {
 		return ic, err
 	}
-	ic.ServerVersion, ic.ToolVersion = p.ServerVersion, p.ToolVersion
-	ic.Databases = importable(p.Databases())
-	what := "mongodump arşivi"
-	if ic.Format == FormatFootOps {
-		what = "FootOps arşivi"
-		if ic.Manifest != nil {
-			what += fmt.Sprintf(" (%s sitesinden, %s)", ic.Manifest.Site, ic.Manifest.Created.Local().Format("02.01.2006 15:04"))
+	what := map[string]string{FormatFootOps: "FootOps arşivi", FormatMongodump: "mongodump arşivi", FormatFiles: "dosya arşivi"}[ic.Format]
+	if ic.Manifest != nil {
+		what += fmt.Sprintf(" (%s sitesinden, %s)", ic.Manifest.Site, ic.Manifest.Created.Local().Format("02.01.2006 15:04"))
+	}
+	t.Step("✓ " + what + ", bütünlük tamam")
+
+	if ic.Files != nil {
+		if err := d.checkFilesPart(t, spec, &ic); err != nil {
+			return ic, err
 		}
 	}
-	t.Step(fmt.Sprintf("✓ %s, bütünlük tamam; MongoDB %s, araç %s; veritabanları: %s", what,
+	if ic.HasDB && !spec.Database {
+		ic.HasDB = false
+		ic.Notes = append(ic.Notes, "Arşivde veritabanı var ama bu sitenin FootOps veritabanı yok; yalnız dosyalar aktarılabilir.")
+	}
+	if !ic.HasDB && ic.Files == nil {
+		return ic, errors.New("bu siteye aktarılabilecek bir şey yok")
+	}
+	if ic.HasDB {
+		done, err := d.checkDBPart(ctx, t, path, p, sourceDB, &ic)
+		if err != nil || !done {
+			return ic, err
+		}
+	}
+	ic.Usage, ic.Checked = t.Usage(), d.now().UTC()
+	if err := d.saveCheck(ic); err != nil {
+		return ic, err
+	}
+	t.SetResult(ic.Upload)
+	t.Step("✓ Önizleme hazır")
+	return ic, nil
+}
+
+// checkFilesPart compares the files part with the site's data directory.
+func (d *DataOps) checkFilesPart(t *Task, spec sites.Spec, ic *ImportCheck) error {
+	a := ic.Files.Archive
+	t.Step(fmt.Sprintf("✓ Dosyalar: %d dosya, %d klasör, %s%s", a.Files-a.Hidden, a.Dirs, humanBytes(a.Size-a.HiddenBytes),
+		map[bool]string{true: fmt.Sprintf(" (%d gizli dosya alınmaz)", a.Hidden), false: ""}[a.Hidden > 0]))
+	sf, err := d.siteFiles(spec.Name)
+	if err != nil {
+		if ic.HasDB && spec.Database {
+			ic.Files = nil
+			ic.Notes = append(ic.Notes, "Arşivde dosyalar var ama bu sitenin kalıcı klasörü yok; yalnız veritabanı aktarılabilir.")
+			return nil
+		}
+		return err
+	}
+	if a.BSON > 0 {
+		ic.Notes = append(ic.Notes, fmt.Sprintf("Arşivde %d .bson dosyası var: bu bir mongodump klasörü olabilir. Klasör halindeki "+
+			"veritabanı yedeği henüz içe aktarılamıyor; mongodump --archive=dosya.gz --gzip ile tek dosya üret.", a.BSON))
+	}
+	if ic.Files.Current, err = countFiles(sf.Dir); err != nil {
+		return fmt.Errorf("kalıcı klasör sayılamadı: %w", err)
+	}
+	if a.Prefix != "" && ic.Format != FormatFootOps {
+		_, serr := os.Lstat(filepath.Join(sf.Dir, a.Prefix))
+		ic.Files.StripDefault = serr != nil
+	}
+	return nil
+}
+
+// checkDBPart chooses the database and restores it into a temporary one to count it.
+// done is false when the operator must choose the database first (the check is saved).
+func (d *DataOps) checkDBPart(ctx context.Context, t *Task, path string, p archive.MongoPrelude, sourceDB string, ic *ImportCheck) (bool, error) {
+	_, creds, err := d.siteDB(ic.Site)
+	if err != nil {
+		return false, err
+	}
+	ic.Target = creds.DB
+	ic.ServerVersion, ic.ToolVersion = p.ServerVersion, p.ToolVersion
+	ic.Databases = importable(p.Databases())
+	t.Step(fmt.Sprintf("✓ Veritabanı arşivi: MongoDB %s, araç %s; veritabanları: %s",
 		orDash(p.ServerVersion), orDash(p.ToolVersion), orDash(strings.Join(ic.Databases, ", "))))
 	if len(ic.Databases) == 0 {
-		return ic, errors.New("arşivde içe aktarılabilecek bir veritabanı yok (admin, config, local alınmaz)")
+		return false, errors.New("arşivde içe aktarılabilecek bir veritabanı yok (admin, config, local alınmaz)")
 	}
 	switch {
 	case sourceDB != "":
 		if !contains(ic.Databases, sourceDB) {
-			return ic, fmt.Errorf("arşivde %q veritabanı yok", sourceDB)
+			return false, fmt.Errorf("arşivde %q veritabanı yok", sourceDB)
 		}
 	case len(ic.Databases) == 1:
 		sourceDB = ic.Databases[0]
 	}
-
-	ic.Current, ic.CurrentViews, err = d.collCounts(ctx, creds)
-	if err != nil {
-		return ic, err
+	if ic.Current, ic.CurrentViews, err = d.collCounts(ctx, creds); err != nil {
+		return false, err
 	}
 	ic.CurrentDocs = sum(ic.Current)
 	if sourceDB == "" {
 		ic.Checked = d.now().UTC()
-		if err := d.saveCheck(ic); err != nil {
-			return ic, err
+		if err := d.saveCheck(*ic); err != nil {
+			return false, err
 		}
 		t.SetResult(ic.Upload)
 		t.Step(fmt.Sprintf("ℹ Arşivde %d veritabanı var: önizleme sayfasında hangisinin içe aktarılacağını seç", len(ic.Databases)))
-		return ic, nil
+		return false, nil
 	}
 	ic.SourceDB = sourceDB
 	for _, n := range p.Namespaces {
@@ -168,20 +252,13 @@ func (d *DataOps) CheckImport(ctx context.Context, t *Task, site, uploadID, sour
 	if len(ic.Skipped) > 0 {
 		t.Step("ℹ Sistem koleksiyonları alınmaz: " + strings.Join(ic.Skipped, ", "))
 	}
-
-	ic.Archive, ic.Views, err = d.trialRestore(ctx, t, path, ic.Section, sourceDB, ic.DataSize)
-	if err != nil {
-		return ic, err
+	if ic.Archive, ic.Views, err = d.trialRestore(ctx, t, path, ic.Section, sourceDB, ic.DataSize); err != nil {
+		return false, err
 	}
 	ic.ArchiveDocs = sum(ic.Archive)
-	ic.Usage, ic.Checked = t.Usage(), d.now().UTC()
-	if err := d.saveCheck(ic); err != nil {
-		return ic, err
-	}
-	t.SetResult(ic.Upload)
-	t.Step(fmt.Sprintf("✓ Önizleme hazır: arşivde %d koleksiyon, %d belge; sitede şu an %d koleksiyon, %d belge",
+	t.Step(fmt.Sprintf("✓ Veritabanı: arşivde %d koleksiyon, %d belge; sitede şu an %d koleksiyon, %d belge",
 		len(ic.Archive), ic.ArchiveDocs, len(ic.Current), ic.CurrentDocs))
-	return ic, nil
+	return true, nil
 }
 
 func orDash(s string) string {
@@ -246,17 +323,25 @@ func (d *DataOps) inspect(ctx context.Context, t *Task, path string, ic *ImportC
 		if err != nil {
 			return p, err
 		}
-		ic.DataSize = size
+		ic.DataSize, ic.HasDB = size, true
 		ic.SHA256 = hex.EncodeToString(h.Sum(nil))
 		ic.Section = dbSection{Offset: 0, Length: ic.Size, Gzip: kind == archive.MongoArchiveGz, SHA256: ic.SHA256}
 		return p, nil
 	case archive.Tar:
 		ic.Format = FormatFootOps
-		return inspectFootOps(ctx, f, ic, progress)
+		p, err := inspectFootOps(ctx, f, ic, progress)
+		if errors.Is(err, errPlainTar) {
+			*ic = ImportCheck{Upload: ic.Upload, Job: ic.Job, Site: ic.Site, File: ic.File, Size: ic.Size}
+			return p, d.inspectFiles(ctx, path, "tar", ic)
+		}
+		return p, err
+	case archive.TarGz:
+		return archive.MongoPrelude{}, d.inspectFiles(ctx, path, "tgz", ic)
+	case archive.Zip:
+		return archive.MongoPrelude{}, d.inspectFiles(ctx, path, "zip", ic)
 	}
-	return archive.MongoPrelude{}, fmt.Errorf("bu dosya veritabanı olarak içe aktarılamaz (tür: %s). Kabul edilenler: "+
-		"FootOps arşivi (.footops.tar) ve mongodump arşivi (mongodump --archive=dosya.gz --gzip). "+
-		"Klasör halindeki mongodump (zip) sonraki sürümde gelecek", orDash(string(kind)))
+	return archive.MongoPrelude{}, fmt.Errorf("bu dosya tanınmadı (tür: %s). Kabul edilenler: FootOps arşivi (.footops.tar), "+
+		"mongodump arşivi (mongodump --archive=dosya.gz --gzip) ve dosya arşivi (zip, tar.gz)", orDash(string(kind)))
 }
 
 // readMongoSection reads a mongodump archive (gzip'd or not) to its end through h,
@@ -341,6 +426,9 @@ func inspectFootOps(ctx context.Context, f *os.File, ic *ImportCheck, progress f
 		if _, dup := members[name]; dup {
 			return p, fmt.Errorf("%s: arşivde iki kez var", name)
 		}
+		if len(members) == 0 && name != memberManifest && name != memberDB && name != memberFiles {
+			return p, errPlainTar
+		}
 		m := tarMember{offset: pos.n, size: h.Size}
 		mh := sha256.New()
 		switch name {
@@ -361,10 +449,11 @@ func inspectFootOps(ctx context.Context, f *os.File, ic *ImportCheck, progress f
 				return p, fmt.Errorf("%s: %w", memberDB, err)
 			}
 		case memberFiles:
-			if _, err := io.Copy(mh, tr); err != nil {
-				return p, err
+			s, err := checkFilesMember(io.TeeReader(tr, mh), h.Size)
+			if err != nil {
+				return p, fmt.Errorf("%s: %w", memberFiles, err)
 			}
-			ic.HasFiles = true
+			ic.Files = &FilesCheck{Format: "tgz", Archive: s}
 		default:
 			return p, fmt.Errorf("FootOps arşivinde beklenmeyen dosya: %s", name)
 		}
@@ -401,13 +490,66 @@ func inspectFootOps(ctx context.Context, f *os.File, ic *ImportCheck, progress f
 			return p, fmt.Errorf("%s manifest'te yok", name)
 		}
 	}
-	db, ok := members[memberDB]
-	if !ok {
-		return p, errors.New("arşivde veritabanı yok (yalnız dosyalar var; dosya içe aktarma sonraki sürümde)")
-	}
 	ic.Manifest = man
-	ic.Section = dbSection{Offset: db.offset, Length: db.size, Gzip: true, SHA256: db.sha256}
+	if db, ok := members[memberDB]; ok {
+		ic.HasDB = true
+		ic.Section = dbSection{Offset: db.offset, Length: db.size, Gzip: true, SHA256: db.sha256}
+	}
+	if fm, ok := members[memberFiles]; ok {
+		ic.Files.Section = dbSection{Offset: fm.offset, Length: fm.size, Gzip: true, SHA256: fm.sha256}
+	}
+	if !ic.HasDB && ic.Files == nil {
+		return p, errors.New("FootOps arşivinde ne veritabanı ne dosya var")
+	}
 	return p, nil
+}
+
+// errPlainTar: a tar that is not a FootOps archive (taken as an archive of files).
+var errPlainTar = errors.New("FootOps arşivi değil")
+
+// checkFilesMember checks a FootOps archive's files.tar.gz member like archive.Check
+// checks a whole file: integrity, names, limits, compression ratio.
+func checkFilesMember(r io.Reader, size int64) (archive.Summary, error) {
+	s := archive.Summary{Kind: archive.TarGz, Compressed: size}
+	zr, err := gzip.NewReader(bufio.NewReaderSize(r, 256<<10))
+	if err != nil {
+		return s, fmt.Errorf("gzip başlığı bozuk: %w", err)
+	}
+	l := archive.DefaultLimits
+	if err := archive.CheckTar(zr, l, &s); err != nil {
+		return s, err
+	}
+	// The tar's padding and the gzip checksum follow; nothing much else may.
+	n, err := io.Copy(io.Discard, io.LimitReader(zr, 1<<20+1))
+	if err != nil {
+		return s, fmt.Errorf("gzip bozuk: %w", err)
+	}
+	if n > 1<<20 {
+		return s, errors.New("tar'ın sonundan sonra beklenmeyen veri var")
+	}
+	return s, archive.CheckRatio(s.Size, size, l)
+}
+
+// inspectFiles checks a whole upload that is an archive of files (zip, tar, tar.gz).
+func (d *DataOps) inspectFiles(ctx context.Context, path, format string, ic *ImportCheck) error {
+	ic.Format = FormatFiles
+	s, err := archive.Check(path, archive.DefaultLimits)
+	if err != nil {
+		return err
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, bufio.NewReaderSize(ctxReader{ctx, f}, 256<<10)); err != nil {
+		return err
+	}
+	ic.SHA256 = hex.EncodeToString(h.Sum(nil))
+	ic.Files = &FilesCheck{Format: format, Archive: s,
+		Section: dbSection{Offset: 0, Length: ic.Size, Gzip: format == "tgz", SHA256: ic.SHA256}}
+	return nil
 }
 
 // trialRestore restores the archive's sourceDB into a temporary database with a
@@ -763,328 +905,6 @@ func sortedKeys(m map[string]int64) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-// recovery records a restore in progress, so an agent stopped half-way (restart,
-// crash, reboot) can put the site back when it starts again.
-type recovery struct {
-	Job      string    `json:"job"`
-	Kind     string    `json:"kind"`
-	Site     string    `json:"site"`
-	Snapshot string    `json:"snapshot"` // the safety copy taken before
-	Running  bool      `json:"running"`  // the site ran before
-	Phase    string    `json:"phase"`    // "restoring", then "verified" once the new data is complete
-	Actor    Actor     `json:"actor"`
-	Started  time.Time `json:"started"`
-}
-
-const (
-	phasePrepare   = "prepare"      // stopping the site, taking the copy: no data changed yet
-	phaseRestoring = "restoring"    // the copy is complete; the database is being replaced
-	phaseVerified  = "verified"     // the new data is complete and counted
-	phaseRollback  = "rolling-back" // the copy is being put back
-)
-
-func (d *DataOps) recoveryPath(job string) string { return filepath.Join(d.RecoveryDir, job+".json") }
-
-func (d *DataOps) saveRecovery(r recovery) error {
-	if err := os.MkdirAll(d.RecoveryDir, 0o700); err != nil {
-		return err
-	}
-	b, err := json.Marshal(r)
-	if err != nil {
-		return err
-	}
-	return writeSynced(d.recoveryPath(r.Job), b)
-}
-
-func (d *DataOps) removeRecovery(job string) { _ = os.Remove(d.recoveryPath(job)) }
-
-// Recoveries lists restores an agent stop cut short.
-func (d *DataOps) Recoveries() []recovery {
-	ents, err := os.ReadDir(d.RecoveryDir)
-	if err != nil {
-		return nil
-	}
-	var out []recovery
-	for _, e := range ents {
-		if !reJobFile.MatchString(e.Name()) {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join(d.RecoveryDir, e.Name()))
-		var r recovery
-		if err != nil || json.Unmarshal(b, &r) != nil || r.Job+".json" != e.Name() {
-			continue
-		}
-		out = append(out, r)
-	}
-	sort.Slice(out, func(a, b int) bool { return out[a].Started.Before(out[b].Started) })
-	return out
-}
-
-// snapshotSource describes one of the site's copies as a restore source.
-func (d *DataOps) snapshotSource(snap Snapshot) (restoreSource, error) {
-	_, path, err := d.SnapshotFile(snap.Site, snap.ID)
-	if err != nil {
-		return restoreSource{}, err
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return restoreSource{}, err
-	}
-	defer f.Close()
-	zr, err := gzip.NewReader(bufio.NewReader(f))
-	if err != nil {
-		return restoreSource{}, fmt.Errorf("kopya okunamadı: %w", err)
-	}
-	p, err := archive.ReadMongoPrelude(zr)
-	if err != nil {
-		return restoreSource{}, fmt.Errorf("kopya okunamadı: %w", err)
-	}
-	src := restoreSource{Label: "kopya " + snap.ID, Path: path, DB: snap.DB, Expect: map[string]int64{}, Size: snap.DataSize,
-		Sec: dbSection{Offset: 0, Length: snap.Bytes, Gzip: true, SHA256: snap.SHA256}}
-	views := map[string]bool{}
-	for _, n := range p.Collections(snap.DB) {
-		src.Keep = append(src.Keep, n.Collection)
-		views[n.Collection] = n.Type == "view"
-	}
-	for coll, n := range snap.Collections {
-		// System collections (system.js, …) are never restored (rule K4), so not counted.
-		if !views[coll] && !strings.HasPrefix(coll, "system.") {
-			src.Expect[coll] = n
-		}
-	}
-	return src, nil
-}
-
-// apply replaces (or adds to) a site's database from src, inside the safety net: the
-// site stops first, so the copy taken next (K1) holds every write; counts are checked;
-// the site starts and must answer; any failure restores the copy. A recovery record on
-// disk lets the next agent start finish the job if this process dies half-way. It
-// returns the copy, which also undoes a successful run.
-func (d *DataOps) apply(ctx context.Context, t *Task, site string, src restoreSource, mode, reason string, actor Actor) (Snapshot, error) {
-	d.init()
-	_, creds, err := d.siteDB(site)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	if mode != ModeReplace && mode != ModeAdd {
-		return Snapshot{}, fmt.Errorf("bilinmeyen mod %q", mode)
-	}
-	if err := d.checkFree(d.mongoData(), 2*src.Size); err != nil {
-		return Snapshot{}, fmt.Errorf("veritabanı için diskte yer yok, hiçbir şey değiştirilmedi: %w", err)
-	}
-	running, err := d.Sites.Running(ctx, site)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	healthy := false
-	if running {
-		healthy = d.Sites.Health(ctx, site, 1) == nil
-		if !healthy {
-			t.Step("ℹ Site şu an da sağlıklı cevap vermiyor; sonradan sağlık kontrolü geri alma sebebi sayılmayacak")
-		}
-	}
-	rec := recovery{Job: t.ID(), Kind: "restore", Site: site, Running: running, Phase: phasePrepare,
-		Actor: actor, Started: d.now().UTC()}
-	if err := d.saveRecovery(rec); err != nil {
-		return Snapshot{}, err
-	}
-	defer d.removeRecovery(t.ID())
-	// Before anything is changed, a failure only has to bring the site back.
-	untouched := func(err error) (Snapshot, error) {
-		if running {
-			bg, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			defer cancel()
-			if serr := d.Sites.Start(bg, site); serr != nil {
-				return Snapshot{}, fmt.Errorf("%v; site yeniden başlatılamadı: %v", err, serr)
-			}
-		}
-		return Snapshot{}, err
-	}
-	if running {
-		if err := d.Sites.Stop(ctx, site); err != nil {
-			return untouched(err)
-		}
-		t.Step("✓ Site durduruldu (bu sırada ziyaretçiler hata sayfası görür)")
-	} else {
-		t.Step("ℹ Site zaten çalışmıyordu; işlemden sonra da başlatılmayacak")
-	}
-	snap, err := d.Snapshot(ctx, t, site, reason, actor)
-	if err != nil {
-		return untouched(fmt.Errorf("güvenlik kopyası alınamadı, hiçbir şey değiştirilmedi: %w", err))
-	}
-	back, err := d.snapshotSource(snap)
-	if err != nil {
-		return untouched(fmt.Errorf("güvenlik kopyası okunamadı, hiçbir şey değiştirilmedi: %w", err))
-	}
-	rec.Snapshot, rec.Phase = snap.ID, phaseRestoring
-	if err := d.saveRecovery(rec); err != nil {
-		return untouched(err)
-	}
-
-	t.Step(fmt.Sprintf("… %s yükleniyor (%s)", src.Label, map[string]string{ModeReplace: "tamamen değiştir", ModeAdd: "yalnız olmayan koleksiyonları ekle"}[mode]))
-	_, _, err = d.load(ctx, t, creds, src, mode)
-	if err == nil {
-		rec.Phase = phaseVerified
-		err = d.saveRecovery(rec)
-	}
-	if err == nil && running {
-		if err = d.Sites.Start(ctx, site); err == nil {
-			t.Step("✓ Site başlatıldı")
-			if healthy {
-				if err = d.Sites.Health(ctx, site, healthTries); err == nil {
-					t.Step("✓ Site sağlıklı cevap veriyor")
-				}
-			}
-		}
-	}
-	if err == nil {
-		t.SetResult(snap.ID)
-		return snap, nil
-	}
-
-	// Roll back with a fresh context: the job's own may be what ran out. The record says
-	// so first: data being rolled back is never "verified" for a recovery.
-	t.Step("✗ " + err.Error())
-	t.Step("… Geri alınıyor: veritabanı " + snap.ID + " kopyasından eski haline getiriliyor")
-	rec.Phase = phaseRollback
-	if serr := d.saveRecovery(rec); serr != nil {
-		t.Step("⚠ Kurtarma kaydı güncellenemedi: " + serr.Error())
-	}
-	bg, cancel := context.WithTimeout(context.Background(), time.Hour)
-	defer cancel()
-	if running {
-		_ = d.Sites.Stop(bg, site)
-	}
-	if rerr := d.rollback(bg, t, creds, back); rerr != nil {
-		return snap, fmt.Errorf("%v — GERİ ALMA DA BAŞARISIZ: %v. Site durduruldu; panelde Veritabanı kopyaları → %s → Geri yükle ile tekrar dene", err, rerr, snap.ID)
-	}
-	if running {
-		if serr := d.Sites.Start(bg, site); serr != nil {
-			return snap, fmt.Errorf("%v — veritabanı eski haline döndü ama site başlatılamadı: %v", err, serr)
-		}
-	}
-	t.Step("✓ Geri alındı: veritabanı işlemden önceki halinde" + map[bool]string{true: ", site çalışıyor", false: ""}[running])
-	t.SetResult(snap.ID)
-	return snap, fmt.Errorf("%v (geri alındı, veri değişmedi)", err)
-}
-
-// rollback restores the safety copy. A tool container left by the failed attempt is
-// removed first (it may still be writing, and it holds the job's container name); a
-// brief MongoDB outage gets one more try.
-func (d *DataOps) rollback(ctx context.Context, t *Task, creds dbCreds, back restoreSource) error {
-	var err error
-	for try := 0; try < 2; try++ {
-		if try > 0 {
-			t.Step("… Geri alma tekrar deneniyor: " + err.Error())
-		}
-		_, _ = d.Run.Run(ctx, "docker", "rm", "--force", toolPrefix+t.ID())
-		if werr := d.WaitMongo(ctx); werr != nil {
-			err = werr
-			continue
-		}
-		if _, _, err = d.load(ctx, t, creds, back, ModeReplace); err == nil {
-			return nil
-		}
-	}
-	return err
-}
-
-// ApplyImport applies a checked upload to the site's database.
-func (d *DataOps) ApplyImport(ctx context.Context, t *Task, site, uploadID, mode string, actor Actor) (Snapshot, error) {
-	d.init()
-	defer d.dropStaging(t)
-	ic, err := d.LoadCheck(site, uploadID)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	if ic.SourceDB == "" || ic.Archive == nil {
-		return Snapshot{}, errors.New("önce kontrol tamamlanmalı (veritabanı seçilmedi)")
-	}
-	u, path, err := d.uploadFile(site, uploadID)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	if u.Size != ic.Size {
-		return Snapshot{}, errors.New("yüklenen dosya kontrolden sonra değişmiş")
-	}
-	src := restoreSource{Label: "yüklenen dosya " + ic.File, Path: path, Sec: ic.Section, DB: ic.SourceDB,
-		Keep: append(sortedKeys(ic.Archive), ic.Views...), Expect: ic.Archive, Size: ic.DataSize}
-	snap, err := d.apply(ctx, t, site, src, mode, "before-import", actor)
-	if err == nil {
-		if rerr := d.Staging.Remove(uploadPrefix + uploadID); rerr == nil {
-			t.Step("✓ Yüklenen dosya sunucudan silindi")
-		}
-		t.Step(fmt.Sprintf("ℹ Geri almak için: site sayfası → Veritabanı kopyaları → %s → Geri yükle", snap.ID))
-	}
-	return snap, err
-}
-
-// RestoreSnapshot puts one of the site's copies back.
-func (d *DataOps) RestoreSnapshot(ctx context.Context, t *Task, site, id string, actor Actor) (Snapshot, error) {
-	d.init()
-	defer d.dropStaging(t)
-	snap, _, err := d.SnapshotFile(site, id)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	src, err := d.snapshotSource(snap)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	t.Step(fmt.Sprintf("ℹ Geri yüklenecek kopya: %s (%d koleksiyon, %d belge)", snap.ID, len(snap.Collections), snap.Documents))
-	before, err := d.apply(ctx, t, site, src, ModeReplace, "before-restore", actor)
-	if err == nil {
-		t.Step(fmt.Sprintf("ℹ Bu işlemi geri almak için: Veritabanı kopyaları → %s → Geri yükle", before.ID))
-	}
-	return before, err
-}
-
-// Recover finishes what an agent stop interrupted: unless no data had changed yet or
-// the new data was already complete, the safety copy is restored; the site is started if
-// it ran before. A record is tried once: if this fails, it is removed and the error says
-// how to restore by hand, so an old record can never be replayed over newer data later.
-func (d *DataOps) Recover(ctx context.Context, t *Task, r recovery) error {
-	d.init()
-	defer d.dropStaging(t)
-	defer d.removeRecovery(r.Job)
-	t.Step(fmt.Sprintf("ℹ Agent, %s veritabanı işlemi sürerken durdu (iş %s, %s)", r.Site, r.Job, r.Started.Local().Format("02.01.2006 15:04:05")))
-	_, creds, err := d.siteDB(r.Site)
-	if err != nil {
-		return err
-	}
-	switch r.Phase {
-	case phaseVerified:
-		t.Step("ℹ Yeni veri tamamen yüklenmiş ve sayılmıştı; korunuyor")
-	case phasePrepare:
-		t.Step("ℹ Veritabanına henüz dokunulmamıştı")
-	default:
-		snap, _, err := d.SnapshotFile(r.Site, r.Snapshot)
-		if err != nil {
-			return fmt.Errorf("güvenlik kopyası %s bulunamadı: %w — site durduruldu, veritabanı yarım olabilir", r.Snapshot, err)
-		}
-		back, err := d.snapshotSource(snap)
-		if err != nil {
-			return err
-		}
-		if running, _ := d.Sites.Running(ctx, r.Site); running {
-			if err := d.Sites.Stop(ctx, r.Site); err != nil {
-				return err
-			}
-		}
-		t.Step("… Veritabanı " + snap.ID + " kopyasından eski haline getiriliyor")
-		if err := d.rollback(ctx, t, creds, back); err != nil {
-			return fmt.Errorf("geri alma başarısız: %w — site durduruldu; panelde Veritabanı kopyaları → %s → Geri yükle", err, snap.ID)
-		}
-	}
-	if r.Running {
-		if err := d.Sites.Start(ctx, r.Site); err != nil {
-			return err
-		}
-		t.Step("✓ Site başlatıldı")
-	}
-	return nil
 }
 
 // WaitMongo waits (up to five minutes) until MongoDB answers: after a reboot the agent

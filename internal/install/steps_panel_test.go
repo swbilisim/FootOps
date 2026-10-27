@@ -250,10 +250,15 @@ func TestUnitsSeparatePrivileges(t *testing.T) {
 			t.Errorf("web unit does not hide %s", hidden)
 		}
 	}
-	for _, want := range []string{"User=root", "Group=footops", "RuntimeDirectory=footops", "NoNewPrivileges=yes"} {
+	for _, want := range []string{"\nGroup=footops\n", "RuntimeDirectory=footops", "NoNewPrivileges=yes"} {
 		if !strings.Contains(agentUnit, want) {
 			t.Errorf("agent unit misses %q", want)
 		}
+	}
+	// With User= set (even to root) systemd drops CAP_SETUID under this sandbox, and the
+	// file helpers cannot switch to a site's user (found by the integration test).
+	if strings.Contains(agentUnit, "\nUser=") {
+		t.Error("agent unit sets User=")
 	}
 }
 

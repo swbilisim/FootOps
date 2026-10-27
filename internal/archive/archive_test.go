@@ -299,3 +299,26 @@ func FuzzCleanName(f *testing.F) {
 		}
 	})
 }
+
+func TestSummaryPrefixAndHidden(t *testing.T) {
+	cases := []struct {
+		names  []string
+		prefix string
+		hidden int
+	}{
+		{[]string{"uploads/", "uploads/a.jpg", "uploads/b/c.jpg", "__MACOSX/uploads/._a.jpg", ".DS_Store"}, "uploads", 2},
+		{[]string{"uploads/a.jpg", "kök.txt"}, "", 0},
+		{[]string{"a/x", "b/y"}, "", 0},
+		{[]string{"tek.jpg"}, "", 0},
+	}
+	for _, c := range cases {
+		var s Summary
+		for _, n := range c.names {
+			dir := strings.HasSuffix(n, "/")
+			s.note(strings.TrimSuffix(n, "/"), dir, 1)
+		}
+		if s.Prefix != c.prefix || s.Hidden != c.hidden {
+			t.Errorf("%v: prefix %q hidden %d", c.names, s.Prefix, s.Hidden)
+		}
+	}
+}

@@ -142,9 +142,9 @@ type ImportRequest struct {
 
 // ApplyImportRequest applies a checked upload. Confirm must be the site's name.
 type ApplyImportRequest struct {
-	Mode    string `json:"mode"`
-	Confirm string `json:"confirm"`
-	Actor   Actor  `json:"actor"`
+	Options ApplyOptions `json:"options"`
+	Confirm string       `json:"confirm"`
+	Actor   Actor        `json:"actor"`
 }
 
 // ConfirmRequest is an action confirmed by typing the site's name.

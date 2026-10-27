@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/swbilisim/FootOps/internal/agent"
+	"github.com/swbilisim/FootOps/internal/archive"
 	"github.com/swbilisim/FootOps/internal/cfaccess"
+	"github.com/swbilisim/FootOps/internal/datafs"
 )
 
 // raw sends a request with a body and extra headers (as upload.js does).
@@ -175,10 +177,10 @@ func TestImportPreviewAndApply(t *testing.T) {
 	}
 
 	// Several databases: the operator chooses.
-	e.agent.check = &agent.ImportCheck{Upload: testUpload, Site: "enisparta", Format: agent.FormatMongodump, SHA256: "ab12",
+	e.agent.check = &agent.ImportCheck{Upload: testUpload, Site: "enisparta", Format: agent.FormatMongodump, SHA256: "ab12", HasDB: true,
 		Databases: []string{"blog", "enisparta"}, Target: "enisparta", Current: map[string]int64{"users": 3}}
 	_, body := c.do("GET", path, nil)
-	if !strings.Contains(body, "Hangi veritabanı?") || !strings.Contains(body, `value="enisparta" checked`) || strings.Contains(body, "/apply") {
+	if !strings.Contains(body, "birden çok veritabanı var") || !strings.Contains(body, `value="enisparta" checked`) || strings.Contains(body, "/apply") {
 		t.Errorf("database choice:\n%s", body)
 	}
 	if resp, _ := c.do("POST", path+"/check", url.Values{"csrf": {tok}, "source_db": {"blog"}}); resp.Header.Get("Location") != "/jobs/jobcheck" ||
@@ -186,7 +188,7 @@ func TestImportPreviewAndApply(t *testing.T) {
 		t.Errorf("recheck: %v", e.agent.checks)
 	}
 
-	e.agent.check = &agent.ImportCheck{Upload: testUpload, Site: "enisparta", Format: agent.FormatFootOps, SHA256: "ab12",
+	e.agent.check = &agent.ImportCheck{Upload: testUpload, Site: "enisparta", Format: agent.FormatFootOps, SHA256: "ab12", HasDB: true,
 		Manifest: &agent.ExportManifest{Site: "eski", Created: time.Now()}, Databases: []string{"eski"}, SourceDB: "eski", Target: "enisparta",
 		Archive: map[string]int64{"users": 5, "pages": 2}, ArchiveDocs: 7, Views: []string{"ucuz"},
 		Current: map[string]int64{"users": 5, "logs": 40}, CurrentDocs: 45, Checked: time.Now(), Skipped: []string{"system.js"}}
@@ -198,14 +200,35 @@ func TestImportPreviewAndApply(t *testing.T) {
 			t.Errorf("preview lacks %q", want)
 		}
 	}
-	resp, body := c.do("POST", path+"/apply", url.Values{"csrf": {tok}, "mode": {"add"}, "confirm": {"enispart"}})
+	resp, body := c.do("POST", path+"/apply", url.Values{"csrf": {tok}, "db": {"on"}, "db_mode": {"add"}, "confirm": {"enispart"}})
 	if resp.StatusCode != 422 || !strings.Contains(body, "site adını aynen yaz") || len(e.agent.applies) != 0 ||
 		!strings.Contains(body, `value="add" checked`) {
 		t.Errorf("wrong confirmation: %d %v", resp.StatusCode, e.agent.applies)
 	}
-	resp, _ = c.do("POST", path+"/apply", url.Values{"csrf": {tok}, "mode": {"add"}, "confirm": {"enisparta"}})
-	if resp.StatusCode != 303 || resp.Header.Get("Location") != "/jobs/jobapply" || e.agent.applies[0] != "add/enisparta" {
+	if resp, body := c.do("POST", path+"/apply", url.Values{"csrf": {tok}, "confirm": {"enisparta"}}); resp.StatusCode != 422 ||
+		!strings.Contains(body, "en az birini seç") {
+		t.Errorf("nothing chosen: %d", resp.StatusCode)
+	}
+	resp, _ = c.do("POST", path+"/apply", url.Values{"csrf": {tok}, "db": {"on"}, "db_mode": {"add"}, "confirm": {"enisparta"}})
+	if resp.StatusCode != 303 || resp.Header.Get("Location") != "/jobs/jobapply" || e.agent.applies[0] != "db=true:add files=false: strip=false/enisparta" {
 		t.Errorf("apply: %d %v", resp.StatusCode, e.agent.applies)
+	}
+
+	// An archive with files too (the site has a data directory).
+	e.agent.dataSite = true
+	e.agent.applies = nil
+	e.agent.check.Files = &agent.FilesCheck{Format: "tgz", Archive: archive.Summary{Files: 12, Size: 5 << 20, Hidden: 2, HiddenBytes: 100, Prefix: "uploads"},
+		Current: datafs.Stats{Files: 7, Bytes: 1 << 20}, StripDefault: true}
+	_, body = c.do("GET", path, nil)
+	for _, want := range []string{"veritabanı ve dosyalar", "10 dosya", "2 gizli dosya alınmaz", "7 dosya, 1.0 MiB", `name="files" checked`,
+		`name="strip" checked`, "uploads/", "Ekle ve üzerine yaz"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("files preview lacks %q", want)
+		}
+	}
+	resp, _ = c.do("POST", path+"/apply", url.Values{"csrf": {tok}, "files": {"on"}, "files_mode": {"add"}, "strip": {"on"}, "confirm": {"enisparta"}})
+	if resp.StatusCode != 303 || e.agent.applies[0] != "db=false: files=true:add strip=true/enisparta" {
+		t.Errorf("files apply: %d %v", resp.StatusCode, e.agent.applies)
 	}
 }
 
@@ -246,6 +269,42 @@ func TestRestoreAndExport(t *testing.T) {
 	resp, body = c.do("GET", "/sites/enisparta/exports/jobexport/download", nil)
 	if resp.StatusCode != 200 || body != snapshotBody || !strings.Contains(resp.Header.Get("Content-Disposition"), ".footops.tar") {
 		t.Errorf("export download: %d %v", resp.StatusCode, resp.Header)
+	}
+}
+
+func TestFilesBackupsAndRestore(t *testing.T) {
+	e := newEnv(t)
+	c := e.client(t, false)
+	tok := e.login(t, c)
+	e.agent.dataSite = true
+	_, body := c.do("GET", "/sites/enisparta", nil)
+	if !strings.Contains(body, "Dosya kopyaları") || !strings.Contains(body, "Henüz dosya kopyası yok") || strings.Contains(body, "Veritabanı kopyaları") ||
+		!strings.Contains(body, `action="/sites/enisparta/exports"`) {
+		t.Errorf("site page (files only):\n%s", body)
+	}
+	e.agent.backups = []agent.FilesBackup{{ID: "20261027-110000", Created: time.Now().Add(-time.Hour)}}
+	_, body = c.do("GET", "/sites/enisparta", nil)
+	if !strings.Contains(body, `href="/sites/enisparta/files/20261027-110000/restore"`) || !strings.Contains(body, "data.old-20261027-110000") {
+		t.Error("backup not listed")
+	}
+	if resp, _ := c.do("GET", "/sites/enisparta/files/20200101-000000/restore", nil); resp.StatusCode != 404 {
+		t.Errorf("unknown backup: %d", resp.StatusCode)
+	}
+	_, body = c.do("GET", "/sites/enisparta/files/20261027-110000/restore", nil)
+	if !strings.Contains(body, "Dosyalar geri yüklensin mi?") || !strings.Contains(body, `action="/sites/enisparta/files/20261027-110000/restore"`) {
+		t.Errorf("files restore page:\n%s", body)
+	}
+	if resp, _ := c.do("POST", "/sites/enisparta/files/20261027-110000/restore", url.Values{"csrf": {tok}, "confirm": {"x"}}); resp.StatusCode != 422 {
+		t.Errorf("no confirmation: %d", resp.StatusCode)
+	}
+	resp, _ := c.do("POST", "/sites/enisparta/files/20261027-110000/restore", url.Values{"csrf": {tok}, "confirm": {"enisparta"}})
+	if resp.Header.Get("Location") != "/jobs/jobfiles" || e.agent.restores[0] != "files:20261027-110000/enisparta" {
+		t.Errorf("restore: %v", e.agent.restores)
+	}
+	e.agent.job = &agent.Job{ID: "j1", Kind: "import.apply", Target: "enisparta", Done: true, Result: "20261027-110000 files-20261027-110001"}
+	_, body = c.do("GET", "/jobs/j1", nil)
+	if !strings.Contains(body, `href="/sites/enisparta/snapshots/20261027-110000/restore"`) || !strings.Contains(body, `href="/sites/enisparta/files/20261027-110001/restore"`) {
+		t.Error("job page lacks both undo links")
 	}
 }
 

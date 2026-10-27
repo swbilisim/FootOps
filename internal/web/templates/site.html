@@ -34,7 +34,7 @@
 </table>
 </div>
 
-{{if $s.Database}}
+{{if or $s.Database $s.DataMount}}
 <div class="section-head">
   <h2>Veri aktarımı</h2>
   <div class="page-actions">
@@ -45,7 +45,7 @@
     </form>
   </div>
 </div>
-<p class="muted small"><strong>Dışa aktar</strong> veritabanını taşınabilir bir FootOps arşivine (<span class="mono">.footops.tar</span>) yazar; sunucuda 24 saat indirilebilir, başka bir FootOps sunucusuna ya da bu siteye geri içe aktarılabilir. <strong>İçe aktar</strong> böyle bir arşivi ya da bir mongodump arşivini önce kontrol eder, önizleme gösterir, onaydan sonra güvenlik kopyası alıp uygular.</p>
+<p class="muted small"><strong>Dışa aktar</strong> {{if $s.Database}}veritabanını{{end}}{{if and $s.Database $s.DataMount}} ve {{end}}{{if $s.DataMount}}kalıcı klasördeki dosyaları{{end}} taşınabilir bir FootOps arşivine (<span class="mono">.footops.tar</span>) yazar; sunucuda 24 saat indirilebilir, başka bir FootOps sunucusuna ya da bu siteye geri içe aktarılabilir. <strong>İçe aktar</strong> böyle bir arşivi, bir mongodump arşivini ya da dosyaların zip / tar.gz arşivini önce kontrol eder, önizleme gösterir, onaydan sonra değişecek olanın kopyasını alıp uygular.</p>
 {{with .Data.Exports}}
 <div class="table-wrap">
 <table class="responsive">
@@ -55,7 +55,7 @@
     <tr>
       <td class="primary"><span class="mono">{{.File}}</span><div class="cell-sub muted">{{since .Created}}</div></td>
       <td data-label="Boyut" class="nowrap">{{bytes .Bytes}}</td>
-      <td data-label="İçerik">{{.Collections}} koleksiyon, {{.Documents}} belge</td>
+      <td data-label="İçerik">{{if $s.Database}}{{.Collections}} koleksiyon, {{.Documents}} belge{{end}}{{if and $s.Database .Files}} · {{end}}{{if .Files}}{{.Files}} dosya ({{bytes .FileBytes}}){{end}}</td>
       <td class="actions"><a class="btn sm" href="/sites/{{$s.Name}}/exports/{{.ID}}/download" download>{{icon "download"}}İndir</a></td>
     </tr>
   {{end}}
@@ -63,7 +63,29 @@
 </table>
 </div>
 {{end}}
+{{end}}
 
+{{if $s.DataMount}}
+<div class="section-head"><h2>Dosya kopyaları</h2></div>
+<p class="muted small">Dosya içe aktarıldığında ya da bir kopya geri yüklendiğinde kalıcı klasörün önceki hali silinmez, burada {{.Data.FilesKeepDays}} gün durur. <strong>Geri yükle</strong> klasörü o hale getirir (şu anki hali de kopya olarak kalır).</p>
+{{with .Data.FilesBackups}}
+<div class="table-wrap">
+<table class="responsive">
+  <thead><tr><th>Tarih</th><th></th></tr></thead>
+  <tbody>
+  {{range .}}
+    <tr>
+      <td class="primary nowrap">{{ts .Created}}<div class="cell-sub muted">{{since .Created}} · <span class="mono">data.old-{{.ID}}</span></div></td>
+      <td class="actions"><a class="btn sm" href="/sites/{{$s.Name}}/files/{{.ID}}/restore">{{icon "undo"}}Geri yükle…</a></td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}<div class="card"><p class="muted">Henüz dosya kopyası yok.</p></div>{{end}}
+{{end}}
+
+{{if $s.Database}}
 <div class="section-head">
   <h2>Veritabanı kopyaları</h2>
   <form method="post" action="/sites/{{$s.Name}}/snapshots">

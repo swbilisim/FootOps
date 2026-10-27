@@ -26,12 +26,12 @@
 {{if .Done}}
 {{if or .Usage.PeakMem .Usage.CPU}}<p class="hint">Kaynak kullanımı: en çok {{bytes .Usage.PeakMem}} bellek, {{took .Usage.CPU}} CPU{{if .Bytes}}, {{bytes .Bytes}} yazıldı{{end}}.</p>{{end}}
 <div class="form-actions">
-  {{$linked := and (not .Err) .Result (eq .Kind "db.snapshot" "import.check" "import.apply" "db.restore" "site.export")}}
+  {{$linked := and (not .Err) .Result (eq .Kind "db.snapshot" "import.check" "import.apply" "db.restore" "files.restore" "site.export")}}
   {{if $linked}}
     {{if eq .Kind "db.snapshot"}}<a class="btn primary" href="/sites/{{.Target}}/snapshots/{{.Result}}/download" download>{{icon "download"}}Kopyayı indir</a>
     {{else if eq .Kind "import.check"}}<a class="btn primary" href="/sites/{{.Target}}/import/{{.Result}}">{{icon "check"}}Önizlemeye geç</a>
     {{else if eq .Kind "site.export"}}<a class="btn primary" href="/sites/{{.Target}}/exports/{{.Result}}/download" download>{{icon "download"}}Arşivi indir</a>
-    {{else}}<a class="btn" href="/sites/{{.Target}}/snapshots/{{.Result}}/restore">{{icon "undo"}}Geri al…</a>{{end}}
+    {{else}}{{$t := .Target}}{{range undoLinks .Result}}<a class="btn" href="/sites/{{$t}}/{{.Path}}/restore">{{icon "undo"}}{{.Label}}</a>{{end}}{{end}}
   {{end}}
   {{if and .Err (eq .Kind "import.check" "import.apply")}}<a class="btn" href="/sites/{{.Target}}/import">{{icon "upload"}}Başka dosya yükle</a>{{end}}
   {{if and (not .Err) (not (eq .Kind "site.remove" "db.recover"))}}<a class="btn{{if not $linked}} primary{{end}}" href="/sites/{{.Target}}">Siteye git</a>{{end}}
