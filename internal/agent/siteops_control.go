@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/swbilisim/FootOps/internal/docker"
+	"github.com/swbilisim/FootOps/internal/sites"
 )
 
 // Data work (rule K3) stops a site while its database is replaced and starts it again
@@ -95,4 +96,21 @@ func (o *SiteOps) Health(ctx context.Context, name string, tries int) error {
 		}
 	}
 	return fmt.Errorf("site sağlıklı cevap vermedi (%s): %w", spec.Domains[0], last)
+}
+
+// SetDataURL records where the site serves its data directory's files ("/uploads"; ""
+// forgets it). Only the site's record changes: nothing is restarted.
+func (o *SiteOps) SetDataURL(name, u string) (sites.Spec, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	spec, err := o.Store.Get(name)
+	if err != nil {
+		return spec, err
+	}
+	spec.DataURL = u
+	spec.Normalize()
+	if spec.DataURL != "" && !sites.ValidDataURL(spec.DataURL) {
+		return spec, &sites.ValidationError{Problems: []string{"web adresi / ile başlayan bir yol olmalı (örn. /uploads)"}}
+	}
+	return spec, o.Store.WriteMeta(spec)
 }

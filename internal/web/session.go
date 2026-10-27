@@ -3,6 +3,7 @@ package web
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"strings"
 	"sync"
 	"time"
 )
@@ -90,6 +91,24 @@ func (s *sessions) setFlash(id, msg string) {
 	defer s.mu.Unlock()
 	if sess, ok := s.m[id]; ok {
 		sess.Flash = msg
+	}
+}
+
+// addFlash appends to the pending flash message (several uploads in a row).
+func (s *sessions) addFlash(id, msg string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.m[id]
+	if !ok {
+		return
+	}
+	switch {
+	case sess.Flash == "":
+		sess.Flash = msg
+	case len(sess.Flash) < 2000:
+		sess.Flash += " " + msg
+	case !strings.HasSuffix(sess.Flash, "…"):
+		sess.Flash += " …"
 	}
 }
 

@@ -1,0 +1,125 @@
+{{template "top" .}}
+{{$s := .Data.S}}{{$dir := .Data.Dir}}{{$sort := .Data.Sort}}
+<a class="crumb" href="/sites/{{$s.Name}}">{{icon "back"}}{{$s.Name}}</a>
+<div class="page-head">
+  <div>
+    <h1>Dosyalar</h1>
+    <p class="sub">Kalıcı klasör <span class="mono">/srv/{{$s.Group}}/{{$s.Name}}/data</span>, uygulamada <span class="mono">{{$s.DataMount}}</span>. Değişiklikler site çalışırken yapılır; silinen ya da üzerine yazılan dosyalar {{.Data.KeepDays}} gün çöp kutusunda durur.</p>
+  </div>
+  <div class="page-actions">
+    <a class="btn" href="/sites/{{$s.Name}}/trash">{{icon "trash"}}Çöp kutusu{{with .Data.L}}{{with .Trash}} ({{.}}){{end}}{{end}}</a>
+    <a class="btn" href="/sites/{{$s.Name}}/files/zip?dir={{$dir}}" title="Bu klasörü zip olarak indir">{{icon "download"}}Klasörü indir</a>
+  </div>
+</div>
+
+<nav class="path" aria-label="Klasör yolu">
+  <a href="/sites/{{$s.Name}}/files"{{if not $dir}} aria-current="page"{{end}}>{{icon "folder"}}data</a>
+  {{range $i, $c := .Data.Crumbs}}<span aria-hidden="true">/</span><a href="/sites/{{$s.Name}}/files?dir={{$c.Dir}}"{{if eq $c.Dir $dir}} aria-current="page"{{end}}>{{$c.Name}}</a>{{end}}
+</nav>
+
+<div class="fm-tools">
+  <details class="card fm-upload"{{with .Data.L}}{{if not .Total}} open{{end}}{{end}}>
+    <summary>{{icon "upload"}}Bu klasöre dosya yükle</summary>
+    <form method="post" action="/sites/{{$s.Name}}/files/upload" enctype="multipart/form-data"
+          data-upload data-mode="files" data-site="{{$s.Name}}" data-max="{{.Data.MaxSize}}" data-place="/sites/{{$s.Name}}/files/place">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <input type="hidden" name="dir" value="{{$dir}}">
+      <label class="check"><input type="checkbox" name="overwrite"> Aynı adda dosya varsa üzerine yaz (eskisi çöp kutusuna gider)</label>
+      <label class="field"><span>Dosyalar</span>
+        <input type="file" name="file" multiple required>
+        <span class="hint">Kutu işaretli değilse aynı adlı dosya silinmez, yenisi “ad (1)” olur. Dosya başına en çok {{bytes .Data.MaxSize}}. Bağlantı koparsa aynı dosyaları tekrar seç: kaldığı yerden devam eder. Zip yüklersen sonra listede “Aç…” ile açabilirsin.</span>
+      </label>
+      <div class="upload-progress" data-upload-progress hidden>
+        <progress max="1000" value="0" aria-label="Yükleme ilerlemesi"></progress>
+        <p class="hint" data-upload-status role="status" aria-live="polite"></p>
+      </div>
+      <noscript><p class="hint">JavaScript kapalı: dosyalar tek seferde gönderilir, toplam en çok {{bytes .Data.MaxSingle}}.</p></noscript>
+      <div class="form-actions">
+        <button type="submit" class="primary">{{icon "upload"}}Yükle</button>
+        <button type="button" class="btn" data-upload-stop hidden>{{icon "pause"}}Durdur</button>
+      </div>
+    </form>
+  </details>
+  <form class="card fm-mkdir" method="post" action="/sites/{{$s.Name}}/files/mkdir">
+    <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+    <input type="hidden" name="dir" value="{{$dir}}">
+    <label class="field"><span>Yeni klasör</span><input name="name" required maxlength="255" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="klasör adı"></label>
+    <button type="submit">{{icon "plus"}}Oluştur</button>
+  </form>
+</div>
+
+{{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>Klasör okunamadı: {{.}}</div></div>{{end}}
+{{with .Data.L}}
+<div class="section-head">
+  <h2>{{if $dir}}{{(index $.Data.Crumbs (add (len $.Data.Crumbs) -1)).Name}}{{else}}data{{end}}<span class="sub">{{.Dirs}} klasör, {{.Files}} dosya, {{bytes .Bytes}}{{if .Hidden}} · {{.Hidden}} gizli öğe (nokta ile başlayan) gösterilmiyor{{end}}</span></h2>
+  <div class="segmented" role="group" aria-label="Sıralama">
+    <a href="?dir={{$dir}}&amp;sort=name"{{if eq $sort "name"}} aria-current="true"{{end}}>Ad</a>
+    <a href="?dir={{$dir}}&amp;sort=time"{{if eq $sort "time"}} aria-current="true"{{end}}>Tarih</a>
+    <a href="?dir={{$dir}}&amp;sort=size"{{if eq $sort "size"}} aria-current="true"{{end}}>Boyut</a>
+  </div>
+</div>
+<form method="post" action="/sites/{{$s.Name}}/files/act">
+  <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+  <input type="hidden" name="dir" value="{{$dir}}">
+  {{if .Entries}}{{template "fm-selbar"}}{{end}}
+  <div class="table-wrap">
+  <table class="responsive files">
+    <thead><tr><th class="sel"><span class="sr">Seç</span></th><th>Ad</th><th class="num">Boyut</th><th>Değişme</th><th></th></tr></thead>
+    <tbody>
+    {{if $dir}}<tr class="up"><td class="sel"></td><td class="primary" colspan="4"><a class="cell-title" href="/sites/{{$s.Name}}/files?dir={{$.Data.Parent}}">{{icon "back"}}Üst klasör</a></td></tr>{{end}}
+    {{range .Entries}}{{$p := joinPath $dir .Name}}
+      <tr>
+        <td class="sel" data-label="Seç">{{if not .Odd}}<input type="checkbox" name="n" value="{{.Name}}" aria-label="{{.Name}} seç">{{end}}</td>
+        <td class="primary">
+          {{if and (eq .Type "dir") (not .Odd)}}<a class="cell-title" href="/sites/{{$s.Name}}/files?dir={{$p}}">{{icon "folder"}}<span>{{.Name}}</span></a>
+          {{else if eq .Type "file"}}<span class="fname">{{icon "file"}}<span>{{.Name}}</span></span>
+          {{else if eq .Type "dir"}}<span class="fname">{{icon "folder"}}<span>{{.Name}}</span></span>
+          {{else if eq .Type "link"}}<span class="fname">{{icon "link"}}<span>{{.Name}}</span></span> <span class="badge">bağlantı (izlenmez)</span>
+          {{else}}<span class="fname">{{icon "file"}}<span>{{.Name}}</span></span> <span class="badge">özel dosya</span>{{end}}
+          {{if .Odd}}<span class="cell-sub">Adında panelin kullanamadığı karakterler var; bu öğe yalnız gösterilir.</span>{{end}}
+        </td>
+        <td data-label="Boyut" class="num">{{if eq .Type "file"}}{{bytes .Size}}{{end}}</td>
+        <td data-label="Değişme" class="nowrap"><span title="{{ts .MTime}}">{{since .MTime}}</span></td>
+        <td class="actions">{{if not .Odd}}
+          {{if eq .Type "file"}}<a class="btn sm" href="/sites/{{$s.Name}}/files/download?path={{$p}}">{{icon "download"}}İndir</a>
+            {{if $s.DataURL}}<a class="btn sm" href="{{fileURL (index $s.Domains 0) $s.DataURL $dir .Name}}" target="_blank" rel="noreferrer">{{icon "external"}}Sitede aç</a>{{end}}
+            {{if isArchive .Name}}<a class="btn sm" href="/sites/{{$s.Name}}/files/unpack?path={{$p}}">{{icon "box"}}Aç…</a>{{end}}
+          {{end}}
+          <a class="btn sm ghost" href="/sites/{{$s.Name}}/files/rename?dir={{$dir}}&amp;name={{.Name}}">{{icon "edit"}}Ad değiştir</a>
+        {{end}}</td>
+      </tr>
+    {{else}}<tr><td class="empty" colspan="5">Bu klasör boş.</td></tr>{{end}}
+    </tbody>
+  </table>
+  </div>
+  {{if gt (len .Entries) 15}}{{template "fm-selbar"}}{{end}}
+</form>
+{{if gt $.Data.Pages 1}}
+<nav class="pager" aria-label="Sayfalar">
+  {{if gt $.Data.Page 1}}<a class="btn sm" href="?dir={{$dir}}&amp;sort={{$sort}}&amp;page={{add $.Data.Page -1}}">{{icon "back"}}Önceki</a>{{end}}
+  <span class="muted small">{{add .Offset 1}}–{{add .Offset (len .Entries)}} / {{.Total}}</span>
+  {{if lt $.Data.Page $.Data.Pages}}<a class="btn sm" href="?dir={{$dir}}&amp;sort={{$sort}}&amp;page={{add $.Data.Page 1}}">Sonraki</a>{{end}}
+</nav>
+{{end}}
+{{end}}
+
+<div class="section-head"><h2>Dosyaların sitedeki adresi</h2></div>
+<form class="card" method="post" action="/sites/{{$s.Name}}/files/url">
+  <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+  <input type="hidden" name="dir" value="{{$dir}}">
+  <label class="field"><span>Uygulama bu klasördeki dosyaları hangi yolda sunuyor? (isteğe bağlı)</span>
+    <span class="inline-input"><span class="mono muted">https://{{index $s.Domains 0}}</span><input name="url" value="{{$s.DataURL}}" placeholder="/uploads" class="mono" autocomplete="off" autocapitalize="off" spellcheck="false"></span>
+    <span class="hint">Örneğin <span class="mono">/uploads</span> yazılırsa <span class="mono">data/fotolar/a.jpg</span> → <span class="mono">https://{{index $s.Domains 0}}/uploads/fotolar/a.jpg</span> olur ve her dosyanın yanında “Sitede aç” çıkar: dosya sitenin kendi adresinden (Cloudflare önbelleğiyle) açılır, panel resim işlemez. Boş bırakılırsa bağlantı gösterilmez. Uygulamaya hiçbir etkisi yoktur.</span>
+  </label>
+  <div class="form-actions"><button type="submit">Kaydet</button></div>
+</form>
+{{template "bottom" .}}
+
+{{define "fm-selbar"}}
+<div class="fm-selbar">
+  <span class="muted small">Seçilenler:</span>
+  <button type="submit" name="do" value="move" class="btn sm">{{icon "move"}}Taşı…</button>
+  <button type="submit" name="do" value="zip" class="btn sm">{{icon "download"}}İndir (zip)</button>
+  <button type="submit" name="do" value="trash" class="btn sm">{{icon "trash"}}Çöpe at…</button>
+</div>
+{{end}}

@@ -1,0 +1,29 @@
+{{template "top" .}}
+{{$s := .Data.S}}{{$dir := .Data.Dir}}
+<div class="dialog">
+  <a class="crumb" href="/sites/{{$s.Name}}/files?dir={{$dir}}">{{icon "back"}}{{with $dir}}/{{.}}{{else}}Dosyalar{{end}}</a>
+  <div class="card">
+    <div class="dialog-icon">{{icon "move"}}</div>
+    <h1>{{len .Data.Names}} öğe taşınsın</h1>
+    <ul class="fm-names">{{range .Data.Names}}<li class="mono">/{{joinPath $dir .}}</li>{{end}}</ul>
+    {{with .Data.Problem}}<div class="notice bad">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
+    {{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>Klasörler okunamadı: {{.}}</div></div>{{end}}
+    {{if .Data.Targets}}
+    <form method="post" action="/sites/{{$s.Name}}/files/move">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <input type="hidden" name="dir" value="{{$dir}}">
+      {{range .Data.Names}}<input type="hidden" name="n" value="{{.}}">{{end}}
+      <label class="field"><span>Hedef klasör</span>
+        <select name="to" required>{{range .Data.Targets}}<option value="{{.}}">/{{.}}</option>{{end}}</select>
+        <span class="hint">Hedefte aynı adda bir şey varsa hiçbiri taşınmaz. Uygulama eski yolla bağlantı veriyorsa o bağlantılar kırılır.</span>
+      </label>
+      <div class="form-actions">
+        <button type="submit" class="primary">{{icon "move"}}Taşı</button>
+        <a class="btn" href="/sites/{{$s.Name}}/files?dir={{$dir}}">Vazgeç</a>
+      </div>
+    </form>
+    {{else if not .Data.Err}}<p>Taşınabilecek başka klasör yok. Önce “Yeni klasör” ile bir klasör oluştur.</p>
+    <div class="form-actions"><a class="btn" href="/sites/{{$s.Name}}/files?dir={{$dir}}">Geri dön</a></div>{{end}}
+  </div>
+</div>
+{{template "bottom" .}}

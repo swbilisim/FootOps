@@ -1,0 +1,25 @@
+{{template "top" .}}
+{{$s := .Data.S}}
+<div class="dialog">
+  <a class="crumb" href="/sites/{{$s.Name}}/files?dir={{.Data.Dir}}">{{icon "back"}}{{with .Data.Dir}}/{{.}}{{else}}Dosyalar{{end}}</a>
+  <div class="card">
+    <div class="dialog-icon">{{icon "box"}}</div>
+    <h1>Arşiv açılsın mı?</h1>
+    <p><span class="mono">/{{.Data.Path}}</span> bulunduğu klasöre (<span class="mono">/{{.Data.Dir}}</span>) açılır.</p>
+    <ul class="steps">
+      <li>Önce ayrı bir yerde açılıp denetlenir (adlar, boyutlar, bozukluk); site bu sırada etkilenmez.</li>
+      <li>Klasörde aynı adda bir dosya varsa <strong>hiçbir şey açılmaz</strong> ve hangileri olduğu söylenir; var olan klasörlerin içine eklenir, hiçbir şeyin üzerine yazılmaz.</li>
+      <li>Nokta ile başlayan gizli dosyalar ve <span class="mono">__MACOSX</span> alınmaz. Zip, tar ve tar.gz açılır.</li>
+    </ul>
+    <form method="post" action="/sites/{{$s.Name}}/files/unpack">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <input type="hidden" name="path" value="{{.Data.Path}}">
+      <label class="check"><input type="checkbox" name="trash_archive" checked> Açtıktan sonra arşivi çöp kutusuna taşı ({{.Data.KeepDays}} gün geri alınabilir)</label>
+      <div class="form-actions">
+        <button type="submit" class="primary">{{icon "box"}}Aç</button>
+        <a class="btn" href="/sites/{{$s.Name}}/files?dir={{.Data.Dir}}">Vazgeç</a>
+      </div>
+    </form>
+  </div>
+</div>
+{{template "bottom" .}}

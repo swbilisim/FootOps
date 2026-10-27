@@ -20,6 +20,7 @@ import (
 	"github.com/swbilisim/FootOps/internal/auth"
 	"github.com/swbilisim/FootOps/internal/cfaccess"
 	"github.com/swbilisim/FootOps/internal/config"
+	"github.com/swbilisim/FootOps/internal/datafs"
 	"github.com/swbilisim/FootOps/internal/sites"
 )
 
@@ -59,6 +60,17 @@ type AgentAPI interface {
 	Export(ctx context.Context, site string, a agent.Actor) (string, error)
 	Exports(ctx context.Context, site string) ([]agent.ExportInfo, error)
 	DownloadExport(ctx context.Context, site, id string, a agent.Actor, hdr http.Header) (*http.Response, error)
+	Files(ctx context.Context, site, dir string, opt datafs.ListOptions) (datafs.Listing, error)
+	FileDirs(ctx context.Context, site string) ([]string, error)
+	DownloadFile(ctx context.Context, site, p string, a agent.Actor, hdr http.Header) (*http.Response, error)
+	ZipFiles(ctx context.Context, site, dir string, names []string, a agent.Actor) (*http.Response, error)
+	ChangeFiles(ctx context.Context, site string, ch agent.FilesChange) (*datafs.TrashEntry, error)
+	PlaceUpload(ctx context.Context, site string, req agent.PlaceRequest) (datafs.Placed, error)
+	Unpack(ctx context.Context, site string, req agent.UnpackRequest) (string, error)
+	Trash(ctx context.Context, site string) ([]datafs.TrashEntry, error)
+	RestoreTrash(ctx context.Context, site, id string, a agent.Actor) (datafs.Restored, error)
+	EmptyTrash(ctx context.Context, site, confirm string, a agent.Actor) (agent.EmptyTrashResult, error)
+	SetDataURL(ctx context.Context, site, u string, a agent.Actor) error
 	Certs(ctx context.Context) ([]sites.Cert, error)
 	InstallCert(ctx context.Context, certPEM, keyPEM string, a agent.Actor) (sites.Cert, error)
 	RemoveCert(ctx context.Context, id string, a agent.Actor) error
@@ -163,6 +175,24 @@ func (s *Server) Handler(via string) http.Handler {
 	mux.Handle("POST /sites/{name}/files/{id}/restore", s.requireSession(s.filesRestore))
 	mux.Handle("POST /sites/{name}/exports", s.requireSession(s.exportStart))
 	mux.Handle("GET /sites/{name}/exports/{id}/download", s.requireSession(s.exportDownload))
+	mux.Handle("GET /sites/{name}/files", s.requireSession(s.files))
+	mux.Handle("GET /sites/{name}/files/download", s.requireSession(s.filesDownload))
+	mux.Handle("GET /sites/{name}/files/zip", s.requireSession(s.filesZip))
+	mux.Handle("POST /sites/{name}/files/act", s.requireSession(s.filesAct))
+	mux.Handle("POST /sites/{name}/files/mkdir", s.requireSession(s.filesMkdir))
+	mux.Handle("GET /sites/{name}/files/rename", s.requireSession(s.filesRenameForm))
+	mux.Handle("POST /sites/{name}/files/rename", s.requireSession(s.filesRename))
+	mux.Handle("POST /sites/{name}/files/move", s.requireSession(s.filesMove))
+	mux.Handle("POST /sites/{name}/files/trash", s.requireSession(s.filesTrash))
+	mux.Handle("GET /sites/{name}/files/unpack", s.requireSession(s.filesUnpackConfirm))
+	mux.Handle("POST /sites/{name}/files/unpack", s.requireSession(s.filesUnpack))
+	mux.Handle("POST /sites/{name}/files/place", s.requireSession(s.filesPlace))
+	mux.Handle("POST /sites/{name}/files/upload", s.requireStreamSession(s.filesUploadForm))
+	mux.Handle("POST /sites/{name}/files/url", s.requireSession(s.filesURLSet))
+	mux.Handle("GET /sites/{name}/trash", s.requireSession(s.trash))
+	mux.Handle("POST /sites/{name}/trash/{id}/restore", s.requireSession(s.trashRestore))
+	mux.Handle("GET /sites/{name}/trash/empty", s.requireSession(s.trashEmptyConfirm))
+	mux.Handle("POST /sites/{name}/trash/empty", s.requireSession(s.trashEmpty))
 	mux.Handle("GET /jobs/{id}", s.requireSession(s.job))
 	mux.Handle("POST /jobs/{id}/cancel", s.requireSession(s.jobCancel))
 	mux.Handle("GET /certs", s.requireSession(s.certs))

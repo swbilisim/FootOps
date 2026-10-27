@@ -71,11 +71,15 @@ var (
 		"db.restore":    2 * time.Hour,
 		"db.recover":    2 * time.Hour,
 		"files.restore": time.Hour,
+		"files.unpack":  time.Hour,
 	}
 )
 
 // ErrBusy means another operation is still running.
 var ErrBusy = errors.New("başka bir işlem sürüyor; bitince tekrar dene")
+
+// errHeld refuses a job while a file manager change on its site is under way.
+var errHeld = fmt.Errorf("bu sitede bir dosya işlemi sürüyor; birazdan tekrar dene: %w", ErrBusy)
 
 // Jobs runs one job at a time and remembers the last maxJobs. With Dir set, every job
 // is also kept on disk, so a result survives an agent restart and a job cut short by
@@ -88,12 +92,14 @@ type Jobs struct {
 	cancels map[string]context.CancelFunc
 	order   []string
 	busy    bool
+	holds   map[string]int // short changes in progress per site (Hold)
 	now     func() time.Time
 	saved   map[string]time.Time // last disk write per job, for throttling
 }
 
 func NewJobs() *Jobs {
-	return &Jobs{m: map[string]*Job{}, cancels: map[string]context.CancelFunc{}, saved: map[string]time.Time{}, now: time.Now}
+	return &Jobs{m: map[string]*Job{}, cancels: map[string]context.CancelFunc{}, saved: map[string]time.Time{},
+		holds: map[string]int{}, now: time.Now}
 }
 
 var reJobFile = regexp.MustCompile(`^[A-Za-z0-9]{1,64}\.json$`)
@@ -196,6 +202,10 @@ func (j *Jobs) Start(spec JobSpec, fn func(ctx context.Context, t *Task) error, 
 		j.mu.Unlock()
 		return "", ErrBusy
 	}
+	if j.holds[spec.Target] > 0 {
+		j.mu.Unlock()
+		return "", errHeld
+	}
 	j.busy = true
 	job := &Job{ID: randomToken(), Kind: spec.Kind, Target: spec.Target, Actor: spec.Actor,
 		Started: j.now().UTC(), Cancellable: spec.Cancellable}
@@ -276,6 +286,38 @@ func (j *Jobs) Get(id string) (Job, bool) {
 		return Job{}, false
 	}
 	return copyJob(job), true
+}
+
+// Hold reserves a site for a short change that is not a job (a file manager move, an
+// upload put in place): it fails while a job works on that site (or a recovery runs),
+// and no job on the site starts until release is called. Other sites are not held up,
+// and holds on one site do not wait for each other: their changes are single renames.
+func (j *Jobs) Hold(site string) (release func(), err error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	for _, id := range j.order {
+		if job := j.m[id]; !job.Done && (job.Target == site || job.Kind == "db.recover") {
+			return nil, ErrBusy
+		}
+	}
+	j.holds[site]++
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			j.mu.Lock()
+			if j.holds[site]--; j.holds[site] <= 0 {
+				delete(j.holds, site)
+			}
+			j.mu.Unlock()
+		})
+	}, nil
+}
+
+// Busy reports whether a job runs or a change is held (housekeeping waits for both).
+func (j *Jobs) Busy() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.busy || len(j.holds) > 0
 }
 
 // Running returns the job that is running, if any.

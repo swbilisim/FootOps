@@ -124,6 +124,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sites/{name}/exports", s.startExport)
 	mux.HandleFunc("GET /v1/sites/{name}/exports", s.listExports)
 	mux.HandleFunc("GET /v1/sites/{name}/exports/{id}/download", s.downloadExport)
+	mux.HandleFunc("GET /v1/sites/{name}/files", s.listFiles)
+	mux.HandleFunc("GET /v1/sites/{name}/files/dirs", s.fileDirs)
+	mux.HandleFunc("GET /v1/sites/{name}/files/download", s.downloadFile)
+	mux.HandleFunc("POST /v1/sites/{name}/files/zip", s.zipFiles)
+	mux.HandleFunc("POST /v1/sites/{name}/files/change", s.changeFiles)
+	mux.HandleFunc("POST /v1/sites/{name}/files/place", s.placeUpload)
+	mux.HandleFunc("POST /v1/sites/{name}/files/unpack", s.unpackFile)
+	mux.HandleFunc("POST /v1/sites/{name}/files/url", s.setDataURL)
+	mux.HandleFunc("GET /v1/sites/{name}/trash", s.listTrash)
+	mux.HandleFunc("POST /v1/sites/{name}/trash/{id}/restore", s.restoreTrash)
+	mux.HandleFunc("POST /v1/sites/{name}/trash/empty", s.emptyTrash)
 	mux.HandleFunc("GET /v1/jobs/{id}", s.getJob)
 	mux.HandleFunc("POST /v1/jobs/{id}/cancel", s.cancelJob)
 	mux.HandleFunc("GET /v1/certs", s.listCerts)
@@ -540,7 +551,7 @@ func housekeeping(ctx context.Context, jobs *Jobs, data *DataOps, logger *log.Lo
 	t := time.NewTicker(time.Hour)
 	defer t.Stop()
 	for {
-		if _, busy := jobs.Running(); !busy {
+		if !jobs.Busy() {
 			for _, x := range data.Staging.Sweep() {
 				logger.Printf("eski geçici klasör silindi: %s", x)
 			}
@@ -549,6 +560,9 @@ func housekeeping(ctx context.Context, jobs *Jobs, data *DataOps, logger *log.Lo
 			}
 			for _, x := range data.SweepFiles() {
 				logger.Printf("süresi dolan dosya kopyası silindi: %s", x)
+			}
+			for _, x := range data.SweepTrash() {
+				logger.Printf("çöp kutusundan silindi (süresi doldu): %s", x)
 			}
 		}
 		select {

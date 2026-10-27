@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/swbilisim/FootOps/internal/datafs"
 	"github.com/swbilisim/FootOps/internal/sites"
 )
 
@@ -373,4 +374,107 @@ func (c *Client) Server(ctx context.Context) (ServerInfo, error) {
 	var out ServerInfo
 	err := c.call(ctx, http.MethodGet, "/v1/server", nil, &out)
 	return out, err
+}
+
+// ---- file manager ----
+
+func filesPath(site, rest string) string { return "/v1/sites/" + url.PathEscape(site) + rest }
+
+// Files returns one page of a folder of the site's data directory.
+func (c *Client) Files(ctx context.Context, site, dir string, opt datafs.ListOptions) (datafs.Listing, error) {
+	q := url.Values{"dir": {dir}, "sort": {opt.Sort}, "offset": {strconv.Itoa(opt.Offset)}, "limit": {strconv.Itoa(opt.Limit)}}
+	if opt.DirsOnly {
+		q.Set("dirs", "1")
+	}
+	var l datafs.Listing
+	err := c.call(ctx, http.MethodGet, filesPath(site, "/files?"+q.Encode()), nil, &l)
+	return l, err
+}
+
+// FileDirs lists every folder of the site's data directory.
+func (c *Client) FileDirs(ctx context.Context, site string) ([]string, error) {
+	var d []string
+	err := c.call(ctx, http.MethodGet, filesPath(site, "/files/dirs"), nil, &d)
+	return d, err
+}
+
+// DownloadFile streams a file of the data directory (ranges pass through).
+func (c *Client) DownloadFile(ctx context.Context, site, p string, a Actor, hdr http.Header) (*http.Response, error) {
+	return c.download(ctx, filesPath(site, "/files/download?"+url.Values{"path": {p}}.Encode()), a, hdr)
+}
+
+// ZipFiles streams items of a folder (all of it when names is empty) as a zip.
+func (c *Client) ZipFiles(ctx context.Context, site, dir string, names []string, a Actor) (*http.Response, error) {
+	b, err := json.Marshal(FilesChange{Op: "zip", Dir: dir, Names: names, Actor: a})
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://agent"+filesPath(site, "/files/zip"), bytes.NewReader(b))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.long().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("agent'a ulaşılamadı: %w", err)
+	}
+	if resp.StatusCode/100 != 2 {
+		return nil, decode(resp, nil)
+	}
+	return resp, nil
+}
+
+// ChangeFiles makes a folder, renames, moves or deletes to the trash (the entry).
+func (c *Client) ChangeFiles(ctx context.Context, site string, ch FilesChange) (*datafs.TrashEntry, error) {
+	var r struct {
+		Entry *datafs.TrashEntry `json:"entry"`
+	}
+	err := c.call(ctx, http.MethodPost, filesPath(site, "/files/change"), ch, &r)
+	return r.Entry, err
+}
+
+// PlaceUpload puts a finished upload into a folder. A copy may take a while (when it
+// cannot be linked), so no client timeout: the caller's context bounds it.
+func (c *Client) PlaceUpload(ctx context.Context, site string, req PlaceRequest) (datafs.Placed, error) {
+	var p datafs.Placed
+	b, err := json.Marshal(req)
+	if err != nil {
+		return p, err
+	}
+	err = c.send(ctx, http.MethodPost, filesPath(site, "/files/place"), http.Header{"Content-Type": {"application/json"}},
+		bytes.NewReader(b), int64(len(b)), &p)
+	return p, err
+}
+
+// Unpack starts opening an archive of the data directory.
+func (c *Client) Unpack(ctx context.Context, site string, req UnpackRequest) (string, error) {
+	var r JobResponse
+	err := c.call(ctx, http.MethodPost, filesPath(site, "/files/unpack"), req, &r)
+	return r.JobID, err
+}
+
+// Trash lists the site's trash.
+func (c *Client) Trash(ctx context.Context, site string) ([]datafs.TrashEntry, error) {
+	var l []datafs.TrashEntry
+	err := c.call(ctx, http.MethodGet, filesPath(site, "/trash"), nil, &l)
+	return l, err
+}
+
+// RestoreTrash puts a trash entry back.
+func (c *Client) RestoreTrash(ctx context.Context, site, id string, a Actor) (datafs.Restored, error) {
+	var r datafs.Restored
+	err := c.call(ctx, http.MethodPost, filesPath(site, "/trash/"+url.PathEscape(id)+"/restore"), RestartRequest{Actor: a}, &r)
+	return r, err
+}
+
+// EmptyTrash deletes the site's trash for good; confirm is the site's name.
+func (c *Client) EmptyTrash(ctx context.Context, site, confirm string, a Actor) (EmptyTrashResult, error) {
+	var r EmptyTrashResult
+	err := c.call(ctx, http.MethodPost, filesPath(site, "/trash/empty"), ConfirmRequest{Confirm: confirm, Actor: a}, &r)
+	return r, err
+}
+
+// SetDataURL records where the site serves its data directory's files.
+func (c *Client) SetDataURL(ctx context.Context, site, u string, a Actor) error {
+	return c.call(ctx, http.MethodPost, filesPath(site, "/files/url"), DataURLRequest{URL: u, Actor: a}, nil)
 }

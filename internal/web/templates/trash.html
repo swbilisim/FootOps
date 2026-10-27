@@ -1,0 +1,38 @@
+{{template "top" .}}
+{{$s := .Data.S}}
+<a class="crumb" href="/sites/{{$s.Name}}/files">{{icon "back"}}Dosyalar</a>
+<div class="page-head">
+  <div>
+    <h1>Çöp kutusu</h1>
+    <p class="sub">{{$s.Name}} sitesinin kalıcı klasöründen silinenler ve yüklenen dosyaların yerini aldıkları. Uygulama bunları görmez; {{.Data.KeepDays}} gün sonra kendiliğinden silinirler. Gösterilenlerin toplamı {{bytes .Data.Bytes}}.</p>
+  </div>
+  {{if .Data.List}}<div class="page-actions"><a class="btn danger" href="/sites/{{$s.Name}}/trash/empty">{{icon "trash"}}Çöpü boşalt…</a></div>{{end}}
+</div>
+{{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>Çöp kutusu okunamadı: {{.}}</div></div>{{end}}
+{{with .Data.List}}
+<div class="table-wrap">
+<table class="responsive">
+  <thead><tr><th>Ne</th><th>Nereden</th><th class="num">Boyut</th><th>Ne zaman</th><th></th></tr></thead>
+  <tbody>
+  {{range .}}
+    <tr>
+      <td class="primary"><span class="cell-title">{{range $i, $n := .Names}}{{if lt $i 5}}{{if $i}}, {{end}}{{$n}}{{end}}{{end}}{{if or (gt (len .Names) 5) .More}} ve {{add (add (len .Names) -5) .More}} öğe daha{{end}}</span>
+        <span class="cell-sub">{{trashReason .Reason}}{{if .Actor}} · {{.Actor}}{{end}} · {{.Files}} dosya{{if .Dirs}}, {{.Dirs}} klasör{{end}}</span></td>
+      <td data-label="Nereden"><span class="mono">/{{.Dir}}</span></td>
+      <td data-label="Boyut" class="num">{{bytes .Bytes}}</td>
+      <td data-label="Ne zaman" class="nowrap"><span title="{{ts .Deleted}}">{{since .Deleted}}</span></td>
+      <td class="actions">
+        <form method="post" action="/sites/{{$s.Name}}/trash/{{.ID}}/restore">
+          <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+          <button type="submit" class="btn sm">{{icon "undo"}}Geri al</button>
+        </form>
+      </td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{if ge (len .) $.Data.MaxListed}}<p class="muted small">En yeni {{$.Data.MaxListed}} kayıt gösteriliyor; eskiler süresi dolunca kendiliğinden silinir.</p>{{end}}
+<p class="muted small">Geri alınan öğe eski yerine konur; orada aynı adda bir şey varsa yeni bir ad alır (“ad (1)”), hiçbir şeyin üzerine yazılmaz. Klasörü silinmişse yeniden oluşturulur.</p>
+{{else}}{{if not .Data.Err}}<div class="card"><p class="muted">Çöp kutusu boş.</p></div>{{end}}{{end}}
+{{template "bottom" .}}

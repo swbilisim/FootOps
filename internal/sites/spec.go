@@ -48,6 +48,9 @@ type Spec struct {
 	// DataMount is the path inside the container where /srv/<group>/<name>/data is
 	// mounted (uploads etc.). Empty means no persistent directory.
 	DataMount string `json:"data_mount,omitempty"`
+	// DataURL is where the site serves that directory's files ("/uploads"), so the file
+	// manager can link a file to its page. Optional; it changes nothing in the container.
+	DataURL string `json:"data_url,omitempty"`
 	// Database creates a MongoDB database and user named after the site and passes the
 	// connection string in DBVar.
 	Database bool   `json:"database"`
@@ -78,6 +81,7 @@ var (
 	reEnvKey   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
 	reImage    = regexp.MustCompile(`^[a-z0-9][a-z0-9._/:@-]{0,254}$`)
 	reMount    = regexp.MustCompile(`^/[A-Za-z0-9._/-]{1,200}$`)
+	reDataURL  = regexp.MustCompile(`^(/[A-Za-z0-9._~-]+){1,20}$`)
 	reserved   = map[string]bool{"core": true, "caddy": true, "mongo": true, "cloudflared": true, "docker": true, "admin": true}
 	errInvalid = errors.New("geçersiz site")
 )
@@ -94,6 +98,7 @@ func (s *Spec) Normalize() {
 	s.Group = strings.ToLower(strings.TrimSpace(s.Group))
 	s.Image = strings.TrimSpace(s.Image)
 	s.DataMount = strings.TrimSpace(s.DataMount)
+	s.DataURL = strings.TrimRight(strings.TrimSpace(s.DataURL), "/")
 	s.DBVar = strings.TrimSpace(s.DBVar)
 	if s.Database && s.DBVar == "" {
 		s.DBVar = defaultDBVar
@@ -149,6 +154,9 @@ func (s Spec) Validate(env map[string]string) error {
 	if s.DataMount != "" && (!reMount.MatchString(s.DataMount) || strings.Contains(s.DataMount, "..") || s.DataMount == "/") {
 		add("kalıcı klasör yolu mutlak bir yol olmalı (örn. /app/uploads)")
 	}
+	if s.DataURL != "" && !ValidDataURL(s.DataURL) {
+		add("dosyaların web adresi / ile başlayan bir yol olmalı (örn. /uploads)")
+	}
 	if s.Database && !reEnvKey.MatchString(s.DBVar) {
 		add("veritabanı değişken adı geçersiz")
 	}
@@ -170,6 +178,19 @@ func (s Spec) Validate(env map[string]string) error {
 		return &ValidationError{Problems: p}
 	}
 	return nil
+}
+
+// ValidDataURL accepts a path like /uploads or /media/files (no "." or ".." parts).
+func ValidDataURL(u string) bool {
+	if !reDataURL.MatchString(u) || len(u) > 200 {
+		return false
+	}
+	for _, c := range strings.Split(u[1:], "/") {
+		if c == "." || c == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 func validGroup(g string) bool {

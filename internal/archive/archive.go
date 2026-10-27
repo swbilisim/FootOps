@@ -83,6 +83,9 @@ func Detect(path string) (Kind, error) {
 	return detect(f)
 }
 
+// DetectReader is Detect for an open file (read from its start, at most a few KB).
+func DetectReader(r io.Reader) (Kind, error) { return detect(r) }
+
 func detect(r io.Reader) (Kind, error) {
 	br := bufio.NewReader(r)
 	head, _ := br.Peek(512)
@@ -320,15 +323,17 @@ func CheckTar(r io.Reader, l Limits, s *Summary) error {
 
 func checkZip(path string, l Limits, s *Summary) error {
 	// archive/zip loads the whole central directory into memory; refuse a huge one first.
-	entries, dirSize, err := zipDirectory(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
-	if entries > uint64(l.MaxFiles) {
-		return fmt.Errorf("arşivde çok fazla üye var (%d, sınır %d)", entries, l.MaxFiles)
+	st, err := f.Stat()
+	if err == nil {
+		err = CheckZipDirectory(f, st.Size(), l)
 	}
-	if dirSize > uint64(l.MaxFiles)*(46+maxPath+64) {
-		return errors.New("zip dizini beklenenden büyük")
+	f.Close()
+	if err != nil {
+		return err
 	}
 	zr, err := zip.OpenReader(path)
 	if err != nil {
@@ -400,10 +405,30 @@ func zipDirectory(path string) (entries, size uint64, err error) {
 	if err != nil {
 		return 0, 0, err
 	}
+	return zipDirectoryAt(f, st.Size())
+}
+
+// CheckZipDirectory refuses a zip whose central directory is too big to load (archive/zip
+// reads all of it into memory before anything else), from its end record alone.
+func CheckZipDirectory(ra io.ReaderAt, size int64, l Limits) error {
+	entries, dirSize, err := zipDirectoryAt(ra, size)
+	if err != nil {
+		return err
+	}
+	if entries > uint64(l.MaxFiles) {
+		return fmt.Errorf("arşivde çok fazla üye var (%d, sınır %d)", entries, l.MaxFiles)
+	}
+	if dirSize > uint64(l.MaxFiles)*(46+maxPath+64) {
+		return errors.New("zip dizini beklenenden büyük")
+	}
+	return nil
+}
+
+func zipDirectoryAt(f io.ReaderAt, total int64) (entries, size uint64, err error) {
 	// The end record is 22 bytes plus a comment of up to 64 KB.
-	n := min(st.Size(), 22+65535)
+	n := min(total, 22+65535)
 	buf := make([]byte, n)
-	if _, err := f.ReadAt(buf, st.Size()-n); err != nil {
+	if _, err := f.ReadAt(buf, total-n); err != nil {
 		return 0, 0, fmt.Errorf("zip okunamadı: %w", err)
 	}
 	i := bytes.LastIndex(buf, []byte("PK\x05\x06"))
@@ -422,7 +447,7 @@ func zipDirectory(path string) (entries, size uint64, err error) {
 	}
 	off := int64(le64(buf[i-20+8:]))
 	rec := make([]byte, 56)
-	if off < 0 || off > st.Size()-56 {
+	if off < 0 || off > total-56 {
 		return 0, 0, errors.New("zip bozuk: zip64 kaydı dışarıda")
 	}
 	if _, err := f.ReadAt(rec, off); err != nil || string(rec[:4]) != "PK\x06\x06" {

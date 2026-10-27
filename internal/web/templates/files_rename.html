@@ -1,0 +1,25 @@
+{{template "top" .}}
+{{$s := .Data.S}}
+<div class="dialog">
+  <a class="crumb" href="/sites/{{$s.Name}}/files?dir={{.Data.Dir}}">{{icon "back"}}{{with .Data.Dir}}/{{.}}{{else}}Dosyalar{{end}}</a>
+  <div class="card">
+    <div class="dialog-icon">{{icon "edit"}}</div>
+    <h1>Ad değiştir</h1>
+    <p><span class="mono">/{{joinPath .Data.Dir .Data.Name}}</span></p>
+    {{with .Data.Problem}}<div class="notice bad">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
+    <form method="post" action="/sites/{{$s.Name}}/files/rename">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <input type="hidden" name="dir" value="{{.Data.Dir}}">
+      <input type="hidden" name="name" value="{{.Data.Name}}">
+      <label class="field"><span>Yeni ad</span>
+        <input name="to" value="{{.Data.To}}" required maxlength="255" autocomplete="off" autocapitalize="off" spellcheck="false" autofocus>
+        <span class="hint">Aynı klasörde bu adda bir şey varsa değiştirilmez. Uygulama eski adla bağlantı veriyorsa o bağlantı kırılır.</span>
+      </label>
+      <div class="form-actions">
+        <button type="submit" class="primary">{{icon "edit"}}Değiştir</button>
+        <a class="btn" href="/sites/{{$s.Name}}/files?dir={{.Data.Dir}}">Vazgeç</a>
+      </div>
+    </form>
+  </div>
+</div>
+{{template "bottom" .}}

@@ -9,6 +9,8 @@ import (
 	"html/template"
 	"math"
 	"net/http"
+	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -259,6 +261,8 @@ var navOf = map[string]string{
 	"dashboard": "server", "container": "server", "logs": "server", "restart": "server",
 	"sites": "sites", "site": "sites", "site_new": "sites", "site_edit": "sites", "site_confirm": "sites", "job": "sites",
 	"import": "sites", "import_preview": "sites", "restore_confirm": "sites",
+	"files": "sites", "files_rename": "sites", "files_move": "sites", "files_trash": "sites", "files_unpack": "sites",
+	"trash": "sites", "trash_empty": "sites",
 	"certs": "certs", "cert_remove": "certs",
 	"audit": "audit",
 }
@@ -309,6 +313,40 @@ func (s *Server) alerts(r *http.Request) alertSummary {
 	return sum
 }
 
+// humanSize formats a byte count with binary units ("3.4 MiB").
+func humanSize(v any) string {
+	var b uint64
+	switch n := v.(type) {
+	case uint64:
+		b = n
+	case int64:
+		b = uint64(max(n, 0))
+	case int:
+		b = uint64(max(n, 0))
+	}
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := uint64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+// fileURL is a data directory file's address on the site: its first domain, the
+// site's DataURL ("/uploads"), then the path with each part escaped.
+func fileURL(domain, base, dir, name string) string {
+	var b strings.Builder
+	b.WriteString("https://" + domain + base)
+	for _, part := range strings.Split(path.Join(dir, name), "/") {
+		b.WriteString("/" + url.PathEscape(part))
+	}
+	return b.String()
+}
+
 func errString(err error) string {
 	if err == nil {
 		return ""
@@ -317,27 +355,28 @@ func errString(err error) string {
 }
 
 var funcs = template.FuncMap{
-	"bytes": func(v any) string {
-		var b uint64
-		switch n := v.(type) {
-		case uint64:
-			b = n
-		case int64:
-			b = uint64(max(n, 0))
-		case int:
-			b = uint64(max(n, 0))
-		}
-		const unit = 1024
-		if b < unit {
-			return fmt.Sprintf("%d B", b)
-		}
-		div, exp := uint64(unit), 0
-		for n := b / unit; n >= unit; n /= unit {
-			div *= unit
-			exp++
-		}
-		return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
+	"bytes": humanSize,
+	// joinPath is a path of the data directory: "" and "a" give "a".
+	"joinPath": func(dir, name string) string { return path.Join(dir, name) },
+	"fileURL":  fileURL,
+	// isArchive: archives the file manager can open (zip, tar, tar.gz); the content
+	// decides in the end.
+	"isArchive": func(name string) bool {
+		n := strings.ToLower(name)
+		return strings.HasSuffix(n, ".zip") || strings.HasSuffix(n, ".tar") || strings.HasSuffix(n, ".tar.gz") || strings.HasSuffix(n, ".tgz")
 	},
+	"trashReason": func(r string) string {
+		switch r {
+		case "overwrite":
+			return "yüklenen dosya yerine geçti"
+		case "unpacked":
+			return "açılan arşiv"
+		case "unpack-undone":
+			return "açılamayan arşivin geri alınan içeriği"
+		}
+		return "silindi"
+	},
+	"add": func(a, b int) int { return a + b },
 	"pct": func(used, total uint64) float64 {
 		if total == 0 {
 			return 0
@@ -454,6 +493,7 @@ var (
 		"site.redeploy": "Yeniden dağıtılıyor", "db.snapshot": "Veritabanı kopyası", "import.check": "İçe aktarma: kontrol",
 		"import.apply": "İçe aktarılıyor", "db.restore": "Kopyadan geri yükleme", "site.export": "Dışa aktarma",
 		"db.recover": "Yarıda kalan işlemi tamamlama", "files.restore": "Dosyaları geri yükleme",
+		"files.unpack": "Arşiv açılıyor",
 	}
 	reasonNames = map[string]string{"manual": "elle", "before-import": "içe aktarmadan önce", "before-restore": "geri yüklemeden önce"}
 	stateNames  = map[string]string{"running": "çalışıyor", "exited": "durdu", "restarting": "yeniden başlıyor", "created": "oluşturuldu", "paused": "duraklatıldı", "dead": "ölü", "removing": "siliniyor"}

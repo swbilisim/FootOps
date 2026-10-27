@@ -1,0 +1,21 @@
+{{template "top" .}}
+{{$s := .Data.S}}{{$dir := .Data.Dir}}
+<div class="dialog">
+  <a class="crumb" href="/sites/{{$s.Name}}/files?dir={{$dir}}">{{icon "back"}}{{with $dir}}/{{.}}{{else}}Dosyalar{{end}}</a>
+  <div class="card">
+    <div class="dialog-icon bad">{{icon "trash"}}</div>
+    <h1>{{len .Data.Names}} öğe çöp kutusuna taşınsın mı?</h1>
+    <ul class="fm-names">{{range .Data.Names}}<li class="mono">/{{joinPath $dir .}}</li>{{end}}</ul>
+    <p>Uygulama bunları artık göremez. Silinmezler: {{.Data.KeepDays}} gün boyunca <strong>Çöp kutusu</strong> sayfasından geri alınabilirler, sonra kendiliğinden silinirler.</p>
+    <form method="post" action="/sites/{{$s.Name}}/files/trash">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <input type="hidden" name="dir" value="{{$dir}}">
+      {{range .Data.Names}}<input type="hidden" name="n" value="{{.}}">{{end}}
+      <div class="form-actions">
+        <button type="submit" class="danger">{{icon "trash"}}Çöpe at</button>
+        <a class="btn" href="/sites/{{$s.Name}}/files?dir={{$dir}}">Vazgeç</a>
+      </div>
+    </form>
+  </div>
+</div>
+{{template "bottom" .}}

@@ -411,8 +411,7 @@ type download struct {
 	Action, Target     string // audit record
 }
 
-// serveDownload serves a file with Range support, so a broken download resumes. Only
-// downloads from the start are audited; a resumed one is the same download.
+// serveDownload serves a file with Range support, so a broken download resumes.
 func (s *Server) serveDownload(w http.ResponseWriter, r *http.Request, path string, d download) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -420,6 +419,12 @@ func (s *Server) serveDownload(w http.ResponseWriter, r *http.Request, path stri
 		return
 	}
 	defer f.Close()
+	s.serveFile(w, r, f, d)
+}
+
+// serveFile serves an open file with Range support. Only downloads from the start are
+// audited; a resumed one is the same download.
+func (s *Server) serveFile(w http.ResponseWriter, r *http.Request, f *os.File, d download) {
 	st, err := f.Stat()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -433,7 +438,34 @@ func (s *Server) serveDownload(w http.ResponseWriter, r *http.Request, path stri
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(downloadTimeout))
 	h := w.Header()
 	h.Set("Content-Type", d.Type)
-	h.Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, d.Name))
-	h.Set("X-Content-Sha256", d.SHA256)
+	h.Set("Content-Disposition", attachment(d.Name))
+	if d.SHA256 != "" {
+		h.Set("X-Content-Sha256", d.SHA256)
+	}
 	http.ServeContent(w, r, "", st.ModTime(), f)
+}
+
+// attachment is the Content-Disposition of a download named name. A name that is not
+// plain ASCII (Turkish letters) also gets the RFC 5987 form, which browsers prefer; the
+// plain one has the other characters replaced.
+func attachment(name string) string {
+	plain := strings.Map(func(r rune) rune {
+		if r < 0x20 || r > 0x7e || r == '"' || r == '\\' {
+			return '_'
+		}
+		return r
+	}, name)
+	v := fmt.Sprintf(`attachment; filename="%s"`, plain)
+	if plain == name {
+		return v
+	}
+	var b strings.Builder
+	for _, c := range []byte(name) {
+		if 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9' || strings.IndexByte("!#$&+-.^_`|~", c) >= 0 {
+			b.WriteByte(c)
+		} else {
+			fmt.Fprintf(&b, "%%%02X", c)
+		}
+	}
+	return v + "; filename*=UTF-8''" + b.String()
 }

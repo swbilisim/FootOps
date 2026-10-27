@@ -1,0 +1,22 @@
+{{template "top" .}}
+{{$s := .Data.S}}
+<div class="dialog">
+  <a class="crumb" href="/sites/{{$s.Name}}/trash">{{icon "back"}}Çöp kutusu</a>
+  <div class="card">
+    <div class="dialog-icon bad">{{icon "trash"}}</div>
+    <h1>Çöp kutusu boşaltılsın mı?</h1>
+    <p>Çöp kutusundaki her şey <strong>kalıcı olarak</strong> silinir ve geri alınamaz. Diskte yer açmak gerekmiyorsa beklemek de olur: {{$s.Name}} sitesinin çöpü zaten bir hafta sonra kendiliğinden boşalır.</p>
+    {{with .Data.Problem}}<div class="notice bad">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
+    <form method="post" action="/sites/{{$s.Name}}/trash/empty">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <label class="field"><span>Onaylamak için site adını yaz: <strong>{{$s.Name}}</strong></span>
+        <input name="confirm" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      </label>
+      <div class="form-actions">
+        <button type="submit" class="danger">{{icon "trash"}}Kalıcı olarak sil</button>
+        <a class="btn" href="/sites/{{$s.Name}}/trash">Vazgeç</a>
+      </div>
+    </form>
+  </div>
+</div>
+{{template "bottom" .}}

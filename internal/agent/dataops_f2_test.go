@@ -48,6 +48,8 @@ type fakeMongo struct {
 	failDrop    bool // dropping a temporary database fails
 	helpers     int
 	failHelper  int         // the n-th file helper fails
+	fsCalls     []string    // file manager helpers: the command each ran (scope or not)
+	zipBreak    bool        // the zip helper fails after its first bytes
 	onDump      func()      // called when a mongodump starts
 	onRestore   func(n int) // called when the n-th mongorestore starts
 }
@@ -240,7 +242,7 @@ func (m *fakeMongo) Stream(ctx context.Context, c run.Cmd) (run.Usage, error) {
 		return u, nil
 	case contains(c.Args, "mongorestore"):
 		return u, m.restore(c)
-	case c.Name == "systemd-run":
+	case c.Name == "systemd-run", contains(c.Args, "data-fs"):
 		return u, m.helper(c)
 	}
 	return u, fmt.Errorf("unexpected tool: %v", c.Args)
@@ -334,6 +336,44 @@ func (m *fakeMongo) helper(c run.Cmd) error {
 	}
 	root := func(f *os.File) (*os.Root, error) { return os.OpenRoot(f.Name()) }
 	switch {
+	case contains(c.Args, "data-fs"), contains(c.Args, "data-zip"):
+		m.mu.Lock()
+		m.fsCalls = append(m.fsCalls, c.Name)
+		m.mu.Unlock()
+		var req datafs.Request
+		if err := json.NewDecoder(c.Stdin).Decode(&req); err != nil {
+			return err
+		}
+		data, err := root(c.ExtraFiles[0])
+		if err != nil {
+			return err
+		}
+		defer data.Close()
+		if contains(c.Args, "data-zip") {
+			if m.zipBreak {
+				c.Stdout.Write([]byte("PK yarım"))
+				return errors.New("exit status 1: okunurken küçüldü")
+			}
+			st, err := datafs.PackZip(data, req.Dir, req.Names, c.Stdout, nil)
+			if err != nil {
+				b, _ := json.Marshal(datafs.Reply{Error: err.Error(), Code: datafs.ErrorCode(err)})
+				c.Stderr("FOOTOPS_ERROR " + string(b))
+				return errors.New("exit status 1")
+			}
+			report("STATS", st)
+			return nil
+		}
+		h := datafs.Handles{Data: data, Options: datafs.Options{Progress: func(st datafs.Stats) { report("PROGRESS", st) }}}
+		if contains(c.Args, "--trash") {
+			if h.Trash, err = root(c.ExtraFiles[1]); err != nil {
+				return err
+			}
+			defer h.Trash.Close()
+		}
+		if contains(c.Args, "--extra") {
+			h.Extra = c.ExtraFiles[2]
+		}
+		return json.NewEncoder(c.Stdout).Encode(datafs.Serve(req, h))
 	case contains(c.Args, "data-pack"):
 		src, err := root(c.ExtraFiles[0])
 		if err != nil {

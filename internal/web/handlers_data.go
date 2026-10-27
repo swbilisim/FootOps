@@ -46,9 +46,10 @@ func (s *Server) snapshotDownload(w http.ResponseWriter, r *http.Request) {
 }
 
 // passDownload streams a file from the agent. Range requests pass through, so a browser
-// can resume a broken download; nothing is buffered or written to disk here.
+// can resume a broken download; nothing is buffered or written to disk here. A refusal
+// of the agent keeps its status (404, 409, 416, 422…).
 func (s *Server) passDownload(w http.ResponseWriter, r *http.Request, open func() (*http.Response, error)) {
-	if r.Method != http.MethodGet { // GET patterns also match HEAD; a HEAD would pull the whole file
+	if r.Method == http.MethodHead { // GET patterns also match HEAD; a HEAD would pull the whole file
 		w.Header().Set("Allow", http.MethodGet)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -56,13 +57,20 @@ func (s *Server) passDownload(w http.ResponseWriter, r *http.Request, open func(
 	resp, err := open()
 	if err != nil {
 		var ae *agent.Error
-		if errors.As(err, &ae) && (ae.Status == http.StatusNotFound || ae.Status == http.StatusRequestedRangeNotSatisfiable) {
+		if errors.As(err, &ae) && ae.Status >= 400 && ae.Status < 500 {
 			http.Error(w, ae.Message, ae.Status)
 			return
 		}
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
+	relay(w, resp)
+}
+
+// relay passes an agent's download on to the browser. If the stream breaks on either
+// side, the response ends without its last chunk, so the browser reports a failed
+// download instead of keeping a truncated file as if it were whole.
+func relay(w http.ResponseWriter, resp *http.Response) {
 	defer resp.Body.Close()
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(downloadTimeout))
 	for _, k := range []string{"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges",
@@ -72,7 +80,9 @@ func (s *Server) passDownload(w http.ResponseWriter, r *http.Request, open func(
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		panic(http.ErrAbortHandler)
+	}
 }
 
 func (s *Server) jobCancel(w http.ResponseWriter, r *http.Request) {

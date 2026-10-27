@@ -58,6 +58,8 @@ type fakeAgent struct {
 	removedUp []string
 	backups   []agent.FilesBackup
 	dataSite  bool // the site has a data directory
+	dataURL   string
+	fm        fakeFM // the file manager (files_test.go)
 }
 
 func (f *fakeAgent) Overview(context.Context) (agent.Overview, error) {
@@ -107,7 +109,7 @@ func (f *fakeAgent) AuditTail(context.Context, int) ([]agent.AuditEntry, error) 
 func (f *fakeAgent) Sites(context.Context) ([]agent.SiteStatus, error) {
 	return []agent.SiteStatus{{Spec: sites.Spec{Name: "enisparta", Group: "musteri", Domains: []string{"enisparta.com"},
 		Image: "ghcr.io/x/enisparta:main", Port: 3000, MemoryMB: 256, EnvKeys: []string{"NODE_ENV"}, Database: f.dbSite,
-		DataMount: map[bool]string{true: "/app/uploads", false: ""}[f.dataSite]}}}, nil
+		DataMount: map[bool]string{true: "/app/uploads", false: ""}[f.dataSite], DataURL: f.dataURL}}}, nil
 }
 
 func (f *fakeAgent) CreateSite(_ context.Context, req agent.CreateSiteRequest) (string, error) {

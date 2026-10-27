@@ -10,6 +10,7 @@ import (
 	"os"
 
 	"github.com/swbilisim/FootOps/internal/datafs"
+	"github.com/swbilisim/FootOps/internal/staging"
 )
 
 // Hidden helper commands. The agent starts them as root inside a limited systemd scope,
@@ -19,8 +20,14 @@ import (
 //	data-pack     fd 3: the site's data directory        stdout: tar.gz
 //	data-extract  fd 3 (or stdin with --stdin): the archive  fd 4: the new directory
 //	              fd 5: the current one (--merge)
+//	data-fs       one file manager operation: a datafs.Request on stdin, the Reply on
+//	              stdout; fd 3: the data directory, fd 4: the trash (--trash), fd 5:
+//	              the upload to place or the socket for an opened file (--extra)
+//	data-zip      fd 3: the data directory, a datafs.Request (dir, names) on stdin;
+//	              stdout: zip; a failure is reported as "FOOTOPS_ERROR <Reply json>"
 //
-// Both report "FOOTOPS_PROGRESS <json>" lines and a final "FOOTOPS_STATS <json>" on stderr.
+// They report "FOOTOPS_PROGRESS <json>" lines and a final "FOOTOPS_STATS <json>" on
+// stderr (data-fs only for an unpack, and without the final line).
 const (
 	fdArchive = 3
 	fdDest    = 4
@@ -36,6 +43,9 @@ func runData(cmd string, args []string, stdout, stderr io.Writer) error {
 	strip := fs.String("strip", "", "top-level folder to remove (data-extract)")
 	merge := fs.Bool("merge", false, "add the current directory's other files (data-extract)")
 	stdin := fs.Bool("stdin", false, "read the archive from stdin instead of descriptor 3 (tar, tgz)")
+	withTrash := fs.Bool("trash", false, "descriptor 4 is the trash (data-fs)")
+	withExtra := fs.Bool("extra", false, "descriptor 5 is passed (data-fs)")
+	room := fs.Bool("room", false, "keep the disk's reserve free while writing (data-fs)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -54,6 +64,47 @@ func runData(cmd string, args []string, stdout, stderr io.Writer) error {
 	}
 
 	switch cmd {
+	case "data-fs", "data-zip":
+		var req datafs.Request
+		if err := json.NewDecoder(io.LimitReader(os.Stdin, 1<<20)).Decode(&req); err != nil {
+			return fmt.Errorf("istek okunamadı: %w", err)
+		}
+		data, err := openRoot(fdArchive)
+		if err != nil {
+			return err
+		}
+		defer data.Close()
+		if cmd == "data-zip" {
+			bw := bufio.NewWriterSize(stdout, 256<<10)
+			st, err := datafs.PackZip(data, req.Dir, req.Names, bw, progress)
+			if err == nil {
+				err = bw.Flush()
+			}
+			if err != nil {
+				// The agent answers with this when nothing reached the browser yet.
+				b, _ := json.Marshal(datafs.Reply{Error: err.Error(), Code: datafs.ErrorCode(err)})
+				fmt.Fprintf(stderr, "FOOTOPS_ERROR %s\n", b)
+				return err
+			}
+			report("STATS", st)
+			return nil
+		}
+		h := datafs.Handles{Data: data, Options: datafs.Options{Progress: progress}}
+		if *withTrash {
+			if h.Trash, err = openRoot(fdDest); err != nil {
+				return err
+			}
+			defer h.Trash.Close()
+		}
+		if *withExtra {
+			h.Extra = os.NewFile(fdCurrent, "extra")
+		}
+		if *room {
+			h.Options.Room = func(need int64) error {
+				return staging.CheckFree(fmt.Sprintf("/proc/self/fd/%d", fdArchive), need)
+			}
+		}
+		return json.NewEncoder(stdout).Encode(datafs.Serve(req, h))
 	case "data-pack":
 		src, err := openRoot(fdArchive)
 		if err != nil {

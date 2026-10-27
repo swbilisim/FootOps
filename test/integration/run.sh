@@ -54,3 +54,4 @@ docker exec "$NAME" rm -f /root/footops
 python3 f0.py "$NAME" "$WORK/login"
 python3 f2.py "$NAME" "$WORK/login"
 python3 f2b.py "$NAME" "$WORK/login"
+python3 f3.py "$NAME" "$WORK/login"

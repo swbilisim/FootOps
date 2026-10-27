@@ -38,6 +38,12 @@ type Options struct {
 	Strip string
 	// Progress, if set, is called now and then with the running totals.
 	Progress func(Stats)
+	// Room, if set, is asked before each file is written whether the disk has room for
+	// it (the sites must keep theirs).
+	Room func(need int64) error
+	// Compressed is the archive's size, for the compression ratio check (a bomb is
+	// stopped while it expands); 0 skips the check (the archive was checked before).
+	Compressed int64
 }
 
 const (
@@ -126,8 +132,18 @@ func (w *writer) file(name string, size int64, r io.Reader) error {
 	if w.st.Bytes+size > w.opt.Limits.MaxTotal {
 		return fmt.Errorf("toplam boyut sınırı aşıldı (%d bayt)", w.opt.Limits.MaxTotal)
 	}
+	if w.opt.Compressed > 0 {
+		if err := archive.CheckRatio(w.st.Bytes+size, w.opt.Compressed, w.opt.Limits); err != nil {
+			return err
+		}
+	}
 	if err := w.mkdir(path.Dir(name)); err != nil {
 		return err
+	}
+	if w.opt.Room != nil {
+		if err := w.opt.Room(size); err != nil {
+			return err
+		}
 	}
 	f, err := w.dst.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, fileMode)
 	if err != nil {
@@ -210,13 +226,17 @@ func ExtractTarGz(r io.Reader, dst *os.Root, opt Options) (Stats, error) {
 // maxTrailer is what may follow a tar's end marker (tar pads to 10 KB records).
 const maxTrailer = 1 << 20
 
-// ExtractZip writes the members of a zip file into dst; each member's CRC is checked.
+// ExtractZip writes the members of a zip file into dst; each member's CRC is checked. A
+// central directory too big to load is refused from the end record first.
 func ExtractZip(ra io.ReaderAt, size int64, dst *os.Root, opt Options) (Stats, error) {
+	w := newWriter(dst, opt)
+	if err := archive.CheckZipDirectory(ra, size, w.opt.Limits); err != nil {
+		return Stats{}, err
+	}
 	zr, err := zip.NewReader(ra, size)
 	if err != nil {
 		return Stats{}, fmt.Errorf("zip bozuk: %w", err)
 	}
-	w := newWriter(dst, opt)
 	if len(zr.File) > w.opt.Limits.MaxFiles {
 		return w.st, fmt.Errorf("çok fazla dosya (sınır %d)", w.opt.Limits.MaxFiles)
 	}

@@ -27,6 +27,7 @@ import (
 	"github.com/swbilisim/FootOps/internal/agent"
 	"github.com/swbilisim/FootOps/internal/auth"
 	"github.com/swbilisim/FootOps/internal/config"
+	"github.com/swbilisim/FootOps/internal/datafs"
 	"github.com/swbilisim/FootOps/internal/history"
 	"github.com/swbilisim/FootOps/internal/run"
 	"github.com/swbilisim/FootOps/internal/sites"
@@ -102,7 +103,7 @@ func (p *previewAgent) Sites(context.Context) ([]agent.SiteStatus, error) {
 		}
 		out = append(out, agent.SiteStatus{Spec: sites.Spec{Name: n, Group: "musteri", Domains: []string{n + ".example.com", "www." + n + ".example.com"},
 			Image: c.Image, Port: 3000, MemoryMB: int(c.MemLimit >> 20), Database: n != "blog", DBVar: "MONGODB_URI",
-			DataMount: "/app/uploads", EnvKeys: []string{"NODE_ENV", "SESSION_SECRET", "RESEND_API_KEY"},
+			DataMount: "/app/uploads", DataURL: map[bool]string{true: "/uploads"}[n == "magaza"], EnvKeys: []string{"NODE_ENV", "SESSION_SECRET", "RESEND_API_KEY"},
 			CreatedAt: time.Now().Add(-72 * time.Hour), UpdatedAt: time.Now().Add(-2 * time.Hour)}, Container: c})
 	}
 	return out, nil
@@ -198,6 +199,46 @@ func (p *previewAgent) Exports(_ context.Context, site string) ([]agent.ExportIn
 	}
 	return []agent.ExportInfo{{ID: "exp1", Site: site, File: "magaza-20261027-091500.footops.tar", Bytes: 9 << 20,
 		Created: time.Now().Add(-40 * time.Minute), Collections: 4, Documents: 2641}}, nil
+}
+
+func (p *previewAgent) Files(_ context.Context, site, dir string, opt datafs.ListOptions) (datafs.Listing, error) {
+	now := time.Now()
+	var all []datafs.Entry
+	if dir == "" {
+		all = []datafs.Entry{{Name: "urunler", Type: "dir", MTime: now.Add(-3 * time.Hour)}, {Name: "slider", Type: "dir", MTime: now.Add(-50 * time.Hour)},
+			{Name: "kampanya-2026.zip", Type: "file", Size: 48 << 20, MTime: now.Add(-20 * time.Minute)},
+			{Name: "katalog.pdf", Type: "file", Size: 3 << 20, MTime: now.Add(-400 * time.Hour)},
+			{Name: "Çiçekli kapak görseli — çok uzun bir dosya adı örneği.jpg", Type: "file", Size: 820 << 10, MTime: now.Add(-26 * time.Hour)},
+			{Name: "eski-site", Type: "link", MTime: now.Add(-900 * time.Hour)}, {Name: "bozuk?ad", Type: "file", Odd: true, Size: 12, MTime: now.Add(-900 * time.Hour)}}
+	} else {
+		for i := 0; i < 23; i++ {
+			all = append(all, datafs.Entry{Name: fmt.Sprintf("urun-%03d.jpg", i+1), Type: "file", Size: int64(180+i*37) << 10, MTime: now.Add(-time.Duration(i) * time.Hour)})
+		}
+	}
+	l := datafs.Listing{Dir: dir, Total: len(all), Entries: all, Hidden: 1}
+	for _, e := range all {
+		if e.Type == "dir" {
+			l.Dirs++
+		} else if e.Type == "file" {
+			l.Files++
+			l.Bytes += e.Size
+		}
+	}
+	return l, nil
+}
+
+func (p *previewAgent) FileDirs(context.Context, string) ([]string, error) {
+	return []string{"slider", "urunler", "urunler/2025", "urunler/2026"}, nil
+}
+
+func (p *previewAgent) Trash(context.Context, string) ([]datafs.TrashEntry, error) {
+	now := time.Now()
+	return []datafs.TrashEntry{
+		{ID: "20261028-093000-abcdef", Dir: "urunler", Names: []string{"urun-001.jpg", "urun-002.jpg", "urun-003.jpg", "urun-004.jpg", "urun-005.jpg", "urun-006.jpg", "urun-007.jpg"},
+			Files: 7, Bytes: 1900 << 10, Deleted: now.Add(-2 * time.Hour), Actor: "admin"},
+		{ID: "20261027-120000-123456", Dir: "", Names: []string{"katalog.pdf"}, Files: 1, Bytes: 3 << 20, Deleted: now.Add(-30 * time.Hour), Actor: "admin", Reason: "overwrite"},
+		{ID: "20261026-120000-654321", Dir: "slider", Names: []string{"eski"}, Files: 12, Dirs: 2, Bytes: 9 << 20, Deleted: now.Add(-50 * time.Hour), Actor: "admin"},
+	}, nil
 }
 
 func (p *previewAgent) Certs(context.Context) ([]sites.Cert, error) {

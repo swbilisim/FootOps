@@ -33,6 +33,7 @@
     {{else if eq .Kind "site.export"}}<a class="btn primary" href="/sites/{{.Target}}/exports/{{.Result}}/download" download>{{icon "download"}}Arşivi indir</a>
     {{else}}{{$t := .Target}}{{range undoLinks .Result}}<a class="btn" href="/sites/{{$t}}/{{.Path}}/restore">{{icon "undo"}}{{.Label}}</a>{{end}}{{end}}
   {{end}}
+  {{if eq .Kind "files.unpack"}}<a class="btn primary" href="/sites/{{.Target}}/files?dir={{.Result}}">{{icon "folder"}}Klasöre dön</a>{{end}}
   {{if and .Err (eq .Kind "import.check" "import.apply")}}<a class="btn" href="/sites/{{.Target}}/import">{{icon "upload"}}Başka dosya yükle</a>{{end}}
   {{if and (not .Err) (not (eq .Kind "site.remove" "db.recover"))}}<a class="btn{{if not $linked}} primary{{end}}" href="/sites/{{.Target}}">Siteye git</a>{{end}}
   <a class="btn" href="/sites">Siteler</a>
