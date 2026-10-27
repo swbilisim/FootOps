@@ -1,0 +1,37 @@
+{{template "top" .}}
+{{$src := .Data.Src}}
+<div class="dialog">
+  <a class="crumb" href="/sources">{{icon "back"}}Kaynak sunucular</a>
+  <div class="card">
+    {{if eq .Data.Action "remove"}}
+    <div class="dialog-icon">{{icon "trash"}}</div>
+    <h1>{{$src.Label}} kaldırılsın mı?</h1>
+    <p><span class="mono">{{$src.User}}@{{$src.Host}}:{{$src.Port}}</span> için bu sunucudaki anahtar silinir; bu kaynaktan bir daha kopya alınamaz (gerekirse yeniden eklenir). Sitelere kopyalanmış veri yerinde kalır.</p>
+    {{with $src.UsedBy}}<div class="notice warn">{{icon "alert"}}<div>Bu kaynağı kullanan taşıma: {{range $i, $x := .}}{{if $i}}, {{end}}{{$x}}{{end}}. Son kopyalar alındıysa kaldırmak güvenli.</div></div>{{end}}
+    {{with .Data.Problem}}<div class="notice bad">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
+    <form method="post" action="/sources/{{$src.ID}}/remove">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <label class="check"><input type="checkbox" name="cleanup"{{if $src.Pinned}} checked{{else}} disabled{{end}}> Bu sunucunun satırını kaynaktaki <span class="mono">authorized_keys</span> dosyasından da sil (önerilir)</label>
+      {{if not $src.Pinned}}<p class="hint">Bu kaynağa hiç bağlanılmadı; satır kaynağa eklendiyse elle sil: <span class="mono">{{$src.Authorized}}</span></p>{{end}}
+      <div class="form-actions">
+        <button type="submit" class="danger">{{icon "trash"}}Kaldır</button>
+        <a class="btn" href="/sources">Vazgeç</a>
+      </div>
+    </form>
+    {{else}}
+    <div class="dialog-icon">{{icon "key"}}</div>
+    <h1>Kayıtlı sunucu anahtarı silinsin mi?</h1>
+    <p><span class="mono">{{$src.Host}}</span> sunucusunun ilk bağlantıda kaydedilen anahtarı: <span class="mono">{{range $src.HostKeys}}{{.}} {{end}}</span></p>
+    <p>Yalnız kaynak sunucu <strong>yeniden kurulduysa</strong> (anahtarı bu yüzden değiştiyse) sil. Bir sonraki bağlantı kaynağın o anki anahtarını kaydeder; neden değiştiğini bilmiyorsan silme — araya biri girmiş olabilir.</p>
+    {{with .Data.Problem}}<div class="notice bad">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
+    <form method="post" action="/sources/{{$src.ID}}/reset">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <div class="form-actions">
+        <button type="submit" class="danger">Anahtarı sil</button>
+        <a class="btn" href="/sources">Vazgeç</a>
+      </div>
+    </form>
+    {{end}}
+  </div>
+</div>
+{{template "bottom" .}}

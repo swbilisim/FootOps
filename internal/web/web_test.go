@@ -59,7 +59,8 @@ type fakeAgent struct {
 	backups   []agent.FilesBackup
 	dataSite  bool // the site has a data directory
 	dataURL   string
-	fm        fakeFM // the file manager (files_test.go)
+	fm        fakeFM  // the file manager (files_test.go)
+	mig       fakeMig // moving sites (migrate_test.go)
 }
 
 func (f *fakeAgent) Overview(context.Context) (agent.Overview, error) {

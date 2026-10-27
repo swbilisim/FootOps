@@ -29,6 +29,7 @@ import (
 	"github.com/swbilisim/FootOps/internal/config"
 	"github.com/swbilisim/FootOps/internal/datafs"
 	"github.com/swbilisim/FootOps/internal/history"
+	"github.com/swbilisim/FootOps/internal/remote"
 	"github.com/swbilisim/FootOps/internal/run"
 	"github.com/swbilisim/FootOps/internal/sites"
 )
@@ -138,6 +139,24 @@ func (p *previewAgent) Job(_ context.Context, id string) (agent.Job, error) {
 				"✓ Yüklendi ve sayıldı: 4 koleksiyon, 2641 belge (önce 2759 belge) — 2.1 sn, en çok 96.0 MB bellek, 1.4 sn CPU",
 				"✓ Site başlatıldı", "✓ Site sağlıklı cevap veriyor", "✓ Yüklenen dosya sunucudan silindi",
 				"ℹ Geri almak için: site sayfası → Veritabanı kopyaları → 20261027-110000 → Geri yükle"}}, nil
+	}
+	if id == "migcopy" {
+		return agent.Job{ID: id, Kind: "migrate.copy", Target: "magaza", Started: time.Now().Add(-42 * time.Second), Finished: time.Now(),
+			Done: true, Result: "20261028-090000 files-20261028-090001", Usage: run.Usage{PeakMem: 131 << 20, CPU: 2100 * time.Millisecond},
+			Steps: []string{"ℹ Kaynak: eski sunucu (root@203.0.113.20:22) — oradaki site çalışmaya devam eder, yalnız okunur",
+				"✓ Kaynakta /home/magaza/www/public/uploads: 512 dosya, 14 klasör, 230.0 MB; alınmayacak: 2 gizli, 0 bağlantı, 0 özel öğe",
+				"… Kaynakta mongodump çalışıyor (sunucuda, veritabanı magazadb) → SSH → bu sunucu",
+				"✓ Döküm geldi: 5 koleksiyon, 804 belge → 310.0 KB (1.2 sn, en çok 9.0 MB bellek, 40 ms CPU)",
+				"… Deneme yüklemesi: magazadb → geçici veritabanı (site etkilenmez)", "… mongorestore çalışıyor (sınır: 512 MB bellek, %50 CPU)",
+				"✓ Deneme yüklemesi tamam: 5 koleksiyon, 804 belge (0.9 sn, en çok 101.0 MB bellek, 300 ms CPU)",
+				"… Dosyalar kaynaktan doğrudan bu sunucuya akıyor (SSH, tar → yardımcı; site burada çalışırken data.new'a)",
+				"… Dosyalar açılıyor (site kullanıcısı 1001, sınır: 256 MB bellek, %50 CPU)",
+				"✓ Dosyalar açıldı: 510 dosya, 14 klasör, 229.0 MB — 6.8 sn, en çok 22.0 MB bellek, 1.1 sn CPU",
+				"✓ Site durduruldu (bu sırada ziyaretçiler hata sayfası görür)", "✓ Kopya hazır: 20261028-090000 (sunucuda 7 gün saklanır)",
+				"✓ Yüklendi ve sayıldı: 5 koleksiyon, 804 belge (önce 0 belge) — 1.1 sn, en çok 96.0 MB bellek, 0.4 sn CPU",
+				"✓ Kalıcı klasör değiştirildi (tamamen değiştir); önceki hali data.old-20261028-090001, 7 gün saklanır",
+				"✓ Site başlatıldı", "✓ Site sağlıklı cevap veriyor",
+				"✓ Ön kopya tamam: site bu sunucuda kaynaktaki verinin kopyasıyla çalışıyor; DNS hâlâ eski sunucuyu gösteriyor"}}, nil
 	}
 	if id == "done" {
 		j.Done, j.Finished, j.Result = true, time.Now(), "20261027-110000"
@@ -294,6 +313,70 @@ func (p *previewAgent) Alerts(context.Context) ([]agent.Alert, error) {
 		{Key: "disk", Level: "warn", Title: "Disk %82 dolu", Detail: "Eski imajlar, loglar ve yedekler yer kaplıyor olabilir.", Link: "/", Since: time.Now().Add(-3 * time.Hour)},
 		{Key: "cert:fedcba9876543210", Level: "warn", Title: "blog.example.org sertifikasının bitmesine 12 gün var", Link: "/certs", Since: time.Now().Add(-26 * time.Hour)},
 	}, nil
+}
+
+// previewSource is a connected source server; /sources also lists one not connected yet.
+var previewSource = agent.SourceView{Source: remote.Source{ID: "kaynak000001", Label: "eski sunucu", Host: "203.0.113.20", Port: 22, User: "root",
+	PublicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOrnek footops-h1-kaynak000001", HostKeys: []string{"ED25519 SHA256:3fQkV0mF6c1x2pXq9Zr0b8yWk4u7Lh1sQe2nTt5aBcD"},
+	Checked: time.Now().Add(-40 * time.Minute), System: "CentOS Linux 7 (Core) · 3.10.0-1160.el7.x86_64", Created: time.Now().Add(-2 * time.Hour)},
+	UsedBy: []string{"magaza"}}
+
+func (p *previewAgent) Sources(context.Context) ([]agent.SourceView, error) {
+	fresh := agent.SourceView{Source: remote.Source{ID: "kaynak000002", Label: "arkadaşın sunucusu", Host: "eski.example.net", Port: 2222, User: "root",
+		PublicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIYeni footops-h1-kaynak000002"}}
+	fresh.Authorized = `restrict,from="203.0.113.10" ` + fresh.PublicKey
+	fresh.Install = remote.InstallCommand(fresh.Authorized)
+	return []agent.SourceView{previewSource, fresh}, nil
+}
+
+// Migration shows the wizard for magaza with a discovery, a scan and a finished copy;
+// /sites/blog/migrate is a site whose move has not started.
+func (p *previewAgent) Migration(_ context.Context, site string) (agent.MigrationView, error) {
+	srcs, _ := p.Sources(context.Background())
+	v := agent.MigrationView{Sources: srcs}
+	if site != "magaza" {
+		return v, nil
+	}
+	now := time.Now()
+	disc := &remote.Discovery{Taken: now.Add(-25 * time.Minute), Complete: true,
+		System: remote.System{OS: "CentOS Linux 7 (Core)", CPUs: 4, MemTotal: 8 << 30, MemAvail: 2 << 30,
+			Disks: []remote.Disk{{Mount: "/", Size: 200 << 30, Used: 96 << 30, Avail: 104 << 30}}},
+		Tools: []remote.Tool{{Name: "mongodump"}, {Name: "mongo"}, {Name: "node"}, {Name: "nginx"}, {Name: "tar"}, {Name: "find"}},
+		Mongo: []remote.MongoSource{{Via: "host", Shell: "mongo", Version: "4.0.28", DBs: []remote.MongoDB{
+			{Name: "magazadb", Collections: 12, Objects: 804, DataSize: 1400 << 10},
+			{Name: "eskiblog", Collections: 7, Objects: 120, DataSize: 300 << 10}}}},
+		Web: []remote.WebServer{{File: "/etc/nginx/conf.d/magaza.conf", Names: []string{"magaza.example.com", "www.magaza.example.com"},
+			Locations: []remote.Location{{Path: "/", Proxy: "http://127.0.0.1:8196"}}}},
+		Procs: []remote.Proc{{PID: 1001, User: "root", Daemon: true, PM2Home: "/root/.pm2", Cmd: "PM2 v4.5.6: God Daemon (/root/.pm2)"},
+			{PID: 2001, PPID: 1001, User: "root", RSS: 180 << 20, Cwd: "/home/magaza/www", PM2Name: "magaza", PM2ID: "3", Ports: []int{8196}}},
+		Containers: []remote.Container{{Name: "eski-redis", Image: "redis:5", Status: "Up 3 months"}},
+		Apps:       []remote.AppDir{{Dir: "/home/magaza/www", KB: 480000}},
+		Candidates: []remote.Candidate{{Dir: "/home/magaza/www/public/uploads", Counts: remote.Counts{Files: 512, Bytes: 230 << 20, Dirs: 14, Hidden: 2}}}}
+	sc := &remote.Scan{Taken: now.Add(-20 * time.Minute), Dir: "/home/magaza/www", Complete: true,
+		Total: remote.Counts{Files: 41210, Bytes: 480 << 20, Hidden: 6},
+		Subs: []remote.SubDir{{Name: "node_modules", Counts: remote.Counts{Files: 40500, Bytes: 210 << 20}},
+			{Name: "public", Counts: remote.Counts{Files: 690, Bytes: 268 << 20}}, {Name: "lib", Counts: remote.Counts{Files: 20, Bytes: 80 << 10}}},
+		Files:   []string{"package.json", "app.js"},
+		Package: &remote.Package{Name: "magaza", Main: "app.js", Node: ">=14", Deps: []string{"express", "mongoose", "multer", "nodemailer"}},
+		Env:     []remote.EnvFile{{File: ".env", Keys: []string{"DB_URI", "PORT", "SECRET_KEY"}}},
+		Secrets: []remote.Finding{{Kind: "password", Where: "lib/mailConf.js:7"}, {Kind: "smtp", Where: "lib/mailConf.js:3"}},
+		DBRefs:  []remote.Ref{{Value: "magazadb", Count: 1}},
+		URLs:    []remote.Ref{{Value: "http://203.0.113.20:8196", Count: 3}}}
+	sg := remote.Suggest(*disc, sc, "magaza", []string{"magaza.example.com"})
+	v.Discovery, v.Scan, v.Suggest = disc, sc, &sg
+	v.Source = &previewSource
+	m := &agent.Migration{Site: site, Source: previewSource.ID, AppDir: "/home/magaza/www", FilesDir: "/home/magaza/www/public/uploads",
+		DB: "magazadb", Created: now.Add(-time.Hour), Updated: now.Add(-15 * time.Minute)}
+	files := datafs.Stats{Files: 510, Bytes: 229 << 20}
+	m.Copies = []agent.CopyResult{{Job: "migcopy", Started: now.Add(-10 * time.Minute), Finished: now.Add(-9*time.Minute - 18*time.Second),
+		DB: "magazadb", SourceDocs: map[string]int64{"urunler": 412, "kategoriler": 18, "siparisler": 344, "ayarlar": 1, "sayfalar": 29},
+		SiteDocs: map[string]int64{"urunler": 412, "kategoriler": 18, "siparisler": 344, "ayarlar": 1, "sayfalar": 29}, DumpBytes: 310 << 10,
+		FilesDir: m.FilesDir, SourceFiles: &remote.Counts{Files: 512, Bytes: 230 << 20, Dirs: 14, Hidden: 2}, SiteFiles: &files,
+		Notes: []string{"Dosyalar: kaynakta 512 / 230.0 MB sayılmıştı, sitede 510 / 229.0 MB (kaynak arada değişmiş olabilir)."},
+		Undo:  now.Add(-10*time.Minute).UTC().Format("20060102-150405") + " files-" + now.Add(-10*time.Minute).UTC().Format("20060102-150405"),
+		Usage: run.Usage{PeakMem: 131 << 20, CPU: 2100 * time.Millisecond}}}
+	v.Migration = m
+	return v, nil
 }
 
 func TestPreview(t *testing.T) {

@@ -19,6 +19,7 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -392,9 +393,17 @@ func (m *fakeMongo) helper(c run.Cmd) error {
 			return err
 		}
 		defer dst.Close()
-		opt := datafs.Options{}
+		opt := datafs.Options{Limits: archive.DefaultLimits}
 		if v := argValue(c.Args, "--strip="); len(v) > 0 {
 			opt.Strip = v[0]
+		}
+		if v := argValue(c.Args, "--max-bytes="); len(v) > 0 {
+			n, _ := strconv.ParseInt(v[0], 10, 64)
+			opt.Limits.MaxTotal = min(n, opt.Limits.MaxTotal)
+		}
+		if v := argValue(c.Args, "--max-files="); len(v) > 0 {
+			n, _ := strconv.Atoi(v[0])
+			opt.Limits.MaxFiles = min(n, opt.Limits.MaxFiles)
 		}
 		var in io.Reader = c.Stdin
 		if !contains(c.Args, "--stdin") {
@@ -408,7 +417,12 @@ func (m *fakeMongo) helper(c run.Cmd) error {
 		case "tgz":
 			st, err = datafs.ExtractTarGz(in, dst, opt)
 		default:
-			st, err = datafs.ExtractTar(in, dst, opt)
+			// Like the real helper: read to the end, so the sender finishes.
+			if st, err = datafs.ExtractTar(in, dst, opt); err == nil && contains(c.Args, "--end-line") {
+				err = datafs.DrainEnd(in)
+			} else if err == nil && contains(c.Args, "--stdin") {
+				err = datafs.DrainTrailer(in)
+			}
 		}
 		if err != nil {
 			return err

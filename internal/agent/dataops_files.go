@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/swbilisim/FootOps/internal/datafs"
+	"github.com/swbilisim/FootOps/internal/remote"
 	"github.com/swbilisim/FootOps/internal/run"
 	"github.com/swbilisim/FootOps/internal/sites"
 )
@@ -149,6 +150,15 @@ type filesSource struct {
 	Format string // "zip", "tar", "tgz"
 	Strip  string
 	Expect datafs.Stats // what the extraction must produce (hidden entries left out)
+	// Stream, when set, produces the archive instead of Path: a tar written by another
+	// server over ssh (remote.TarScript), piped straight into the helper (the agent never
+	// touches the bytes). StreamErr judges how it ended from its exit status and stderr
+	// (nil: fine). Live: that server's site still runs, so files may change while they
+	// are read and Expect (counted just before) is only compared, not required — but a
+	// copy that brings far less than counted is refused.
+	Stream    *run.Cmd
+	StreamErr func(err error, log *remote.StreamLog) error
+	Live      bool
 }
 
 // extract unpacks src into a fresh data.new owned by the site's user. With merge, the
@@ -165,14 +175,18 @@ func (d *DataOps) extract(ctx context.Context, t *Task, sf siteFiles, src filesS
 	if err := os.Chown(staged, sf.UID, sf.GID); err != nil {
 		return datafs.Stats{}, err
 	}
-	in, err := os.Open(src.Path)
-	if err != nil {
-		return datafs.Stats{}, err
-	}
-	defer in.Close()
 	// A whole upload (zip, tar.gz) is passed as descriptor 3. The files member of a
 	// FootOps archive is streamed through stdin instead, so the helper never sees the rest
-	// of the archive (the database dump).
+	// of the archive (the database dump); so is a tar coming from another server.
+	var in *os.File
+	if src.Stream == nil {
+		f, err := os.Open(src.Path)
+		if err != nil {
+			return datafs.Stats{}, err
+		}
+		defer f.Close()
+		in = f
+	}
 	dst, err := os.Open(staged)
 	if err != nil {
 		return datafs.Stats{}, err
@@ -193,19 +207,33 @@ func (d *DataOps) extract(ctx context.Context, t *Task, sf siteFiles, src filesS
 		args = append(args, "--merge")
 	}
 	var cmd run.Cmd
-	if src.Sec.Offset == 0 {
+	switch {
+	case src.Stream != nil:
+		entries := src.Expect.Files + src.Expect.Dirs
+		// Checked as it arrives (descriptor 3 stays closed): the sender's end line, the
+		// disk's reserve, and no more than counted plus a margin for a live site.
+		args = append(args, "--stdin", "--end-line", "--room",
+			"--max-bytes="+strconv.FormatInt(src.Expect.Bytes+max(src.Expect.Bytes/2, 256<<20), 10),
+			"--max-files="+strconv.Itoa(entries+max(entries/2, 1000)))
+		cmd = d.helper(ctx, t.ID(), files, args...)
+	case src.Sec.Offset == 0:
 		files[0] = in
 		cmd = d.helper(ctx, t.ID(), files, args...)
-	} else {
-		args = append(args, "--stdin") // descriptor 3 stays closed
+	default:
+		args = append(args, "--stdin")
 		cmd = d.helper(ctx, t.ID(), files, args...)
 		cmd.Stdin = bufio.NewReaderSize(io.NewSectionReader(in, src.Sec.Offset, src.Sec.Length), 256<<10)
 	}
 	var hs helperStats
 	cmd.Stderr = hs.line(t, src.Expect.Bytes)
 	t.Step("… Dosyalar açılıyor (site kullanıcısı " + strconv.Itoa(sf.UID) + ", sınır: " + limitText(helperLimits) + ")")
-	u, err := d.Stream.Stream(ctx, cmd)
-	t.AddUsage(u)
+	var u run.Usage
+	if src.Stream != nil {
+		u, err = d.streamInto(ctx, t, src, cmd)
+	} else {
+		u, err = d.Stream.Stream(ctx, cmd)
+		t.AddUsage(u)
+	}
 	if err == nil {
 		err = ctx.Err()
 	}
@@ -217,10 +245,18 @@ func (d *DataOps) extract(ctx context.Context, t *Task, sf siteFiles, src filesS
 		return hs.Result, fmt.Errorf("dosyalar açılamadı: %w", err)
 	}
 	st := hs.Result
-	if st.Files != src.Expect.Files || st.Bytes != src.Expect.Bytes {
+	if src.Live && src.Expect.Files > 0 && st.Files < src.Expect.Files/2 {
 		_ = os.RemoveAll(staged)
-		return st, fmt.Errorf("açılan dosyalar beklenenden farklı: %d dosya / %s (beklenen %d / %s)",
-			st.Files, humanBytes(st.Bytes), src.Expect.Files, humanBytes(src.Expect.Bytes))
+		return st, fmt.Errorf("kaynakta %d dosya sayılmıştı, yalnız %d geldi: kopya eksik, uygulanmadı", src.Expect.Files, st.Files)
+	}
+	if st.Files != src.Expect.Files || st.Bytes != src.Expect.Bytes {
+		if !src.Live {
+			_ = os.RemoveAll(staged)
+			return st, fmt.Errorf("açılan dosyalar beklenenden farklı: %d dosya / %s (beklenen %d / %s)",
+				st.Files, humanBytes(st.Bytes), src.Expect.Files, humanBytes(src.Expect.Bytes))
+		}
+		t.Step(fmt.Sprintf("ℹ Kaynakta az önce %d dosya / %s sayılmıştı, gelen %d / %s: site orada çalıştığı için arada değişmiş olabilir",
+			src.Expect.Files, humanBytes(src.Expect.Bytes), st.Files, humanBytes(st.Bytes)))
 	}
 	msg := fmt.Sprintf("✓ Dosyalar açıldı: %d dosya, %d klasör, %s", st.Files, st.Dirs, humanBytes(st.Bytes))
 	if merge {

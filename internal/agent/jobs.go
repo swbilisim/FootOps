@@ -11,6 +11,7 @@ import (
 	"sort"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/swbilisim/FootOps/internal/run"
 )
@@ -72,6 +73,10 @@ var (
 		"db.recover":    2 * time.Hour,
 		"files.restore": time.Hour,
 		"files.unpack":  time.Hour,
+		// A move copies over the network: a few GB from an old server may take a while.
+		"migrate.copy":     3 * time.Hour,
+		"migrate.discover": 6 * time.Minute,
+		"migrate.scan":     6 * time.Minute,
 	}
 )
 
@@ -239,7 +244,7 @@ func (j *Jobs) Start(spec JobSpec, fn func(ctx context.Context, t *Task) error, 
 			case errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded):
 				job.Err = fmt.Sprintf("zaman aşımı (%s): %v", timeout, err)
 			default:
-				job.Err = err.Error()
+				job.Err = clipMsg(err.Error(), 4000)
 			}
 		}
 		delete(j.cancels, job.ID)
@@ -375,6 +380,18 @@ func (j *Jobs) save(job *Job) {
 		return
 	}
 	_ = writeFile(filepath.Join(j.Dir, job.ID+".json"), string(b), 0o600)
+}
+
+// clipMsg keeps at most n bytes of a message (whole characters), so a record stays
+// small whatever a failing command or another server said.
+func clipMsg(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n] + "…"
 }
 
 func randomToken() string {

@@ -17,6 +17,7 @@ import (
 
 	"github.com/swbilisim/FootOps/internal/docker"
 	"github.com/swbilisim/FootOps/internal/history"
+	"github.com/swbilisim/FootOps/internal/remote"
 	"github.com/swbilisim/FootOps/internal/run"
 	"github.com/swbilisim/FootOps/internal/sites"
 	"github.com/swbilisim/FootOps/internal/staging"
@@ -135,6 +136,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/sites/{name}/trash", s.listTrash)
 	mux.HandleFunc("POST /v1/sites/{name}/trash/{id}/restore", s.restoreTrash)
 	mux.HandleFunc("POST /v1/sites/{name}/trash/empty", s.emptyTrash)
+	mux.HandleFunc("GET /v1/sources", s.listSources)
+	mux.HandleFunc("POST /v1/sources", s.createSource)
+	mux.HandleFunc("POST /v1/sources/{id}/test", s.testSource)
+	mux.HandleFunc("POST /v1/sources/{id}/reset-hostkey", s.resetHostKey)
+	mux.HandleFunc("POST /v1/sources/{id}/remove", s.removeSource)
+	mux.HandleFunc("GET /v1/sites/{name}/migration", s.getMigration)
+	mux.HandleFunc("POST /v1/sites/{name}/migration", s.setMigration)
+	mux.HandleFunc("POST /v1/sites/{name}/migration/forget", s.forgetMigration)
+	mux.HandleFunc("POST /v1/sites/{name}/migration/discover", s.migrationJob("migrate.discover"))
+	mux.HandleFunc("POST /v1/sites/{name}/migration/scan", s.migrationJob("migrate.scan"))
+	mux.HandleFunc("POST /v1/sites/{name}/migration/copy", s.migrationJob("migrate.copy"))
 	mux.HandleFunc("GET /v1/jobs/{id}", s.getJob)
 	mux.HandleFunc("POST /v1/jobs/{id}/cancel", s.cancelJob)
 	mux.HandleFunc("GET /v1/certs", s.listCerts)
@@ -345,8 +357,12 @@ type Config struct {
 	SnapshotDir string
 	StagingDir  string
 	RecoveryDir string // restores in progress, finished after an agent restart
-	PanelUser   string
-	PanelHost   string // refused as a site domain
+	// SourcesDir keeps the servers sites are moved from (their keys); MigrationsDir each
+	// site's move (F4).
+	SourcesDir    string
+	MigrationsDir string
+	PanelUser     string
+	PanelHost     string // refused as a site domain
 }
 
 // Main runs the agent until ctx is done.
@@ -382,7 +398,9 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 	ops := &SiteOps{Store: sites.Store{Root: "/"}, Docker: d, Run: run.Exec{}, PanelHost: cfg.PanelHost}
 	data := &DataOps{Store: ops.Store, Docker: d, Run: run.Exec{KillOnCancel: true}, Stream: run.StreamExec{},
 		Staging: staging.New(cfg.StagingDir, staging.DefaultMax), SnapshotDir: cfg.SnapshotDir,
-		RecoveryDir: cfg.RecoveryDir, Sites: ops}
+		RecoveryDir: cfg.RecoveryDir, Sites: ops, MigrationsDir: cfg.MigrationsDir}
+	host, _ := os.Hostname()
+	data.Sources = &remote.Store{Dir: cfg.SourcesDir, Run: run.Exec{KillOnCancel: true}, Stream: run.StreamExec{}, Name: host}
 	audit := NewAudit(cfg.AuditPath)
 	jobs := NewJobs()
 	tempDBs := false
@@ -394,11 +412,19 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 		jobs = j
 		for _, job := range interrupted {
 			logger.Printf("yarıda kalan iş: %s %s (%s)", job.Kind, job.Target, job.ID)
-			tempDBs = tempDBs || job.Kind == "import.check"
+			// Both check archives in a temporary database first.
+			tempDBs = tempDBs || job.Kind == "import.check" || job.Kind == "migrate.copy"
 			_ = audit.Record(AuditEntry{Actor: job.Actor, Action: job.Kind, Target: job.Target, Detail: job.Err})
-			// Its staging may hold a connection file with a password (rule K5).
+			// Its staging may hold a connection file with a password (rule K5), a move's
+			// staging the site's database as fetched from the source.
 			if err := data.Staging.Remove(job.ID); err != nil {
 				logger.Printf("geçici klasör silinemedi: %v", err)
+			}
+			if job.Kind == "migrate.copy" {
+				_ = data.Staging.Remove(migratePrefix + job.ID)
+				// Its ssh and file helper run in scopes of their own and outlive the agent:
+				// stopped now, they cannot keep writing into a data.new the recovery removes.
+				stopScopes(ctx, run.Exec{}, job.ID, logger)
 			}
 		}
 	}
@@ -587,6 +613,26 @@ func removeTools(ctx context.Context, d *docker.Client, r run.Runner, logger *lo
 			} else {
 				logger.Printf("yarıda kalan araç container'ı silindi: %s", name)
 			}
+		}
+	}
+}
+
+// stopScopes kills what a job left running in systemd scopes (its ssh streams and its
+// file helper), after an agent restart.
+func stopScopes(ctx context.Context, r run.Runner, job string, logger *log.Logger) {
+	out, err := r.Run(ctx, "systemctl", "list-units", "--plain", "--no-legend", "--all", "--type=scope",
+		"footops-ssh-"+job+"-*", helperPrefix+job+".scope")
+	if err != nil {
+		logger.Printf("scope listesi alınamadı: %v", err)
+		return
+	}
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) == 0 || !strings.HasSuffix(f[0], ".scope") || !strings.Contains(f[0], job) {
+			continue
+		}
+		if _, err := r.Run(ctx, "systemctl", "kill", "--signal=SIGKILL", f[0]); err == nil {
+			logger.Printf("yarıda kalan süreç durduruldu: %s", f[0])
 		}
 	}
 }

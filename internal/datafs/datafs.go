@@ -8,6 +8,7 @@ package datafs
 import (
 	"archive/tar"
 	"archive/zip"
+	"bytes"
 	"compress/gzip"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -225,6 +227,38 @@ func ExtractTarGz(r io.Reader, dst *os.Root, opt Options) (Stats, error) {
 
 // maxTrailer is what may follow a tar's end marker (tar pads to 10 KB records).
 const maxTrailer = 1 << 20
+
+// DrainEnd reads what follows a tar's end marker in a stream that its sender closes
+// with an end line ("FOOTOPS_TAR_END <status>"): padding, then exactly that line. A
+// stream cut off anywhere before it lacks the line, however complete the tar in it
+// looks (a tar cut at a member boundary reads as a shorter, valid one).
+func DrainEnd(r io.Reader) error {
+	b, err := io.ReadAll(io.LimitReader(r, maxTrailer+1))
+	if err != nil {
+		return fmt.Errorf("tar sonu okunamadı: %w", err)
+	}
+	if len(b) > maxTrailer {
+		return errors.New("tar'ın sonundan sonra beklenmeyen veri var")
+	}
+	if !reTarEnd.Match(bytes.TrimLeft(b, "\x00")) {
+		return errors.New("aktarım yarıda kesildi: kaynağın gönderdiği tar sonuna kadar gelmedi")
+	}
+	return nil
+}
+
+var reTarEnd = regexp.MustCompile(`^FOOTOPS_TAR_END [0-9]{1,3}\n$`)
+
+// DrainTrailer reads what follows a tar's end marker in a stream: padding, nothing much.
+func DrainTrailer(r io.Reader) error {
+	n, err := io.Copy(io.Discard, io.LimitReader(r, maxTrailer+1))
+	if err != nil {
+		return fmt.Errorf("tar sonu okunamadı: %w", err)
+	}
+	if n > maxTrailer {
+		return errors.New("tar'ın sonundan sonra beklenmeyen veri var")
+	}
+	return nil
+}
 
 // ExtractZip writes the members of a zip file into dst; each member's CRC is checked. A
 // central directory too big to load is refused from the end record first.

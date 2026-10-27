@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/swbilisim/FootOps/internal/archive"
 	"github.com/swbilisim/FootOps/internal/datafs"
 	"github.com/swbilisim/FootOps/internal/staging"
 )
@@ -45,7 +46,10 @@ func runData(cmd string, args []string, stdout, stderr io.Writer) error {
 	stdin := fs.Bool("stdin", false, "read the archive from stdin instead of descriptor 3 (tar, tgz)")
 	withTrash := fs.Bool("trash", false, "descriptor 4 is the trash (data-fs)")
 	withExtra := fs.Bool("extra", false, "descriptor 5 is passed (data-fs)")
-	room := fs.Bool("room", false, "keep the disk's reserve free while writing (data-fs)")
+	room := fs.Bool("room", false, "keep the disk's reserve free while writing (data-fs, data-extract)")
+	endLine := fs.Bool("end-line", false, "the stream ends with its sender's end line (data-extract --stdin, tar)")
+	maxBytes := fs.Int64("max-bytes", 0, "write at most this many bytes (data-extract; 0: the default limit)")
+	maxFiles := fs.Int("max-files", 0, "write at most this many files and folders (data-extract; 0: the default limit)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -136,7 +140,20 @@ func runData(cmd string, args []string, stdout, stderr io.Writer) error {
 		} else {
 			in = os.NewFile(fdArchive, "archive")
 		}
-		opt := datafs.Options{Strip: *strip, Progress: progress}
+		opt := datafs.Options{Strip: *strip, Progress: progress, Limits: archive.DefaultLimits}
+		// A stream from another server is checked as it arrives: no more than announced,
+		// and never into the disk's reserve.
+		if *maxBytes > 0 && *maxBytes < opt.Limits.MaxTotal {
+			opt.Limits.MaxTotal = *maxBytes
+		}
+		if *maxFiles > 0 && *maxFiles < opt.Limits.MaxFiles {
+			opt.Limits.MaxFiles = *maxFiles
+		}
+		if *room {
+			opt.Room = func(need int64) error {
+				return staging.CheckFree(fmt.Sprintf("/proc/self/fd/%d", fdDest), need)
+			}
+		}
 		var st datafs.Stats
 		switch *format {
 		case "zip":
@@ -153,7 +170,21 @@ func runData(cmd string, args []string, stdout, stderr io.Writer) error {
 				return err
 			}
 		case "tar":
-			if st, err = datafs.ExtractTar(bufio.NewReaderSize(in, 256<<10), dst, opt); err != nil {
+			br := bufio.NewReaderSize(in, 256<<10)
+			if st, err = datafs.ExtractTar(br, dst, opt); err != nil {
+				return err
+			}
+			// A tar piped from another server (F4) is read to its end, so the sender
+			// finishes writing (its exit status tells whether all of it came) instead of
+			// dying on a closed pipe; tar pads its end marker to a 10 KB record, and the
+			// sender's end line follows.
+			switch {
+			case *endLine:
+				err = datafs.DrainEnd(br)
+			case *stdin:
+				err = datafs.DrainTrailer(br)
+			}
+			if err != nil {
 				return err
 			}
 		default:

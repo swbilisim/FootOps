@@ -1,0 +1,242 @@
+{{template "top" .}}
+{{$s := .Data.S}}{{$v := .Data.V}}{{$m := $v.Migration}}{{$src := $v.Source}}
+{{$ready := false}}{{if $src}}{{if $src.Pinned}}{{$ready = true}}{{end}}{{end}}
+<a class="crumb" href="/sites/{{$s.Name}}">{{icon "back"}}{{$s.Name}}</a>
+<div class="page-head">
+  <div>
+    <h1>Sunucudan taşı</h1>
+    <p class="sub">Bu sitenin veritabanını ve yüklenen dosyalarını eski sunucudan doğrudan bu sunucuya kopyalar; bilgisayarından geçmez. Eski sunucuda yalnız okuma yapılır, oradaki site çalışmaya devam eder.</p>
+  </div>
+  <div class="page-actions"><a class="btn" href="/sources">{{icon "key"}}Kaynak sunucular</a></div>
+</div>
+{{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>Taşıma bilgisi alınamadı: {{.}}</div></div>{{end}}
+{{template "problems" .Data.Problems}}
+
+<div class="step-head{{if $ready}} done{{end}}" id="kaynak"><span class="step-num">1</span><h2>Kaynak sunucu</h2></div>
+{{if and $src (not .Data.Change)}}
+<div class="card">
+  <table class="kv">
+    <tr><th>Sunucu</th><td><strong>{{$src.Label}}</strong> · <span class="mono">{{$src.User}}@{{$src.Host}}:{{$src.Port}}</span> · <a href="?kaynak=degistir#kaynak">değiştir</a></td></tr>
+    <tr><th>Durum</th><td>{{if $src.Pinned}}<span class="badge ok">bağlantı tamam</span> <span class="muted small">{{since $src.Checked}}{{with $src.System}} · {{.}}{{end}}</span>{{else}}<span class="badge warn">henüz bağlanılmadı</span>{{end}}</td></tr>
+    {{if $src.Pinned}}<tr><th>Sunucunun anahtarı</th><td class="mono small">{{range $src.HostKeys}}{{.}}<br>{{end}}<span class="hint">İlk bağlantıda kaydedildi; değişirse panel bağlanmayı reddeder. Doğru sunucu olduğundan emin olmak için kaynakta <span class="mono">ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</span> çıktısıyla karşılaştırabilirsin.</span></td></tr>{{end}}
+  </table>
+  {{if not $src.Pinned}}
+  <h3>Bu sunucunun anahtarını kaynağa ekle</h3>
+  <ol class="steps">
+    <li>Kaynak sunucuya bir kez SSH ile gir (<span class="mono">{{$src.User}}</span> olarak).</li>
+    <li>Şu komutu yapıştırıp çalıştır; anahtarı <span class="mono">~/.ssh/authorized_keys</span> dosyasına ekler:<pre class="cmd">{{$src.Install}}</pre></li>
+    <li>Sonra aşağıdaki <strong>Bağlantıyı dene</strong> düğmesine bas.</li>
+  </ol>
+  <p class="hint">Eklenen satır: <span class="mono">{{$src.Authorized}}</span><br><strong>restrict</strong>: yönlendirme ve terminal yok; <strong>from=</strong>: yalnız bu sunucunun adresinden kullanılabilir. Taşıma bitince “Kaynak sunucular” sayfasından tek tuşla iki taraftan da silinir.</p>
+  {{end}}
+  <form method="post" action="/sites/{{$s.Name}}/migrate/test" class="form-actions">
+    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+    <button type="submit"{{if not $src.Pinned}} class="primary"{{end}}>{{icon "link"}}Bağlantıyı dene</button>
+  </form>
+</div>
+{{else}}
+<div class="card">
+  {{with $v.Sources}}
+  <h3>Kayıtlı bir kaynağı seç</h3>
+  <form method="post" action="/sites/{{$s.Name}}/migrate/source">
+    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+    <div class="choices">
+    {{range .}}<label class="choice"><input type="radio" name="source" value="{{.ID}}"{{if $src}}{{if eq .ID $src.ID}} checked{{end}}{{end}}>
+      <span><strong>{{.Label}}</strong> <span class="mono small">{{.User}}@{{.Host}}:{{.Port}}</span>
+      <span class="hint">{{if .Pinned}}bağlantı tamam{{else}}henüz bağlanılmadı{{end}}{{with .UsedBy}} · kullanan: {{range $i, $x := .}}{{if $i}}, {{end}}{{$x}}{{end}}{{end}}</span></span></label>
+    {{end}}
+    </div>
+    <div class="form-actions"><button type="submit" class="primary">Bu kaynağı kullan</button></div>
+  </form>
+  {{end}}
+  <h3>Yeni kaynak ekle</h3>
+  <form method="post" action="/sites/{{$s.Name}}/migrate/source">
+    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+    <input type="hidden" name="new" value="1">
+    <label class="field"><span>Ad</span><input name="label" required maxlength="40" placeholder="ör. eski sunucu" autocomplete="off"></label>
+    <div class="fields">
+      <label class="field"><span>Adres (IP ya da alan adı)</span><input name="host" required placeholder="ör. 203.0.113.10" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <label class="field"><span>SSH portu</span><input name="port" value="22" inputmode="numeric" required></label>
+      <label class="field"><span>Kullanıcı</span><input name="user" value="root" required autocapitalize="off" spellcheck="false"></label>
+    </div>
+    <p class="hint">Panel bu kaynak için ayrı bir SSH anahtarı üretir; şifre istenmez ve saklanmaz. Eski sunucular genelde root ile yönetilir.</p>
+    <div class="form-actions"><button type="submit"{{if not $v.Sources}} class="primary"{{end}}>{{icon "key"}}Ekle ve anahtar üret</button>
+      {{if $src}}<a class="btn" href="/sites/{{$s.Name}}/migrate#kaynak">Vazgeç</a>{{end}}</div>
+  </form>
+</div>
+{{end}}
+
+<div class="step-head{{if and $ready $v.Discovery}} done{{end}}{{if not $ready}} locked{{end}}" id="kesif"><span class="step-num">2</span><h2>Keşif ve seçim</h2></div>
+{{if not $ready}}
+<div class="card"><p class="muted">Önce kaynak sunucuya bağlan.</p></div>
+{{else}}
+<div class="card">
+  <p>Kaynakta neler çalıştığına bakılır (salt okunur): sistem, MongoDB veritabanları, nginx ayarları, node süreçleri, Docker container'ları ve yükleme klasörü adayları. Şifreler ve ortam değişkenlerinin değerleri alınmaz.</p>
+  <form method="post" action="/sites/{{$s.Name}}/migrate/discover" class="form-actions">
+    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+    <button type="submit"{{if not $v.Discovery}} class="primary"{{end}}>{{icon "search"}}{{if $v.Discovery}}Yeniden tara{{else}}Kaynağı tara{{end}}</button>
+    {{with $v.Discovery}}<span class="muted small">Son tarama {{since .Taken}}</span>{{end}}
+  </form>
+</div>
+{{with $v.Discovery}}{{$d := .}}
+<div class="section-head"><h2>Kaynakta bulunanlar</h2></div>
+<div class="table-wrap">
+<table class="kv">
+  <tr><th>Sistem</th><td>{{with $d.System.OS}}{{.}}{{else}}?{{end}} · {{$d.System.CPUs}} çekirdek · bellek {{bytes $d.System.MemTotal}} ({{bytes $d.System.MemAvail}} boş){{range $d.System.Disks}}<br>disk <span class="mono small">{{.Mount}}</span>: {{bytes .Used}} / {{bytes .Size}} dolu{{end}}</td></tr>
+  <tr><th>Araçlar</th><td>{{range $i, $t := $d.Tools}}{{if $i}}, {{end}}<span class="mono">{{$t.Name}}</span>{{end}}</td></tr>
+  {{with $v.Suggest}}
+  <tr><th>Bu sitenin alan adları</th><td>
+    {{range .Web}}<div><span class="mono">{{range $i, $n := .Names}}{{if $i}} {{end}}{{$n}}{{end}}</span>{{range .Locations}}{{if .Proxy}} → <span class="mono">{{.Proxy}}</span>{{end}}{{end}}{{with .Root}} · kök <span class="mono">{{.}}</span>{{end}}{{with .File}} <span class="muted small">({{.}})</span>{{end}}</div>
+    {{else}}<span class="muted">Kaynağın nginx ayarlarında bu sitenin alan adları bulunamadı.</span>{{end}}
+    {{range .Procs}}<div>süreç {{.PID}}{{with .PM2Name}} (PM2: <span class="mono">{{.}}</span>){{end}} · <span class="mono">{{.Cwd}}</span> · port {{range $i, $p := .Ports}}{{if $i}}, {{end}}{{$p}}{{end}} · {{bytes .RSS}}</div>{{end}}
+    {{range .Containers}}<div>container <span class="mono">{{.Name}}</span> ({{.Image}}, {{.Status}})</div>{{end}}
+  </td></tr>
+  {{end}}
+  <tr><th>MongoDB</th><td>
+    {{range $d.Mongo}}<div>{{if eq .Via "docker"}}container <span class="mono">{{.Container}}</span>{{else}}sunucuda{{end}}{{with .Version}} · sürüm {{.}}{{end}}{{with .Err}} · <span class="warn">{{.}}</span>{{end}}
+      {{range .DBs}}<br><span class="mono">{{.Name}}</span> <span class="muted small">{{.Collections}} koleksiyon, {{.Objects}} belge, {{bytes .DataSize}}</span>{{end}}</div>
+    {{else}}<span class="muted">Bulunamadı (mongo / mongosh yok ya da çalışmıyor).</span>{{end}}
+  </td></tr>
+</table>
+</div>
+<details class="more">
+  <summary>Bütün node süreçleri, container'lar ve nginx siteleri</summary>
+  <div class="table-wrap">
+  <table class="kv">
+    <tr><th>Node süreçleri</th><td>{{range $d.Procs}}<div>{{.PID}} · {{.User}} · {{if .Daemon}}PM2 (<span class="mono">{{.PM2Home}}</span>){{else}}<span class="mono">{{.Cwd}}</span>{{with .PM2Name}} · PM2 {{.}}{{end}}{{range .Ports}} · :{{.}}{{end}}{{end}}</div>{{else}}—{{end}}</td></tr>
+    <tr><th>Container'lar</th><td>{{range $d.Containers}}<div><span class="mono">{{.Name}}</span> · {{.Image}} · {{.Status}}</div>{{else}}—{{end}}</td></tr>
+    <tr><th>nginx</th><td>{{range $d.Web}}<div class="mono small">{{range $i, $n := .Names}}{{if $i}} {{end}}{{$n}}{{end}}</div>{{else}}—{{end}}</td></tr>
+  </table>
+  </div>
+</details>
+{{end}}
+
+<form method="post" action="/sites/{{$s.Name}}/migrate/choose" class="card mt" id="secim">
+  <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+  <h3>Taşınacaklar</h3>
+  {{if $s.Database}}
+  <label class="field"><span>Veritabanı (kaynakta)</span>
+    <select name="db">
+      <option value="">— veritabanı taşınmayacak —</option>
+      {{range .Data.DBs}}<option value="{{.Value}}"{{if eq .Value $.Data.F.DB}} selected{{end}}>{{.Label}}</option>{{end}}
+    </select>
+    <span class="hint">Bu sitenin <span class="mono">{{$s.Name}}</span> veritabanına yüklenir (adı değişir). {{if not $v.Discovery}}Liste için önce kaynağı tara.{{end}}</span>
+  </label>
+  {{else}}<p class="muted">Bu sitenin FootOps veritabanı yok: veritabanı taşınamaz.</p>{{end}}
+  {{if $s.DataMount}}
+  <label class="field"><span>Dosya klasörü (kaynakta)</span>
+    <input name="files_dir" value="{{.Data.F.FilesDir}}" list="aday-klasorler" placeholder="/home/site/www/public/uploads" class="mono" autocapitalize="off" spellcheck="false">
+    {{with $v.Discovery}}<datalist id="aday-klasorler">{{range .Candidates}}<option value="{{.Dir}}">{{.Files}} dosya, {{bytes .Bytes}}</option>{{end}}</datalist>{{end}}
+    <span class="hint">İçindekiler bu sitenin kalıcı klasörüne (container'da <span class="mono">{{$s.DataMount}}</span>) kopyalanır. Boş bırakılırsa dosya taşınmaz.</span>
+  </label>
+  {{else}}<p class="muted">Bu sitenin kalıcı klasörü yok: dosya taşınamaz.</p>{{end}}
+  <label class="field"><span>Uygulama klasörü (isteğe bağlı; yalnız incelemek için)</span>
+    <input name="app_dir" value="{{.Data.F.AppDir}}" list="uygulamalar" class="mono" autocapitalize="off" spellcheck="false">
+    {{with $v.Discovery}}<datalist id="uygulamalar">{{range .Apps}}<option value="{{.Dir}}"></option>{{end}}</datalist>{{end}}
+    <span class="hint">Kodda gömülü şifre ve adres taraması, uygulama türü, <span class="mono">.env</span> değişken adları. Kopyalanmaz.</span>
+  </label>
+  <div class="form-actions"><button type="submit" class="primary">Kaydet</button></div>
+</form>
+
+{{if $m}}{{if $m.AppDir}}
+<div class="section-head"><h2>Uygulama klasörü</h2>
+  <form method="post" action="/sites/{{$s.Name}}/migrate/scan">
+    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+    <button type="submit" class="btn sm">{{icon "search"}}{{if $v.Scan}}Yeniden incele{{else}}İncele{{end}}</button>
+  </form>
+</div>
+{{with $v.Scan}}
+<div class="table-wrap">
+<table class="kv">
+  <tr><th>Klasör</th><td><span class="mono">{{.Dir}}</span> · {{.Total.Files}} dosya, {{bytes .Total.Bytes}}{{if .Total.Hidden}} · {{.Total.Hidden}} gizli{{end}}{{if .Total.Links}} · {{.Total.Links}} bağlantı{{end}} <span class="muted small">({{since .Taken}})</span>
+    {{range .Subs}}<br><span class="mono small">{{.Name}}/</span> <span class="muted small">{{.Files}} dosya, {{bytes .Bytes}}</span>{{end}}</td></tr>
+  {{with .Package}}<tr><th>package.json</th><td><span class="mono">{{.Name}}</span>{{with .Main}} · {{.}}{{end}}{{with .Node}} · node {{.}}{{end}}{{with .Known}}<br>{{range $i, $x := .}}{{if $i}}, {{end}}{{$x}}{{end}}{{end}}</td></tr>{{end}}
+  {{with .Files}}<tr><th>Dosyalar</th><td class="mono">{{range $i, $x := .}}{{if $i}}, {{end}}{{$x}}{{end}}</td></tr>{{end}}
+  {{range .Env}}<tr><th><span class="mono">{{.File}}</span> değişkenleri</th><td class="mono small">{{range $i, $x := .Keys}}{{if $i}}, {{end}}{{$x}}{{end}}</td></tr>{{end}}
+  {{with .DBRefs}}<tr><th>Koddaki veritabanları</th><td>{{range $i, $x := .}}{{if $i}}, {{end}}<span class="mono">{{$x.Value}}</span>{{end}}</td></tr>{{end}}
+  <tr><th>Gömülü sır olabilecekler</th><td>{{range .Secrets}}<div><span class="badge warn">{{.Kind}}</span> <span class="mono small">{{.Where}}</span></div>{{else}}<span class="muted">bulunmadı</span>{{end}}
+    {{with .Secrets}}<span class="hint">Yalnız dosya ve satır alındı, değerler alınmadı. Bunlar imaja girmeden ortam değişkenine taşınmalı.</span>{{end}}</td></tr>
+  <tr><th>IP / localhost adresleri</th><td>{{range .URLs}}<div><span class="mono small">{{.Value}}</span> <span class="muted small">×{{.Count}}</span></div>{{else}}<span class="muted">bulunmadı</span>{{end}}
+    {{with .URLs}}<span class="hint">Ön yüze gömülü adresler taşınınca bozulabilir.</span>{{end}}</td></tr>
+</table>
+</div>
+{{end}}
+{{end}}{{end}}
+{{end}}
+
+{{$chosen := false}}{{if $m}}{{if or $m.DB $m.FilesDir}}{{$chosen = true}}{{end}}{{end}}
+<div class="step-head{{if $m}}{{with $m.LastCopy}}{{if not .Err}} done{{end}}{{end}}{{end}}{{if not (and $ready $chosen)}} locked{{end}}" id="kopya"><span class="step-num">3</span><h2>Ön kopya</h2></div>
+{{if not $ready}}
+<div class="card"><p class="muted">Önce kaynak sunucuya bağlan.</p></div>
+{{else if not $chosen}}
+<div class="card"><p class="muted">Önce taşınacakları seç (veritabanı ya da dosya klasörü).</p></div>
+{{else}}
+<div class="card">
+  <ol class="steps">
+    {{if $m.DB}}<li>Kaynakta <span class="mono">{{$m.DB}}</span> veritabanının dökümü alınır{{with .Data.ChosenDB}} ({{.Objects}} belge, {{bytes .DataSize}}){{end}} ve buraya akar; geçici bir veritabanına deneme olarak yüklenip kaynağın sayılarıyla karşılaştırılır.</li>{{end}}
+    {{if $m.FilesDir}}<li>Kaynaktaki <span class="mono">{{$m.FilesDir}}</span>{{with .Data.ChosenFiles}} ({{.Files}} dosya, {{bytes .Bytes}}){{end}} doğrudan buraya akar ve site çalışırken ayrı bir klasöre açılır. Gizli dosyalar ve bağlantılar alınmaz.</li>{{end}}
+    <li>Site birkaç saniye durur: önce şu anki {{if $m.DB}}veritabanının{{end}}{{if and $m.DB $m.FilesDir}} ve {{end}}{{if $m.FilesDir}}kalıcı klasörün{{end}} kopyası alınır; sonra bunlar kaynaktakiyle <strong>tamamen değiştirilir</strong>, sayılır, site başlar ve sayfası kontrol edilir. Bir şey ters giderse her şey otomatik eski haline döner.</li>
+    <li>Eski sunucuda hiçbir şey değişmez; DNS'e dokunulmaz. Ön kopya istendiği kadar tekrarlanabilir.</li>
+  </ol>
+  <form method="post" action="/sites/{{$s.Name}}/migrate/copy">
+    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+    <label class="field"><span>Onaylamak için site adını yaz: <strong>{{$s.Name}}</strong></span>
+      <input name="confirm" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+    </label>
+    <div class="form-actions"><button type="submit" class="primary">{{icon "download"}}Ön kopyayı başlat</button></div>
+  </form>
+</div>
+{{with $m.LastCopy}}{{$c := .}}
+<div class="section-head"><h2>Son ön kopya</h2><span class="muted small">{{ts .Finished}} · <a href="/jobs/{{.Job}}">işlem ayrıntısı</a></span></div>
+{{if .Err}}<div class="notice bad">{{icon "alert"}}<div>Başarısız: {{.Err}}</div></div>{{end}}
+{{if not .Err}}
+<div class="table-wrap">
+<table class="responsive">
+  <thead><tr><th>Ne</th><th class="num">Kaynakta</th><th class="num">Bu sitede</th></tr></thead>
+  <tbody>
+  {{if .DB}}<tr><td class="primary"><strong>Belgeler</strong> <span class="muted small">({{len .SourceDocs}} koleksiyon, <span class="mono">{{.DB}}</span>)</span></td><td data-label="Kaynakta" class="num">{{.SourceDocTotal}}</td><td data-label="Bu sitede" class="num{{if ne .SourceDocTotal .SiteDocTotal}} warn{{end}}">{{.SiteDocTotal}}</td></tr>{{end}}
+  {{with .SourceFiles}}{{$sf := .}}<tr><td class="primary"><strong>Dosyalar</strong></td><td data-label="Kaynakta" class="num">{{.Files}} · {{bytes .Bytes}}</td><td data-label="Bu sitede" class="num{{with $c.SiteFiles}}{{if or (ne (int64 .Files) $sf.Files) (ne .Bytes $sf.Bytes)}} warn{{end}}{{end}}">{{with $c.SiteFiles}}{{.Files}} · {{bytes .Bytes}}{{else}}—{{end}}</td></tr>{{end}}
+  </tbody>
+</table>
+</div>
+{{with $.Data.Rows}}
+<details class="more">
+  <summary>Koleksiyon koleksiyon</summary>
+  <div class="table-wrap">
+  <table class="responsive">
+    <thead><tr><th>Koleksiyon</th><th class="num">Kaynakta</th><th class="num">Bu sitede</th></tr></thead>
+    <tbody>
+    {{range .}}<tr><td class="primary mono">{{.Name}}</td><td data-label="Kaynakta" class="num">{{.Source}}</td><td data-label="Bu sitede" class="num{{if ne .Source .Site}} warn{{end}}">{{.Site}}</td></tr>{{end}}
+    </tbody>
+  </table>
+  </div>
+</details>
+{{end}}
+{{range .Notes}}<div class="notice warn">{{icon "info"}}<div>{{.}}</div></div>{{end}}
+<p class="hint">Süre {{took (.Finished.Sub .Started)}}{{if .Usage.PeakMem}} · en çok {{bytes .Usage.PeakMem}} bellek{{end}}{{if .DumpBytes}} · döküm {{bytes .DumpBytes}}{{end}}.
+  {{with .Undo}}Önceki hali: {{range undoLinks .}}<a href="/sites/{{$s.Name}}/{{.Path}}/restore">{{.Label}}</a> {{end}}{{end}}</p>
+{{end}}
+{{end}}
+{{end}}
+
+<div class="step-head locked"><span class="step-num">4</span><h2>Son adımlar</h2></div>
+<div class="card">
+  <p class="muted">İçerik doğrulaması, son senkron (panelin eski uygulamayı birkaç dakika durdurması) ve DNS geçişi sonraki sürümde bu sayfaya gelecek. O zamana kadar elle:</p>
+  <ol class="steps">
+    <li>Ön kopyadan sonra siteyi DNS'i değiştirmeden dene (sayfalar, görseller, yönetim girişi).</li>
+    <li>Geçişte, son kopyadan sonra eski sitede yapılan değişiklik (form kaydı, yükleme) kaybolmasın: önce <strong>eski uygulamayı durdur</strong> (ör. kaynakta <span class="mono">pm2 stop &lt;ad&gt;</span>), sonra ön kopyayı <strong>bir kez daha</strong> çalıştır, sonra DNS'i çevir. Sorun olursa eski uygulamayı yeniden başlatıp DNS'i geri almak yeter.</li>
+    <li>DNS adımları <a href="/sites/{{$s.Name}}">site sayfasında</a> (“Cloudflare'de yapılacaklar”).</li>
+  </ol>
+</div>
+
+{{if $m}}
+<details class="more">
+  <summary>Taşıma kaydını sil</summary>
+  <form method="post" action="/sites/{{$s.Name}}/migrate/forget" class="card">
+    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+    <p>Bu sayfadaki seçimler ve kaynakta bulunanlar unutulur. Siteye kopyalanan veri yerinde kalır; kaynak sunucu ve anahtarı da kalır (“Kaynak sunucular”dan kaldırılır).</p>
+    <div class="form-actions"><button type="submit" class="btn">{{icon "trash"}}Kaydı sil</button></div>
+  </form>
+</details>
+{{end}}
+{{template "bottom" .}}

@@ -478,3 +478,65 @@ func (c *Client) EmptyTrash(ctx context.Context, site, confirm string, a Actor) 
 func (c *Client) SetDataURL(ctx context.Context, site, u string, a Actor) error {
 	return c.call(ctx, http.MethodPost, filesPath(site, "/files/url"), DataURLRequest{URL: u, Actor: a}, nil)
 }
+
+// ---- moving sites from other servers (F4) ----
+
+// Sources lists the servers sites are moved from.
+func (c *Client) Sources(ctx context.Context) ([]SourceView, error) {
+	var out []SourceView
+	err := c.call(ctx, http.MethodGet, "/v1/sources", nil, &out)
+	return out, err
+}
+
+// CreateSource registers a source server and makes its key pair.
+func (c *Client) CreateSource(ctx context.Context, label, host string, port int, user string, a Actor) (SourceView, error) {
+	var out SourceView
+	err := c.call(ctx, http.MethodPost, "/v1/sources", CreateSourceRequest{Label: label, Host: host, Port: port, User: user, Actor: a}, &out)
+	return out, err
+}
+
+// TestSource connects to a source once (the first time it pins the host key).
+func (c *Client) TestSource(ctx context.Context, id string, a Actor) (SourceView, error) {
+	var out SourceView
+	err := c.call(ctx, http.MethodPost, "/v1/sources/"+url.PathEscape(id)+"/test", RestartRequest{Actor: a}, &out)
+	return out, err
+}
+
+// ResetHostKey forgets a source's pinned host key.
+func (c *Client) ResetHostKey(ctx context.Context, id string, a Actor) (SourceView, error) {
+	var out SourceView
+	err := c.call(ctx, http.MethodPost, "/v1/sources/"+url.PathEscape(id)+"/reset-hostkey", RestartRequest{Actor: a}, &out)
+	return out, err
+}
+
+// RemoveSource forgets a source; cleanup first removes this server's key from it.
+func (c *Client) RemoveSource(ctx context.Context, id string, cleanup bool, a Actor) error {
+	return c.call(ctx, http.MethodPost, "/v1/sources/"+url.PathEscape(id)+"/remove", RemoveSourceRequest{Cleanup: cleanup, Actor: a}, nil)
+}
+
+// Migration returns a site's move and what was found for it.
+func (c *Client) Migration(ctx context.Context, site string) (MigrationView, error) {
+	var out MigrationView
+	err := c.call(ctx, http.MethodGet, "/v1/sites/"+url.PathEscape(site)+"/migration", nil, &out)
+	return out, err
+}
+
+// SetMigration starts or changes a site's move.
+func (c *Client) SetMigration(ctx context.Context, site string, ch MigrationChoice, a Actor) (Migration, error) {
+	var out Migration
+	err := c.call(ctx, http.MethodPost, "/v1/sites/"+url.PathEscape(site)+"/migration", SetMigrationRequest{Choice: ch, Actor: a}, &out)
+	return out, err
+}
+
+// ForgetMigration removes a site's move (not what it copied).
+func (c *Client) ForgetMigration(ctx context.Context, site string, a Actor) error {
+	return c.call(ctx, http.MethodPost, "/v1/sites/"+url.PathEscape(site)+"/migration/forget", RestartRequest{Actor: a}, nil)
+}
+
+// MigrationJob starts "discover", "scan" or "copy" (confirm: the site's name).
+func (c *Client) MigrationJob(ctx context.Context, site, verb, confirm string, a Actor) (string, error) {
+	var r JobResponse
+	err := c.call(ctx, http.MethodPost, "/v1/sites/"+url.PathEscape(site)+"/migration/"+url.PathEscape(verb),
+		ConfirmRequest{Confirm: confirm, Actor: a}, &r)
+	return r.JobID, err
+}

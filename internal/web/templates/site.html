@@ -39,6 +39,7 @@
 <div class="section-head">
   <h2>Veri aktarımı</h2>
   <div class="page-actions">
+    <a class="btn sm" href="/sites/{{$s.Name}}/migrate">{{icon "swap"}}Sunucudan taşı…</a>
     <a class="btn sm" href="/sites/{{$s.Name}}/import">{{icon "upload"}}İçe aktar…</a>
     <form method="post" action="/sites/{{$s.Name}}/exports">
       <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
@@ -46,7 +47,7 @@
     </form>
   </div>
 </div>
-<p class="muted small"><strong>Dışa aktar</strong> {{if $s.Database}}veritabanını{{end}}{{if and $s.Database $s.DataMount}} ve {{end}}{{if $s.DataMount}}kalıcı klasördeki dosyaları{{end}} taşınabilir bir FootOps arşivine (<span class="mono">.footops.tar</span>) yazar; sunucuda 24 saat indirilebilir, başka bir FootOps sunucusuna ya da bu siteye geri içe aktarılabilir. <strong>İçe aktar</strong> böyle bir arşivi, bir mongodump arşivini ya da dosyaların zip / tar.gz arşivini önce kontrol eder, önizleme gösterir, onaydan sonra değişecek olanın kopyasını alıp uygular.</p>
+<p class="muted small"><strong>Dışa aktar</strong> {{if $s.Database}}veritabanını{{end}}{{if and $s.Database $s.DataMount}} ve {{end}}{{if $s.DataMount}}kalıcı klasördeki dosyaları{{end}} taşınabilir bir FootOps arşivine (<span class="mono">.footops.tar</span>) yazar; sunucuda 24 saat indirilebilir, başka bir FootOps sunucusuna ya da bu siteye geri içe aktarılabilir. <strong>Sunucudan taşı</strong> veritabanını ve yüklenen dosyaları eski bir sunucudan SSH ile doğrudan buraya kopyalar. <strong>İçe aktar</strong> böyle bir arşivi, bir mongodump arşivini ya da dosyaların zip / tar.gz arşivini önce kontrol eder, önizleme gösterir, onaydan sonra değişecek olanın kopyasını alıp uygular.</p>
 {{with .Data.Exports}}
 <div class="table-wrap">
 <table class="responsive">

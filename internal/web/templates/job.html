@@ -26,7 +26,8 @@
 {{if .Done}}
 {{if or .Usage.PeakMem .Usage.CPU}}<p class="hint">Kaynak kullanımı: en çok {{bytes .Usage.PeakMem}} bellek, {{took .Usage.CPU}} CPU{{if .Bytes}}, {{bytes .Bytes}} yazıldı{{end}}.</p>{{end}}
 <div class="form-actions">
-  {{$linked := and (not .Err) .Result (eq .Kind "db.snapshot" "import.check" "import.apply" "db.restore" "files.restore" "site.export")}}
+  {{$linked := and (not .Err) .Result (eq .Kind "db.snapshot" "import.check" "import.apply" "db.restore" "files.restore" "site.export" "migrate.copy")}}
+  {{if eq .Kind "migrate.discover" "migrate.scan" "migrate.copy"}}<a class="btn primary" href="/sites/{{.Target}}/migrate{{if eq .Kind "migrate.copy"}}#kopya{{else}}#secim{{end}}">{{icon "swap"}}Taşıma sayfasına dön</a>{{end}}
   {{if $linked}}
     {{if eq .Kind "db.snapshot"}}<a class="btn primary" href="/sites/{{.Target}}/snapshots/{{.Result}}/download" download>{{icon "download"}}Kopyayı indir</a>
     {{else if eq .Kind "import.check"}}<a class="btn primary" href="/sites/{{.Target}}/import/{{.Result}}">{{icon "check"}}Önizlemeye geç</a>
@@ -35,7 +36,7 @@
   {{end}}
   {{if eq .Kind "files.unpack"}}<a class="btn primary" href="/sites/{{.Target}}/files?dir={{.Result}}">{{icon "folder"}}Klasöre dön</a>{{end}}
   {{if and .Err (eq .Kind "import.check" "import.apply")}}<a class="btn" href="/sites/{{.Target}}/import">{{icon "upload"}}Başka dosya yükle</a>{{end}}
-  {{if and (not .Err) (not (eq .Kind "site.remove" "db.recover"))}}<a class="btn{{if not $linked}} primary{{end}}" href="/sites/{{.Target}}">Siteye git</a>{{end}}
+  {{if and (not .Err) (not (eq .Kind "site.remove" "db.recover"))}}<a class="btn{{if not (or $linked (eq .Kind "migrate.discover" "migrate.scan" "migrate.copy"))}} primary{{end}}" href="/sites/{{.Target}}">Siteye git</a>{{end}}
   <a class="btn" href="/sites">Siteler</a>
 </div>
 {{end}}

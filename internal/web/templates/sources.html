@@ -1,0 +1,41 @@
+{{template "top" .}}
+<a class="crumb" href="/sites">{{icon "back"}}Siteler</a>
+<div class="page-head">
+  <div>
+    <h1>Kaynak sunucular</h1>
+    <p class="sub">Sitelerin taşındığı eski sunucular. Her biri için bu sunucunun ayrı bir SSH anahtarı var; taşımalar bitince kaynağı kaldır, anahtar iki taraftan da silinir.</p>
+  </div>
+</div>
+{{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>Kaynaklar okunamadı: {{.}}</div></div>{{end}}
+{{with .Data.Sources}}
+<div class="table-wrap">
+<table class="responsive">
+  <thead><tr><th>Kaynak</th><th>Durum</th><th>Kullanan siteler</th><th></th></tr></thead>
+  <tbody>
+  {{range .}}
+    <tr>
+      <td class="primary"><strong>{{.Label}}</strong><div class="cell-sub mono">{{.User}}@{{.Host}}:{{.Port}}</div>
+        {{if not .Pinned}}<details class="more"><summary>Anahtarı kaynağa ekleme komutu</summary><pre class="cmd">{{.Install}}</pre></details>{{end}}</td>
+      <td data-label="Durum">{{if .Pinned}}<span class="badge ok">bağlantı tamam</span><div class="cell-sub muted">{{since .Checked}}{{with .System}} · {{.}}{{end}}</div>{{else}}<span class="badge warn">henüz bağlanılmadı</span>{{end}}</td>
+      <td data-label="Kullanan">{{range $i, $x := .UsedBy}}{{if $i}}, {{end}}<a href="/sites/{{$x}}/migrate">{{$x}}</a>{{else}}—{{end}}</td>
+      <td class="actions">
+        <form method="post" action="/sources/{{.ID}}/test" class="inline">
+          <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+          <button type="submit" class="btn sm">{{icon "link"}}Dene</button>
+        </form>
+        {{if .Pinned}}<a class="btn sm" href="/sources/{{.ID}}/reset">Parmak izini sıfırla…</a>{{end}}
+        <a class="btn sm" href="/sources/{{.ID}}/remove">{{icon "trash"}}Kaldır…</a>
+      </td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<div class="card empty-state">
+  <div class="icon-wrap">{{icon "key"}}</div>
+  <h2>Henüz kaynak sunucu yok</h2>
+  <p>Bir sitenin sayfasında <strong>Sunucudan taşı…</strong> ile eklenir.</p>
+</div>
+{{end}}
+{{template "bottom" .}}

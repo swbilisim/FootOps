@@ -75,6 +75,15 @@ type AgentAPI interface {
 	InstallCert(ctx context.Context, certPEM, keyPEM string, a agent.Actor) (sites.Cert, error)
 	RemoveCert(ctx context.Context, id string, a agent.Actor) error
 	Server(ctx context.Context) (agent.ServerInfo, error)
+	Sources(ctx context.Context) ([]agent.SourceView, error)
+	CreateSource(ctx context.Context, label, host string, port int, user string, a agent.Actor) (agent.SourceView, error)
+	TestSource(ctx context.Context, id string, a agent.Actor) (agent.SourceView, error)
+	ResetHostKey(ctx context.Context, id string, a agent.Actor) (agent.SourceView, error)
+	RemoveSource(ctx context.Context, id string, cleanup bool, a agent.Actor) error
+	Migration(ctx context.Context, site string) (agent.MigrationView, error)
+	SetMigration(ctx context.Context, site string, ch agent.MigrationChoice, a agent.Actor) (agent.Migration, error)
+	ForgetMigration(ctx context.Context, site string, a agent.Actor) error
+	MigrationJob(ctx context.Context, site, verb, confirm string, a agent.Actor) (string, error)
 }
 
 // AccessVerifier checks Cloudflare Access tokens. *cfaccess.Verifier implements it.
@@ -193,6 +202,20 @@ func (s *Server) Handler(via string) http.Handler {
 	mux.Handle("POST /sites/{name}/trash/{id}/restore", s.requireSession(s.trashRestore))
 	mux.Handle("GET /sites/{name}/trash/empty", s.requireSession(s.trashEmptyConfirm))
 	mux.Handle("POST /sites/{name}/trash/empty", s.requireSession(s.trashEmpty))
+	mux.Handle("GET /sites/{name}/migrate", s.requireSession(s.migratePage))
+	mux.Handle("POST /sites/{name}/migrate/source", s.requireSession(s.migrateSource))
+	mux.Handle("POST /sites/{name}/migrate/test", s.requireSession(s.migrateTest))
+	mux.Handle("POST /sites/{name}/migrate/choose", s.requireSession(s.migrateChoose))
+	mux.Handle("POST /sites/{name}/migrate/discover", s.requireSession(s.migrateJob("discover")))
+	mux.Handle("POST /sites/{name}/migrate/scan", s.requireSession(s.migrateJob("scan")))
+	mux.Handle("POST /sites/{name}/migrate/copy", s.requireSession(s.migrateJob("copy")))
+	mux.Handle("POST /sites/{name}/migrate/forget", s.requireSession(s.migrateForget))
+	mux.Handle("GET /sources", s.requireSession(s.sourcesPage))
+	mux.Handle("POST /sources/{id}/test", s.requireSession(s.sourceTest))
+	mux.Handle("GET /sources/{id}/remove", s.requireSession(s.sourceConfirm("remove")))
+	mux.Handle("POST /sources/{id}/remove", s.requireSession(s.sourceRemove))
+	mux.Handle("GET /sources/{id}/reset", s.requireSession(s.sourceConfirm("reset")))
+	mux.Handle("POST /sources/{id}/reset", s.requireSession(s.sourceReset))
 	mux.Handle("GET /jobs/{id}", s.requireSession(s.job))
 	mux.Handle("POST /jobs/{id}/cancel", s.requireSession(s.jobCancel))
 	mux.Handle("GET /certs", s.requireSession(s.certs))

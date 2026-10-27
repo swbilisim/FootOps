@@ -24,6 +24,7 @@ import (
 	"github.com/swbilisim/FootOps/internal/archive"
 	"github.com/swbilisim/FootOps/internal/core"
 	"github.com/swbilisim/FootOps/internal/docker"
+	"github.com/swbilisim/FootOps/internal/remote"
 	"github.com/swbilisim/FootOps/internal/run"
 	"github.com/swbilisim/FootOps/internal/sites"
 	"github.com/swbilisim/FootOps/internal/staging"
@@ -79,6 +80,10 @@ type DataOps struct {
 	Sites siteControl
 	// Self is the footops binary the file helpers run (default: this executable).
 	Self string
+	// Sources are the servers sites are moved from (F4); MigrationsDir keeps each site's
+	// move between the wizard's steps.
+	Sources       *remote.Store
+	MigrationsDir string
 
 	now       func() time.Time
 	sleep     func(time.Duration)

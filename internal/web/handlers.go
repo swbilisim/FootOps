@@ -262,7 +262,7 @@ var navOf = map[string]string{
 	"sites": "sites", "site": "sites", "site_new": "sites", "site_edit": "sites", "site_confirm": "sites", "job": "sites",
 	"import": "sites", "import_preview": "sites", "restore_confirm": "sites",
 	"files": "sites", "files_rename": "sites", "files_move": "sites", "files_trash": "sites", "files_unpack": "sites",
-	"trash": "sites", "trash_empty": "sites",
+	"trash": "sites", "trash_empty": "sites", "migrate": "sites", "sources": "sites", "source_confirm": "sites",
 	"certs": "certs", "cert_remove": "certs",
 	"audit": "audit",
 }
@@ -376,7 +376,8 @@ var funcs = template.FuncMap{
 		}
 		return "silindi"
 	},
-	"add": func(a, b int) int { return a + b },
+	"add":   func(a, b int) int { return a + b },
+	"int64": func(n int) int64 { return int64(n) },
 	"pct": func(used, total uint64) float64 {
 		if total == 0 {
 			return 0
@@ -493,9 +494,11 @@ var (
 		"site.redeploy": "Yeniden dağıtılıyor", "db.snapshot": "Veritabanı kopyası", "import.check": "İçe aktarma: kontrol",
 		"import.apply": "İçe aktarılıyor", "db.restore": "Kopyadan geri yükleme", "site.export": "Dışa aktarma",
 		"db.recover": "Yarıda kalan işlemi tamamlama", "files.restore": "Dosyaları geri yükleme",
-		"files.unpack": "Arşiv açılıyor",
+		"files.unpack": "Arşiv açılıyor", "migrate.discover": "Taşıma — kaynak taranıyor",
+		"migrate.scan": "Taşıma — uygulama klasörü inceleniyor", "migrate.copy": "Taşıma — ön kopya",
 	}
-	reasonNames = map[string]string{"manual": "elle", "before-import": "içe aktarmadan önce", "before-restore": "geri yüklemeden önce"}
+	reasonNames = map[string]string{"manual": "elle", "before-import": "içe aktarmadan önce", "before-restore": "geri yüklemeden önce",
+		"before-migrate": "taşımadan önce"}
 	stateNames  = map[string]string{"running": "çalışıyor", "exited": "durdu", "restarting": "yeniden başlıyor", "created": "oluşturuldu", "paused": "duraklatıldı", "dead": "ölü", "removing": "siliniyor"}
 	healthNames = map[string]string{"healthy": "sağlıklı", "unhealthy": "sağlıksız", "starting": "başlıyor"}
 )
