@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/swbilisim/FootOps/internal/archive"
@@ -627,24 +628,26 @@ func (d *DataOps) streamInto(ctx context.Context, t *Task, src filesSource, help
 		err error
 	}
 	done := make(chan result, 1)
+	// ended is set before the pipe's last write end closes: if the helper failed after
+	// it was set, the sender had ended first and its error is the cause (a dropped
+	// connection cut the stream); otherwise the helper gave up first and the sender's
+	// failure that follows is only the consequence.
+	var ended atomic.Bool
 	go func() {
 		u, err := d.Stream.Stream(sctx, sender)
+		ended.Store(true)
 		pw.Close() // the helper sees the end once the sender's own copy is closed as well
 		done <- result{u, err}
 	}()
 	hu, herr := d.Stream.Stream(ctx, helper)
 	pr.Close() // a sender still writing now fails instead of waiting forever
-	var s result
-	select {
-	case s = <-done:
-	default:
-		if herr != nil {
-			stop()
-			s = <-done
-			s.err = nil // stopped because the helper gave up: the helper's error says why
-		} else {
-			s = <-done
-		}
+	helperFirst := herr != nil && !ended.Load()
+	if helperFirst {
+		stop()
+	}
+	s := <-done
+	if helperFirst {
+		s.err = nil // the helper's error says why
 	}
 	// The two ran side by side: their memory adds up.
 	u := run.Usage{PeakMem: s.u.PeakMem + hu.PeakMem, CPU: s.u.CPU + hu.CPU, Wall: max(s.u.Wall, hu.Wall)}
