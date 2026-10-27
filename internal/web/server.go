@@ -39,6 +39,10 @@ type AgentAPI interface {
 	UpdateSite(ctx context.Context, name string, req agent.UpdateSiteRequest) (string, error)
 	SiteJob(ctx context.Context, name, verb string, a agent.Actor) (string, error)
 	Job(ctx context.Context, id string) (agent.Job, error)
+	CancelJob(ctx context.Context, id string, a agent.Actor) error
+	Snapshots(ctx context.Context, site string) ([]agent.Snapshot, error)
+	TakeSnapshot(ctx context.Context, site string, a agent.Actor) (string, error)
+	DownloadSnapshot(ctx context.Context, site, id string, a agent.Actor, hdr http.Header) (*http.Response, error)
 	Certs(ctx context.Context) ([]sites.Cert, error)
 	InstallCert(ctx context.Context, certPEM, keyPEM string, a agent.Actor) (sites.Cert, error)
 	RemoveCert(ctx context.Context, id string, a agent.Actor) error
@@ -125,7 +129,10 @@ func (s *Server) Handler(via string) http.Handler {
 	mux.Handle("POST /sites/{name}/redeploy", s.requireSession(s.siteAction("redeploy")))
 	mux.Handle("GET /sites/{name}/remove", s.requireSession(s.siteConfirm("remove")))
 	mux.Handle("POST /sites/{name}/remove", s.requireSession(s.siteAction("remove")))
+	mux.Handle("POST /sites/{name}/snapshots", s.requireSession(s.snapshotTake))
+	mux.Handle("GET /sites/{name}/snapshots/{id}/download", s.requireSession(s.snapshotDownload))
 	mux.Handle("GET /jobs/{id}", s.requireSession(s.job))
+	mux.Handle("POST /jobs/{id}/cancel", s.requireSession(s.jobCancel))
 	mux.Handle("GET /certs", s.requireSession(s.certs))
 	mux.Handle("POST /certs", s.requireSession(s.certInstall))
 	mux.Handle("GET /certs/{id}/remove", s.requireSession(s.certRemoveConfirm))

@@ -35,6 +35,14 @@ type fakeAgent struct {
 	jobDone   bool
 	alerts    []agent.Alert
 	updates   []agent.UpdateSiteRequest
+	// database copies
+	dbSite    bool
+	job       *agent.Job
+	snapshots []agent.Snapshot
+	cancelled []string
+	taken     []agent.Actor
+	downloads []http.Header
+	dlActors  []agent.Actor
 }
 
 func (f *fakeAgent) Overview(context.Context) (agent.Overview, error) {
@@ -83,7 +91,7 @@ func (f *fakeAgent) AuditTail(context.Context, int) ([]agent.AuditEntry, error) 
 
 func (f *fakeAgent) Sites(context.Context) ([]agent.SiteStatus, error) {
 	return []agent.SiteStatus{{Spec: sites.Spec{Name: "enisparta", Group: "musteri", Domains: []string{"enisparta.com"},
-		Image: "ghcr.io/x/enisparta:main", Port: 3000, MemoryMB: 256, EnvKeys: []string{"NODE_ENV"}}}}, nil
+		Image: "ghcr.io/x/enisparta:main", Port: 3000, MemoryMB: 256, EnvKeys: []string{"NODE_ENV"}, Database: f.dbSite}}}, nil
 }
 
 func (f *fakeAgent) CreateSite(_ context.Context, req agent.CreateSiteRequest) (string, error) {
@@ -114,7 +122,51 @@ func (f *fakeAgent) SiteJob(_ context.Context, name, verb string, a agent.Actor)
 }
 
 func (f *fakeAgent) Job(_ context.Context, id string) (agent.Job, error) {
+	if f.job != nil {
+		return *f.job, nil
+	}
 	return agent.Job{ID: id, Kind: "site.create", Target: "enisparta", Steps: []string{"✓ Klasör"}, Done: f.jobDone}, nil
+}
+
+func (f *fakeAgent) CancelJob(_ context.Context, id string, a agent.Actor) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cancelled = append(f.cancelled, id)
+	return nil
+}
+
+func (f *fakeAgent) Snapshots(context.Context, string) ([]agent.Snapshot, error) {
+	return f.snapshots, nil
+}
+
+func (f *fakeAgent) TakeSnapshot(_ context.Context, site string, a agent.Actor) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.taken = append(f.taken, a)
+	return "jobsnap", nil
+}
+
+// snapshotBody is what the fake serves for a download.
+const snapshotBody = "0123456789abcdefghij"
+
+func (f *fakeAgent) DownloadSnapshot(_ context.Context, site, id string, a agent.Actor, hdr http.Header) (*http.Response, error) {
+	f.mu.Lock()
+	f.downloads = append(f.downloads, hdr.Clone())
+	f.dlActors = append(f.dlActors, a)
+	f.mu.Unlock()
+	if id != "20261027-110000" {
+		return nil, &agent.Error{Status: 404, Message: "kopya bulunamadı"}
+	}
+	rec := httptest.NewRecorder()
+	rec.Header().Set("Content-Type", "application/gzip")
+	rec.Header().Set("Content-Disposition", `attachment; filename="enisparta-20261027-110000.archive.gz"`)
+	rec.Header().Set("X-Content-Sha256", "abc")
+	req := httptest.NewRequest("GET", "/", nil)
+	if v := hdr.Get("Range"); v != "" {
+		req.Header.Set("Range", v)
+	}
+	http.ServeContent(rec, req, "", time.Time{}, strings.NewReader(snapshotBody))
+	return rec.Result(), nil
 }
 
 func (f *fakeAgent) Certs(context.Context) ([]sites.Cert, error) { return nil, nil }

@@ -29,6 +29,10 @@ type Runner interface {
 // installer, which then stops cleanly between commands.
 type Exec struct {
 	Log io.Writer
+	// KillOnCancel kills a running command (and its children) when ctx ends. Only for
+	// commands that are safe to interrupt, such as read-only queries; the installer
+	// never sets it.
+	KillOnCancel bool
 }
 
 // Non-interactive apt and needrestart (Ubuntu 24.04's needrestart otherwise stops apt
@@ -48,6 +52,11 @@ func (r Exec) run(ctx context.Context, stdin io.Reader, name string, args ...str
 		return "", err
 	}
 	cmd := exec.Command(name, args...)
+	if r.KillOnCancel {
+		cmd = exec.CommandContext(ctx, name, args...)
+		cmd.Cancel = func() error { killGroup(cmd); return nil }
+		cmd.WaitDelay = stopGrace
+	}
 	cmd.Env = append(os.Environ(), execEnv...)
 	cmd.Stdin = stdin
 	setOwnProcessGroup(cmd)

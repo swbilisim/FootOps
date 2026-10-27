@@ -14,11 +14,17 @@ import (
 	"github.com/swbilisim/FootOps/internal/sites"
 )
 
+// Doer sends HTTP requests; *http.Client implements it.
+type Doer interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
 // Client is used by the web process to talk to the agent.
 type Client struct {
-	Doer interface {
-		Do(*http.Request) (*http.Response, error)
-	}
+	Doer Doer
+	// Long is used for downloads, which may take longer than Doer's timeout; the
+	// caller's context bounds them instead. Nil uses Doer.
+	Long Doer
 }
 
 func NewClient(socket string) *Client {
@@ -28,7 +34,7 @@ func NewClient(socket string) *Client {
 			return d.DialContext(ctx, "unix", socket)
 		},
 	}
-	return &Client{Doer: &http.Client{Transport: tr, Timeout: 60 * time.Second}}
+	return &Client{Doer: &http.Client{Transport: tr, Timeout: 60 * time.Second}, Long: &http.Client{Transport: tr}}
 }
 
 // Error is an error reported by the agent. Problems lists validation issues.
@@ -150,6 +156,60 @@ func (c *Client) Job(ctx context.Context, id string) (Job, error) {
 	var j Job
 	err := c.call(ctx, http.MethodGet, "/v1/jobs/"+url.PathEscape(id), nil, &j)
 	return j, err
+}
+
+// Snapshots lists a site's database copies, newest first.
+func (c *Client) Snapshots(ctx context.Context, site string) ([]Snapshot, error) {
+	var out []Snapshot
+	err := c.call(ctx, http.MethodGet, "/v1/sites/"+url.PathEscape(site)+"/snapshots", nil, &out)
+	return out, err
+}
+
+// TakeSnapshot starts a database copy job.
+func (c *Client) TakeSnapshot(ctx context.Context, site string, a Actor) (string, error) {
+	var r JobResponse
+	err := c.call(ctx, http.MethodPost, "/v1/sites/"+url.PathEscape(site)+"/snapshots", RestartRequest{Actor: a}, &r)
+	return r.JobID, err
+}
+
+// DownloadSnapshot opens a copy for streaming. Range and If-Range from hdr are passed on,
+// so a broken download can resume. The caller closes the body.
+func (c *Client) DownloadSnapshot(ctx context.Context, site, id string, a Actor, hdr http.Header) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		"http://agent/v1/sites/"+url.PathEscape(site)+"/snapshots/"+url.PathEscape(id)+"/download", nil)
+	if err != nil {
+		return nil, err
+	}
+	for _, k := range []string{"Range", "If-Range"} {
+		if v := hdr.Get(k); v != "" {
+			req.Header.Set(k, v)
+		}
+	}
+	actor, _ := json.Marshal(a)
+	req.Header.Set(ActorHeader, string(actor))
+	d := c.Long
+	if d == nil {
+		d = c.Doer
+	}
+	resp, err := d.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("agent'a ulaşılamadı: %w", err)
+	}
+	if resp.StatusCode/100 != 2 {
+		defer drain(resp.Body)
+		var e errorResponse
+		_ = json.NewDecoder(resp.Body).Decode(&e)
+		if e.Error == "" {
+			e.Error = resp.Status
+		}
+		return nil, &Error{Status: resp.StatusCode, Message: e.Error}
+	}
+	return resp, nil
+}
+
+// CancelJob asks a running job to stop.
+func (c *Client) CancelJob(ctx context.Context, id string, a Actor) error {
+	return c.call(ctx, http.MethodPost, "/v1/jobs/"+url.PathEscape(id)+"/cancel", RestartRequest{Actor: a}, nil)
 }
 
 func (c *Client) Certs(ctx context.Context) ([]sites.Cert, error) {

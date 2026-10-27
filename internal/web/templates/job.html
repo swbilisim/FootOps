@@ -1,22 +1,33 @@
 {{template "top" .}}
 {{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
 {{with .Data.J}}
-<a class="crumb" href="/sites">{{icon "back"}}Siteler</a>
+{{if eq .Kind "site.create" "site.remove"}}<a class="crumb" href="/sites">{{icon "back"}}Siteler</a>{{else}}<a class="crumb" href="/sites/{{.Target}}">{{icon "back"}}{{.Target}}</a>{{end}}
 <div class="page-head">
   <div>
-    <h1>{{if eq .Kind "site.create"}}Site oluşturuluyor{{else if eq .Kind "site.remove"}}Site kaldırılıyor{{else if eq .Kind "site.update"}}Site güncelleniyor{{else}}Yeniden dağıtılıyor{{end}}: {{.Target}}</h1>
-    <p class="sub">başlama {{ts .Started}}</p>
+    <h1>{{if eq .Kind "site.create"}}Site oluşturuluyor{{else if eq .Kind "site.remove"}}Site kaldırılıyor{{else if eq .Kind "site.update"}}Site güncelleniyor{{else if eq .Kind "db.snapshot"}}Veritabanı kopyası{{else}}Yeniden dağıtılıyor{{end}}: {{.Target}}</h1>
+    <p class="sub">başlama {{ts .Started}}{{if .Done}} · süre {{took (.Finished.Sub .Started)}}{{end}}</p>
   </div>
-  <div data-live-id="job-state">
-    {{if not .Done}}<span class="badge warn">sürüyor · sayfa kendiliğinden yenilenir</span>{{else if .Err}}<span class="badge bad">başarısız</span>{{else}}<span class="badge ok">tamamlandı</span>{{end}}
+  <div class="page-actions" data-live-id="job-state">
+    {{if not .Done}}<span class="badge warn">sürüyor{{if .Bytes}} · {{bytes .Bytes}}{{if .Total}} / {{bytes .Total}}{{end}}{{end}}</span>
+      {{if .Cancellable}}{{if .Cancelled}}<span class="badge warn">iptal ediliyor</span>{{else}}
+      <form method="post" action="/jobs/{{.ID}}/cancel">
+        <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+        <button type="submit" class="btn sm">{{icon "stop"}}İptal et</button>
+      </form>{{end}}{{end}}
+    {{else if .Cancelled}}<span class="badge warn">iptal edildi</span>
+    {{else if .Interrupted}}<span class="badge bad">yarıda kaldı</span>
+    {{else if .Err}}<span class="badge bad">başarısız</span>
+    {{else}}<span class="badge ok">tamamlandı</span>{{end}}
   </div>
 </div>
 <pre class="logs" data-live-id="job-steps">{{range .Steps}}{{.}}
 {{end}}</pre>
 <div data-live-id="job-links">
 {{if .Done}}
+{{if or .Usage.PeakMem .Usage.CPU}}<p class="hint">Kaynak kullanımı: en çok {{bytes .Usage.PeakMem}} bellek, {{took .Usage.CPU}} CPU{{if .Bytes}}, {{bytes .Bytes}} yazıldı{{end}}.</p>{{end}}
 <div class="form-actions">
-  {{if and (not .Err) (ne .Kind "site.remove")}}<a class="btn primary" href="/sites/{{.Target}}">Siteye git</a>{{end}}
+  {{if and (eq .Kind "db.snapshot") (not .Err) .Result}}<a class="btn primary" href="/sites/{{.Target}}/snapshots/{{.Result}}/download" download>{{icon "download"}}Kopyayı indir</a>{{end}}
+  {{if and (not .Err) (ne .Kind "site.remove")}}<a class="btn{{if ne .Kind "db.snapshot"}} primary{{end}}" href="/sites/{{.Target}}">Siteye git</a>{{end}}
   <a class="btn" href="/sites">Siteler</a>
 </div>
 {{end}}

@@ -158,8 +158,13 @@ func (s *Server) site(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	srv, _ := s.agent.Server(r.Context())
-	s.render(w, r, "site", map[string]any{"Title": st.Spec.Name, "S": st, "Server": srv, "Live": liveEvery,
-		"History": s.containerHistory(r, st.Spec.Container(), uint64(st.Spec.MemoryMB)<<20)})
+	data := map[string]any{"Title": st.Spec.Name, "S": st, "Server": srv, "Live": liveEvery,
+		"History": s.containerHistory(r, st.Spec.Container(), uint64(st.Spec.MemoryMB)<<20)}
+	if st.Spec.Database && !lightRefresh(r) {
+		snaps, err := s.agent.Snapshots(r.Context(), st.Spec.Name)
+		data["Snapshots"], data["SnapshotsErr"], data["KeepDays"] = snaps, errString(err), int(agent.SnapshotKeep.Hours()/24)
+	}
+	s.render(w, r, "site", data)
 }
 
 // findSite looks the site up via the agent; it writes a 404 if there is none.

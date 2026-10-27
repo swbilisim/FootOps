@@ -137,6 +137,7 @@ type Inspect struct {
 	State        struct {
 		Status    string `json:"Status"`
 		Running   bool   `json:"Running"`
+		Pid       int    `json:"Pid"`
 		StartedAt string `json:"StartedAt"`
 		OOMKilled bool   `json:"OOMKilled"`
 		ExitCode  int    `json:"ExitCode"`

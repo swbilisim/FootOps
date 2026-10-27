@@ -19,17 +19,23 @@ import (
 	"github.com/swbilisim/FootOps/internal/history"
 	"github.com/swbilisim/FootOps/internal/run"
 	"github.com/swbilisim/FootOps/internal/sites"
+	"github.com/swbilisim/FootOps/internal/staging"
 )
 
 const (
 	DefaultSocket    = "/run/footops/agent.sock"
 	DefaultAuditPath = "/var/lib/footops/audit.jsonl"
 	DefaultHistory   = "/var/lib/footops/metrics.json"
+	DefaultJobsDir   = "/var/lib/footops/jobs"
 	PanelUser        = "footops"
 
 	maxBody        = 1 << 20 // site environments can be large
 	maxLogLines    = 2000
 	restartTimeout = 10 * time.Second
+	// downloadTimeout replaces the 60-second write timeout for file downloads.
+	downloadTimeout = 2 * time.Hour
+	// ActorHeader carries the acting user on GET requests that are audited (downloads).
+	ActorHeader = "X-Footops-Actor"
 )
 
 // Server serves the agent API.
@@ -38,6 +44,7 @@ type Server struct {
 	Audit   *Audit
 	Sampler *Sampler
 	Sites   *SiteOps
+	Data    *DataOps
 	Jobs    *Jobs
 	// AllowedUIDs may connect; everyone else gets 403. Checked against the kernel's
 	// peer credentials, not anything the client sends.
@@ -99,7 +106,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sites/{name}/redeploy", s.siteJob("site.redeploy"))
 	mux.HandleFunc("POST /v1/sites/{name}/update", s.updateSite)
 	mux.HandleFunc("POST /v1/sites/{name}/remove", s.siteJob("site.remove"))
+	mux.HandleFunc("GET /v1/sites/{name}/snapshots", s.listSnapshots)
+	mux.HandleFunc("POST /v1/sites/{name}/snapshots", s.takeSnapshot)
+	mux.HandleFunc("GET /v1/sites/{name}/snapshots/{id}/download", s.downloadSnapshot)
 	mux.HandleFunc("GET /v1/jobs/{id}", s.getJob)
+	mux.HandleFunc("POST /v1/jobs/{id}/cancel", s.cancelJob)
 	mux.HandleFunc("GET /v1/certs", s.listCerts)
 	mux.HandleFunc("POST /v1/certs", s.installCert)
 	mux.HandleFunc("POST /v1/certs/{id}/remove", s.removeCert)
@@ -295,6 +306,9 @@ type Config struct {
 	Socket      string
 	AuditPath   string
 	HistoryPath string // metric history; empty keeps none
+	JobsDir     string // finished jobs, so results survive a restart; empty keeps none
+	SnapshotDir string
+	StagingDir  string
 	PanelUser   string
 	PanelHost   string // refused as a site domain
 }
@@ -330,6 +344,32 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 
 	d := docker.New(docker.DefaultSocket)
 	ops := &SiteOps{Store: sites.Store{Root: "/"}, Docker: d, Run: run.Exec{}, PanelHost: cfg.PanelHost}
+	data := &DataOps{Store: ops.Store, Docker: d, Run: run.Exec{KillOnCancel: true}, Stream: run.StreamExec{},
+		Staging: staging.New(cfg.StagingDir, staging.DefaultMax), SnapshotDir: cfg.SnapshotDir}
+	audit := NewAudit(cfg.AuditPath)
+	jobs := NewJobs()
+	if cfg.JobsDir != "" {
+		j, interrupted, err := LoadJobs(cfg.JobsDir)
+		if err != nil {
+			logger.Printf("iş geçmişi okunamadı: %v", err)
+		}
+		jobs = j
+		for _, job := range interrupted {
+			logger.Printf("yarıda kalan iş: %s %s (%s)", job.Kind, job.Target, job.ID)
+			_ = audit.Record(AuditEntry{Actor: job.Actor, Action: job.Kind, Target: job.Target, Detail: job.Err})
+			// Its staging may hold a connection file with a password (rule K5).
+			if err := data.Staging.Remove(job.ID); err != nil {
+				logger.Printf("geçici klasör silinemedi: %v", err)
+			}
+		}
+	}
+	// No job runs yet, so any tool container still around was cut off by a restart, and
+	// any copy without a manifest is half-written.
+	removeTools(ctx, d, run.Exec{}, logger)
+	for _, x := range data.SweepSnapshots(true) {
+		logger.Printf("yarım kalan veritabanı kopyası silindi: %s", x)
+	}
+	go housekeeping(ctx, jobs, data, logger)
 	sampler := NewSampler(d, nil)
 	sampler.Alerts = NewAlerter()
 	sampler.Alerts.Certs = ops.Store.Certs
@@ -368,10 +408,11 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 
 	s := &Server{
 		Docker:      d,
-		Audit:       NewAudit(cfg.AuditPath),
+		Audit:       audit,
 		Sampler:     sampler,
 		Sites:       ops,
-		Jobs:        NewJobs(),
+		Data:        data,
+		Jobs:        jobs,
 		AllowedUIDs: map[uint32]bool{0: true, uint32(uid): true},
 		Log:         logger,
 	}
@@ -390,6 +431,46 @@ func keepHistory(ctx context.Context, h *history.Store, path string, logger *log
 		case <-t.C:
 			if err := h.Save(path); err != nil {
 				logger.Printf("metrik geçmişi kaydedilemedi: %v", err)
+			}
+		}
+	}
+}
+
+// housekeeping removes what data work leaves behind: staging older than a day, copies
+// past their keep time. It runs hourly and skips a round while a job runs.
+func housekeeping(ctx context.Context, jobs *Jobs, data *DataOps, logger *log.Logger) {
+	t := time.NewTicker(time.Hour)
+	defer t.Stop()
+	for {
+		if _, busy := jobs.Running(); !busy {
+			for _, x := range data.Staging.Sweep() {
+				logger.Printf("eski geçici klasör silindi: %s", x)
+			}
+			for _, x := range data.SweepSnapshots(false) {
+				logger.Printf("süresi dolan veritabanı kopyası silindi: %s", x)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
+// removeTools removes tool containers left running by an agent that stopped mid-job.
+func removeTools(ctx context.Context, d *docker.Client, r run.Runner, logger *log.Logger) {
+	list, err := d.Containers(ctx)
+	if err != nil {
+		logger.Printf("container listesi alınamadı: %v", err)
+		return
+	}
+	for _, c := range list {
+		if name := c.Name(); strings.HasPrefix(name, toolPrefix) && docker.ValidName(name) {
+			if _, err := r.Run(ctx, "docker", "rm", "--force", name); err != nil {
+				logger.Printf("%s silinemedi: %v", name, err)
+			} else {
+				logger.Printf("yarıda kalan araç container'ı silindi: %s", name)
 			}
 		}
 	}
@@ -434,8 +515,8 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request) {
 		writeProblems(w, err)
 		return
 	}
-	id, err := s.Jobs.Start("site.create", spec.Name, req.Actor, func(ctx context.Context, p Progress) error {
-		return s.Sites.Create(ctx, spec, req.Env, p)
+	id, err := s.Jobs.Start(JobSpec{Kind: "site.create", Target: spec.Name, Actor: req.Actor}, func(ctx context.Context, t *Task) error {
+		return s.Sites.Create(ctx, spec, req.Env, t.Step)
 	}, s.recordJob)
 	s.jobResponse(w, id, err)
 }
@@ -452,11 +533,11 @@ func (s *Server) siteJob(kind string) http.HandlerFunc {
 			writeErr(w, http.StatusNotFound, err.Error())
 			return
 		}
-		id, err := s.Jobs.Start(kind, name, req.Actor, func(ctx context.Context, p Progress) error {
+		id, err := s.Jobs.Start(JobSpec{Kind: kind, Target: name, Actor: req.Actor}, func(ctx context.Context, t *Task) error {
 			if kind == "site.remove" {
-				return s.Sites.Remove(ctx, name, p)
+				return s.Sites.Remove(ctx, name, t.Step)
 			}
-			return s.Sites.Redeploy(ctx, name, p)
+			return s.Sites.Redeploy(ctx, name, t.Step)
 		}, s.recordJob)
 		s.jobResponse(w, id, err)
 	}
@@ -481,8 +562,8 @@ func (s *Server) updateSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	summary := strings.Join(changes, "; ")
-	id, err := s.Jobs.Start("site.update", name, req.Actor, func(ctx context.Context, p Progress) error {
-		return s.Sites.Update(ctx, name, req.Update, p)
+	id, err := s.Jobs.Start(JobSpec{Kind: "site.update", Target: name, Actor: req.Actor}, func(ctx context.Context, t *Task) error {
+		return s.Sites.Update(ctx, name, req.Update, t.Step)
 	}, func(j Job) {
 		if j.Err != "" {
 			summary += " — hata: " + j.Err
@@ -520,10 +601,118 @@ func (s *Server) recordJobDetail(j Job, detail string) {
 func (s *Server) getJob(w http.ResponseWriter, r *http.Request) {
 	j, ok := s.Jobs.Get(r.PathValue("id"))
 	if !ok {
-		writeErr(w, http.StatusNotFound, "işlem bulunamadı (agent yeniden başlamış olabilir)")
+		writeErr(w, http.StatusNotFound, "işlem bulunamadı (çok eski olabilir)")
 		return
 	}
 	writeJSON(w, http.StatusOK, j)
+}
+
+func (s *Server) cancelJob(w http.ResponseWriter, r *http.Request) {
+	var req RestartRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "geçersiz istek")
+		return
+	}
+	id := r.PathValue("id")
+	j, _ := s.Jobs.Get(id)
+	err := s.Jobs.Cancel(id)
+	if errors.Is(err, ErrJobNotFound) {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	s.record(AuditEntry{Actor: req.Actor, Action: "job.cancel", Target: j.Kind + " " + j.Target}, err)
+	if err != nil {
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ---- database copies ----
+
+func (s *Server) listSnapshots(w http.ResponseWriter, r *http.Request) {
+	list, err := s.Data.Snapshots(r.PathValue("name"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+func (s *Server) takeSnapshot(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	var req RestartRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "geçersiz istek")
+		return
+	}
+	spec, err := s.Sites.Store.Get(name)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if !spec.Database {
+		writeErr(w, http.StatusBadRequest, "bu sitenin veritabanı yok")
+		return
+	}
+	id, err := s.Jobs.Start(JobSpec{Kind: "db.snapshot", Target: name, Actor: req.Actor, Cancellable: true},
+		func(ctx context.Context, t *Task) error {
+			_, err := s.Data.Snapshot(ctx, t, name, "manual", req.Actor)
+			return err
+		}, func(j Job) {
+			detail := j.Err
+			if j.Err == "" {
+				detail = fmt.Sprintf("kopya %s, %s", j.Result, humanBytes(j.Bytes))
+			}
+			s.recordJobDetail(j, detail)
+		})
+	s.jobResponse(w, id, err)
+}
+
+// downloadSnapshot serves a copy with Range support, so a broken download resumes. Only
+// downloads from the start are audited; a resumed one is the same download.
+func (s *Server) downloadSnapshot(w http.ResponseWriter, r *http.Request) {
+	snap, path, err := s.Data.SnapshotFile(r.PathValue("name"), r.PathValue("id"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "kopya bulunamadı")
+		return
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if r.Method != http.MethodHead && !resumes(r.Header.Get("Range")) {
+		var a Actor
+		_ = json.Unmarshal([]byte(r.Header.Get(ActorHeader)), &a)
+		s.record(AuditEntry{Actor: a, Action: "db.snapshot.download", Target: snap.Site + " " + snap.ID,
+			Detail: humanBytes(st.Size())}, nil)
+	}
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(downloadTimeout))
+	h := w.Header()
+	h.Set("Content-Type", "application/gzip")
+	h.Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s-%s.archive.gz"`, snap.Site, snap.ID))
+	h.Set("X-Content-Sha256", snap.SHA256)
+	http.ServeContent(w, r, "", st.ModTime(), f)
+}
+
+// resumes reports whether a Range header only asks for the rest of a file from a
+// positive offset ("bytes=1048576-"): the continuation of a download already audited.
+// Anything else (no range, "bytes=0-", suffix or multiple ranges) is audited.
+func resumes(rg string) bool {
+	from, ok := strings.CutPrefix(rg, "bytes=")
+	if !ok {
+		return false
+	}
+	start, rest, ok := strings.Cut(from, "-")
+	n, err := strconv.ParseInt(start, 10, 64)
+	return ok && err == nil && n > 0 && !strings.Contains(rest, ",")
 }
 
 // ---- certificates ----

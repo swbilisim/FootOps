@@ -34,6 +34,36 @@
 </table>
 </div>
 
+{{if $s.Database}}
+<div class="section-head">
+  <h2>Veritabanı kopyaları</h2>
+  <form method="post" action="/sites/{{$s.Name}}/snapshots">
+    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+    <button type="submit" class="btn sm primary">{{icon "database"}}Kopya al</button>
+  </form>
+</div>
+<p class="muted small">MongoDB veritabanı <span class="mono">{{$s.Name}}</span> bu sunucuda bir dosyaya kopyalanır (site çalışmaya devam eder); istersen bilgisayarına indirebilirsin. Kopyalar {{.Data.KeepDays}} gün saklanır, en yenisi hep kalır. Bu bir uzak yedek değildir: sunucu giderse kopyalar da gider.</p>
+{{with .Data.SnapshotsErr}}<div class="notice bad">{{icon "alert"}}<div>Kopyalar okunamadı: {{.}}</div></div>{{end}}
+{{with .Data.Snapshots}}
+<div class="table-wrap">
+<table class="responsive">
+  <thead><tr><th>Tarih</th><th>Boyut</th><th>İçerik</th><th>Ayrıntı</th><th></th></tr></thead>
+  <tbody>
+  {{range .}}
+    <tr>
+      <td class="primary nowrap">{{ts .Created}}<div class="cell-sub muted">{{since .Created}}</div></td>
+      <td data-label="Boyut" class="nowrap">{{bytes .Bytes}}</td>
+      <td data-label="İçerik">{{len .Collections}} koleksiyon, {{.Documents}} belge</td>
+      <td data-label="Ayrıntı" class="muted">{{.Actor}}{{if .Usage.Wall}} · {{took .Usage.Wall}}{{end}}{{if .Usage.PeakMem}} · en çok {{bytes .Usage.PeakMem}}{{end}}</td>
+      <td class="actions"><a class="btn sm" href="/sites/{{$s.Name}}/snapshots/{{.ID}}/download" download>{{icon "download"}}İndir</a></td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}{{if not .Data.SnapshotsErr}}<div class="card"><p class="muted">Henüz kopya yok.</p></div>{{end}}{{end}}
+{{end}}
+
 <div class="section-head"><h2>Cloudflare'de yapılacaklar</h2></div>
 <div class="card">
   <ol class="steps">

@@ -505,20 +505,28 @@ func (o *SiteOps) mongo(ctx context.Context, body string) error {
 	if rootPW == "" {
 		return errors.New("MongoDB root şifresi bulunamadı")
 	}
+	_, err = mongosh(ctx, o.Run, core.MongoRootUser, rootPW, "admin", body)
+	return err
+}
+
+// mongosh runs a script in the MongoDB container as the given user. The script, which
+// contains the password, goes through stdin, so it never appears in a process list; the
+// connection is c. Output before "FOOTOPS_OK" is returned for scripts that print.
+func mongosh(ctx context.Context, r run.Runner, user, pw, authDB, body string) (string, error) {
 	script := fmt.Sprintf(`(function(){try{const c=new Mongo("mongodb://127.0.0.1:27017");`+
-		`c.getDB("admin").auth(%s,%s);%s;print("FOOTOPS_OK")}catch(e){print("FOOTOPS_ERR "+e.message);quit(3)}})()`,
-		q(core.MongoRootUser), q(rootPW), body)
-	out, err := o.Run.RunInput(ctx, script+"\n", "docker", "exec", "-i", mongoContainer, "mongosh", "--quiet", "--nodb", "--file", "/dev/stdin")
+		`c.getDB(%s).auth(%s,%s);%s;print("FOOTOPS_OK")}catch(e){print("FOOTOPS_ERR "+e.message);quit(3)}})()`,
+		q(authDB), q(user), q(pw), body)
+	out, err := r.RunInput(ctx, script+"\n", "docker", "exec", "-i", mongoContainer, "mongosh", "--quiet", "--nodb", "--file", "/dev/stdin")
 	if i := strings.Index(out, "FOOTOPS_ERR "); i >= 0 {
-		return errors.New(strings.TrimSpace(out[i+len("FOOTOPS_ERR "):]))
+		return out, errors.New(strings.TrimSpace(out[i+len("FOOTOPS_ERR "):]))
 	}
 	if err != nil {
-		return err
+		return out, err
 	}
 	if !strings.Contains(out, "FOOTOPS_OK") {
-		return errors.New("mongosh beklenmeyen çıktı verdi")
+		return out, errors.New("mongosh beklenmeyen çıktı verdi")
 	}
-	return nil
+	return out, nil
 }
 
 // q quotes a string for JavaScript (JSON is valid JS).

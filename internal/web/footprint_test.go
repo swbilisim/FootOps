@@ -3,7 +3,9 @@ package web
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
+	"runtime"
 	"testing"
 	"time"
 
@@ -64,5 +66,45 @@ func TestPageCost(t *testing.T) {
 			size = len(body)
 		}
 		t.Logf("%-26s %6.1f KB  %v per request (incl. test client)", tc.name, float64(size)/1024, (time.Since(start) / time.Duration(n)).Round(10*time.Microsecond))
+	}
+}
+
+// bigDownload serves a 64 MB copy without holding it anywhere.
+type bigDownload struct{ fakeAgent }
+
+const bigSize = 64 << 20
+
+type zeros struct{}
+
+func (zeros) Read(p []byte) (int, error) { clear(p); return len(p), nil }
+
+func (b *bigDownload) DownloadSnapshot(context.Context, string, string, agent.Actor, http.Header) (*http.Response, error) {
+	return &http.Response{StatusCode: 200, Header: http.Header{"Content-Length": {fmt.Sprint(bigSize)}},
+		Body: io.NopCloser(io.LimitReader(zeros{}, bigSize))}, nil
+}
+
+// TestDownloadStreams guards rule K7: the panel passes a download through without
+// buffering it. Allocations stay a tiny fraction of the file.
+func TestDownloadStreams(t *testing.T) {
+	e := newEnv(t)
+	e.srv.agent = &bigDownload{}
+	c := e.client(t, false)
+	e.login(t, c)
+	req, _ := http.NewRequest("GET", c.base+"/sites/enisparta/snapshots/20261027-110000/download", nil)
+	req.Host = c.host
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, _ := io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	runtime.ReadMemStats(&after)
+	alloc := after.TotalAlloc - before.TotalAlloc
+	t.Logf("64 MB download: %d bytes allocated in the whole process", alloc)
+	if n != bigSize || alloc > 4<<20 {
+		t.Errorf("read %d bytes, allocated %d (limit 4 MB)", n, alloc)
 	}
 }

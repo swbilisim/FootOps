@@ -24,6 +24,7 @@ import (
 	"github.com/swbilisim/FootOps/internal/auth"
 	"github.com/swbilisim/FootOps/internal/config"
 	"github.com/swbilisim/FootOps/internal/history"
+	"github.com/swbilisim/FootOps/internal/run"
 	"github.com/swbilisim/FootOps/internal/sites"
 )
 
@@ -101,6 +102,33 @@ func (p *previewAgent) Sites(context.Context) ([]agent.SiteStatus, error) {
 			CreatedAt: time.Now().Add(-72 * time.Hour), UpdatedAt: time.Now().Add(-2 * time.Hour)}, Container: c})
 	}
 	return out, nil
+}
+
+func (p *previewAgent) Snapshots(_ context.Context, site string) ([]agent.Snapshot, error) {
+	if site != "magaza" {
+		return nil, nil
+	}
+	var out []agent.Snapshot
+	for i, h := range []int{2, 26, 120} {
+		t := time.Now().Add(-time.Duration(h) * time.Hour)
+		out = append(out, agent.Snapshot{ID: t.UTC().Format("20060102-150405"), Site: site, Created: t, Actor: "admin",
+			Bytes: int64(8806 + i*1200), Documents: int64(89 + i*3), Collections: map[string]int64{"a": 1, "b": 2, "c": 3},
+			Usage: run.Usage{PeakMem: 42 << 20, Wall: 1800 * time.Millisecond, CPU: 300 * time.Millisecond}})
+	}
+	return out, nil
+}
+
+// Job shows a database copy: /jobs/running (with progress and cancel) or /jobs/done.
+func (p *previewAgent) Job(_ context.Context, id string) (agent.Job, error) {
+	j := agent.Job{ID: id, Kind: "db.snapshot", Target: "magaza", Cancellable: true, Started: time.Now().Add(-4 * time.Second),
+		Steps: []string{"✓ Veritabanı magaza: 10 koleksiyon, 89 belge, 41.2 KB veri", "… mongodump çalışıyor (sınır: 512 MB bellek, %50 CPU)"}, Bytes: 3 << 20}
+	if id == "done" {
+		j.Done, j.Finished, j.Result = true, time.Now(), "20261027-110000"
+		j.Usage = run.Usage{PeakMem: 38 << 20, CPU: 420 * time.Millisecond}
+		j.Steps = append(j.Steps, "✓ mongodump bitti: 10 koleksiyon, 89 belge → 8.6 KB (1.8s, en çok 38.0 MB bellek, 420ms CPU)",
+			"✓ Kopya doğrulandı (gzip bütünlüğü, mongodump arşivi)", "✓ Kopya hazır: 20261027-110000 (sunucuda 7 gün saklanır)")
+	}
+	return j, nil
 }
 
 func (p *previewAgent) Certs(context.Context) ([]sites.Cert, error) {

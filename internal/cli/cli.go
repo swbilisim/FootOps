@@ -19,6 +19,7 @@ import (
 	"github.com/swbilisim/FootOps/internal/agent"
 	"github.com/swbilisim/FootOps/internal/config"
 	"github.com/swbilisim/FootOps/internal/install"
+	"github.com/swbilisim/FootOps/internal/staging"
 	"github.com/swbilisim/FootOps/internal/sysinfo"
 	"github.com/swbilisim/FootOps/internal/version"
 	"github.com/swbilisim/FootOps/internal/web"
@@ -75,7 +76,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	case "agent":
 		err = runService(func(ctx context.Context, l *log.Logger) error {
 			cfg := agent.Config{Socket: agent.DefaultSocket, AuditPath: agent.DefaultAuditPath,
-				HistoryPath: agent.DefaultHistory, PanelUser: agent.PanelUser}
+				HistoryPath: agent.DefaultHistory, JobsDir: agent.DefaultJobsDir, SnapshotDir: agent.DefaultSnapshotDir,
+				StagingDir: staging.DefaultRoot, PanelUser: agent.PanelUser}
 			if p, err := config.Load(config.Path); err == nil {
 				cfg.PanelHost = p.PanelHost
 			}

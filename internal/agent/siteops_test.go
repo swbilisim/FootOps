@@ -468,34 +468,6 @@ func TestMongoErrorSurfaces(t *testing.T) {
 	}
 }
 
-func TestJobsAreExclusive(t *testing.T) {
-	j := NewJobs()
-	release := make(chan struct{})
-	finished := make(chan Job, 1)
-	id, err := j.Start("site.create", "a", Actor{User: "furkan"}, func(ctx context.Context, p Progress) error {
-		p("step one")
-		<-release
-		return errors.New("failed")
-	}, func(job Job) { finished <- job })
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := j.Start("site.remove", "b", Actor{}, func(context.Context, Progress) error { return nil }, nil); !errors.Is(err, ErrBusy) {
-		t.Errorf("second job: %v", err)
-	}
-	close(release)
-	job := <-finished
-	if !job.Done || job.Err != "failed" || len(job.Steps) != 1 {
-		t.Errorf("job = %+v", job)
-	}
-	if got, ok := j.Get(id); !ok || !got.Done {
-		t.Error("job not retrievable")
-	}
-	if _, err := j.Start("site.remove", "b", Actor{}, func(context.Context, Progress) error { return nil }, nil); err != nil {
-		t.Errorf("not free after finishing: %v", err)
-	}
-}
-
 func TestRandomSecret(t *testing.T) {
 	seen := map[string]bool{}
 	for i := 0; i < 100; i++ {

@@ -296,7 +296,16 @@ func errString(err error) string {
 }
 
 var funcs = template.FuncMap{
-	"bytes": func(b uint64) string {
+	"bytes": func(v any) string {
+		var b uint64
+		switch n := v.(type) {
+		case uint64:
+			b = n
+		case int64:
+			b = uint64(max(n, 0))
+		case int:
+			b = uint64(max(n, 0))
+		}
 		const unit = 1024
 		if b < unit {
 			return fmt.Sprintf("%d B", b)
@@ -342,7 +351,17 @@ var funcs = template.FuncMap{
 			return fmt.Sprintf("%d gün önce", int(d.Hours()/24))
 		}
 	},
-	"ts":      func(t time.Time) string { return t.Local().Format("2006-01-02 15:04:05") },
+	"ts": func(t time.Time) string { return t.Local().Format("2006-01-02 15:04:05") },
+	// took is a short duration for job measurements: "350 ms", "4.2 sn", "3 dk 5 sn".
+	"took": func(d time.Duration) string {
+		switch {
+		case d < time.Second:
+			return fmt.Sprintf("%d ms", d.Milliseconds())
+		case d < time.Minute:
+			return fmt.Sprintf("%.1f sn", d.Seconds())
+		}
+		return fmt.Sprintf("%d dk %d sn", int(d.Minutes()), int(d.Seconds())%60)
+	},
 	"datefmt": func(t time.Time) string { return t.Local().Format("02.01.2006") },
 	"daysLeft": func(t, now time.Time) int {
 		return int(math.Floor(t.Sub(now).Hours() / 24))
