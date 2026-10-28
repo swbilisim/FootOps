@@ -3,6 +3,8 @@
 # then the scenario scripts. Runs against any Docker; developed with Colima on macOS.
 #
 #   test/integration/run.sh            install (or update) and run all scenarios
+#   test/integration/run.sh f0 f6      install (or update) and run only these (f0 first once:
+#                                      it adds the certificate the others use)
 #   test/integration/run.sh clean      remove the container and its volumes
 #   docker stop footops-it             free the memory between runs (run.sh restarts it)
 #
@@ -51,8 +53,6 @@ until docker exec "$NAME" systemctl is-system-running 2>/dev/null | grep -Eq 'ru
 docker cp "$WORK/footops" "$NAME:/root/footops"
 python3 install.py "$NAME" "$WORK/id_it.pub" "$WORK/login"
 docker exec "$NAME" rm -f /root/footops
-python3 f0.py "$NAME" "$WORK/login"
-python3 f2.py "$NAME" "$WORK/login"
-python3 f2b.py "$NAME" "$WORK/login"
-python3 f3.py "$NAME" "$WORK/login"
-python3 f4.py "$NAME" "$WORK/login"
+for s in ${*:-f0 f2 f2b f3 f4 f6}; do
+	python3 "$s.py" "$NAME" "$WORK/login"
+done

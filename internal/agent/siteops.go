@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -47,9 +48,12 @@ type SiteDocker interface {
 // SiteOps creates, updates and removes sites. Operations are serialised: two at once
 // could race on Caddy's configuration and on network attachments.
 type SiteOps struct {
-	Store     sites.Store
-	Docker    SiteDocker
-	Run       run.Runner
+	Store  sites.Store
+	Docker SiteDocker
+	Run    run.Runner
+	// Kill runs commands that are safe to interrupt (an image check's pull and probe), so
+	// a cancelled or timed-out check never keeps the job slot; nil uses Run.
+	Kill      run.Runner
 	PanelHost string // never served by a site
 
 	mu  sync.Mutex
@@ -83,6 +87,13 @@ func (o *SiteOps) init() {
 }
 
 func (o *SiteOps) path(p string) string { return filepath.Join(o.Store.Root, p) }
+
+func (o *SiteOps) killer() run.Runner {
+	if o.Kill != nil {
+		return o.Kill
+	}
+	return o.Run
+}
 
 // Check validates a request without changing anything, so the form can show problems
 // before a job starts.
@@ -196,7 +207,10 @@ func (o *SiteOps) Create(ctx context.Context, spec sites.Spec, env map[string]st
 	done("compose.yaml ve footops.json yazıldı")
 
 	if err := o.compose(ctx, spec, "pull", "--quiet"); err != nil {
-		return fmt.Errorf("imaj indirilemedi (adı doğru mu, özel bir imaj mı?): %w", err)
+		return fmt.Errorf("imaj indirilemedi: %w", explainPull(err))
+	}
+	if err := o.checkPlatform(ctx, spec.Image); err != nil {
+		return err
 	}
 	done("İmaj indirildi: " + spec.Image)
 
@@ -241,8 +255,14 @@ func (o *SiteOps) Redeploy(ctx context.Context, name string, progress Progress) 
 	if err != nil {
 		return err
 	}
+	if err := o.syncCompose(spec, progress); err != nil {
+		return err
+	}
 	if err := o.compose(ctx, spec, "pull", "--quiet"); err != nil {
-		return fmt.Errorf("imaj indirilemedi: %w", err)
+		return fmt.Errorf("imaj indirilemedi: %w", explainPull(err))
+	}
+	if err := o.checkPlatform(ctx, spec.Image); err != nil {
+		return err
 	}
 	progress("✓ İmaj indirildi: " + spec.Image)
 	base := o.restartBaseline(ctx, spec)
@@ -443,6 +463,17 @@ func (o *SiteOps) rerenderCaddy(ctx context.Context) error {
 
 // ---- helpers ----
 
+// checkPlatform refuses an image built for another machine before a container runs it
+// (it would only crash with "exec format error"). An unreadable inspect is not a reason
+// to stop: the pull itself succeeded.
+func (o *SiteOps) checkPlatform(ctx context.Context, image string) error {
+	info, err := o.inspectImage(ctx, image)
+	if err != nil || info.PlatformOK() {
+		return nil
+	}
+	return errPlatform(info)
+}
+
 func caddyFile(s sites.Spec) string { return filepath.Join(caddySitesDir, s.Name+".caddy") }
 
 func (o *SiteOps) compose(ctx context.Context, s sites.Spec, args ...string) error {
@@ -563,9 +594,7 @@ func (o *SiteOps) prepareDataDir(ctx context.Context, s sites.Spec) error {
 // imageUser returns the uid/gid the image runs as. It asks the image itself (`id`), which
 // resolves user names; images without `id` (distroless) fall back to a numeric USER or root.
 func (o *SiteOps) imageUser(ctx context.Context, image string) (int, int) {
-	uid, uerr := o.idIn(ctx, image, "-u")
-	gid, gerr := o.idIn(ctx, image, "-g")
-	if uerr == nil && gerr == nil {
+	if uid, gid, err := imageIDs(ctx, o.Run, image); err == nil {
 		return uid, gid
 	}
 	out, err := o.Run.Run(ctx, "docker", "image", "inspect", "--format", "{{.Config.User}}", image)
@@ -582,13 +611,28 @@ func (o *SiteOps) imageUser(ctx context.Context, image string) (int, int) {
 	return 0, 0
 }
 
-func (o *SiteOps) idIn(ctx context.Context, image, flag string) (int, error) {
-	out, err := o.Run.Run(ctx, "docker", "run", "--rm", "--network", "none", "--entrypoint", "id", image, flag)
+// imageIDs runs `id` once in the image, as a site would run it (no network, no
+// capabilities, small limits); it exits at once.
+func imageIDs(ctx context.Context, r run.Runner, image string) (int, int, error) {
+	out, err := r.Run(ctx, "docker", "run", "--rm", "--network", "none", "--cap-drop", "ALL",
+		"--security-opt", "no-new-privileges", "--memory", "64m", "--pids-limit", "64", "--entrypoint", "id", image)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	return strconv.Atoi(strings.TrimSpace(out))
+	m := reIDOut.FindStringSubmatch(out)
+	if m == nil {
+		return 0, 0, errors.New("id çıktısı anlaşılamadı")
+	}
+	uid, uerr := strconv.Atoi(m[1])
+	gid, gerr := strconv.Atoi(m[2])
+	if uerr != nil || gerr != nil {
+		return 0, 0, errors.New("id çıktısı anlaşılamadı")
+	}
+	return uid, gid, nil
 }
+
+// reIDOut reads "uid=1001(nextjs) gid=1001(nodejs) groups=…" (names are optional).
+var reIDOut = regexp.MustCompile(`uid=(\d{1,10})\S*\s+gid=(\d{1,10})`)
 
 // restartBase is a container's restart count before an operation. An unchanged
 // container keeps its old count; a recreated one (new ID) starts again at 0.

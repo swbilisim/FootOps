@@ -18,64 +18,9 @@ var (
 	reCertID = regexp.MustCompile(`^[a-f0-9]{16}$`)
 )
 
-// siteForm is the new-site form, kept as strings so a rejected form is shown again
-// exactly as typed.
-type siteForm struct {
-	Name, Group, Domains, Image, Port, MemoryMB, DataMount, DBVar, Env string
-	Database                                                           bool
-}
-
-func defaultSiteForm() siteForm {
-	return siteForm{Group: "musteri", Port: "3000", MemoryMB: "512", DBVar: "MONGODB_URI"}
-}
-
 func (s *Server) sitesList(w http.ResponseWriter, r *http.Request) {
 	list, err := s.agent.Sites(r.Context())
 	s.render(w, r, "sites", map[string]any{"Title": "Siteler", "Sites": list, "Err": errString(err)})
-}
-
-func (s *Server) siteNew(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, "site_new", map[string]any{"Title": "Yeni site", "F": defaultSiteForm(), "Groups": sites.Groups})
-}
-
-func (s *Server) siteCreate(w http.ResponseWriter, r *http.Request) {
-	f := siteForm{
-		Name: r.PostFormValue("name"), Group: r.PostFormValue("group"), Domains: r.PostFormValue("domains"),
-		Image: r.PostFormValue("image"), Port: r.PostFormValue("port"), MemoryMB: r.PostFormValue("memory_mb"),
-		DataMount: r.PostFormValue("data_mount"), DBVar: r.PostFormValue("db_var"), Env: r.PostFormValue("env"),
-		Database: r.PostFormValue("database") == "on",
-	}
-	again := func(problems ...string) {
-		w.Header().Set("Cache-Control", "no-store")
-		s.renderStatus(w, r, http.StatusUnprocessableEntity, "site_new",
-			map[string]any{"F": f, "Groups": sites.Groups, "Problems": problems})
-	}
-	env, err := sites.ParseEnv(f.Env)
-	if err != nil {
-		again("Ortam değişkenleri: " + err.Error())
-		return
-	}
-	port, perr := strconv.Atoi(strings.TrimSpace(f.Port))
-	mem, merr := strconv.Atoi(strings.TrimSpace(f.MemoryMB))
-	if perr != nil || merr != nil {
-		again("Port ve bellek sayı olmalı")
-		return
-	}
-	spec := sites.Spec{
-		Name: f.Name, Group: f.Group, Domains: strings.Fields(f.Domains), Image: f.Image,
-		Port: port, MemoryMB: mem, DataMount: f.DataMount, Database: f.Database, DBVar: f.DBVar,
-	}
-	id, err := s.agent.CreateSite(r.Context(), agent.CreateSiteRequest{Spec: spec, Env: env, Actor: s.actor(r)})
-	if err != nil {
-		var ae *agent.Error
-		if errors.As(err, &ae) && len(ae.Problems) > 0 {
-			again(ae.Problems...)
-			return
-		}
-		again(err.Error())
-		return
-	}
-	http.Redirect(w, r, "/jobs/"+id, http.StatusSeeOther)
 }
 
 // siteEditForm is the edit form, kept as strings like siteForm. Env holds only new or
@@ -83,6 +28,7 @@ func (s *Server) siteCreate(w http.ResponseWriter, r *http.Request) {
 type siteEditForm struct {
 	Domains, Image, Port, MemoryMB, DataMount, Env string
 	Unset                                          map[string]bool
+	EnvAck                                         bool // the notes on Env were seen
 }
 
 func editFormFor(sp sites.Spec) siteEditForm {
@@ -95,7 +41,7 @@ func (s *Server) siteEdit(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.render(w, r, "site_edit", map[string]any{"Title": st.Spec.Name + " düzenle", "S": st.Spec, "F": editFormFor(st.Spec)})
+	s.render(w, r, "site_edit", map[string]any{"Title": st.Spec.Name + " düzenle", "S": st.Spec, "F": editFormFor(st.Spec), "EnvFile": true})
 }
 
 func (s *Server) siteUpdate(w http.ResponseWriter, r *http.Request) {
@@ -106,24 +52,40 @@ func (s *Server) siteUpdate(w http.ResponseWriter, r *http.Request) {
 	f := siteEditForm{
 		Domains: r.PostFormValue("domains"), Image: r.PostFormValue("image"), Port: r.PostFormValue("port"),
 		MemoryMB: r.PostFormValue("memory_mb"), DataMount: r.PostFormValue("data_mount"), Env: r.PostFormValue("env"),
-		Unset: map[string]bool{},
+		Unset: map[string]bool{}, EnvAck: r.PostFormValue("env_ack") == "on",
 	}
 	for _, k := range r.PostForm["unset"] {
 		f.Unset[k] = true
 	}
+	var notes []sites.EnvRow
 	again := func(problems ...string) {
 		s.renderStatus(w, r, http.StatusUnprocessableEntity, "site_edit",
-			map[string]any{"Title": st.Spec.Name + " düzenle", "S": st.Spec, "F": f, "Problems": problems})
+			map[string]any{"Title": st.Spec.Name + " düzenle", "S": st.Spec, "F": f, "Problems": problems, "EnvFile": true, "EnvNotes": notes})
 	}
-	set, err := sites.ParseEnv(f.Env)
+	entries, err := sites.ParseDotenv(f.Env)
 	if err != nil {
 		again("Ortam değişkenleri: " + err.Error())
 		return
 	}
+	set := sites.EnvMap(entries)
 	port, perr := strconv.Atoi(strings.TrimSpace(f.Port))
 	mem, merr := strconv.Atoi(strings.TrimSpace(f.MemoryMB))
 	if perr != nil || merr != nil {
 		again("Port ve bellek sayı olmalı")
+		return
+	}
+	// A live site gets no review page: what the new site flow would warn about (a cut
+	// comment, turned escapes, localhost, a development mode) is shown here and must be
+	// acknowledged once.
+	sp := st.Spec
+	sp.Port = port
+	for _, row := range sites.DescribeEnv(entries, sp) {
+		if len(row.Notes) > 0 {
+			notes = append(notes, row)
+		}
+	}
+	if len(notes) > 0 && !f.EnvAck {
+		again("Ortam değişkenlerinde dikkat edilecekler var: aşağıdaki notlara bak, uygunsa “Gördüm” kutusunu işaretleyip tekrar kaydet.")
 		return
 	}
 	u := agent.SiteUpdate{Domains: strings.Fields(f.Domains), Image: f.Image, Port: port, MemoryMB: mem,
@@ -171,6 +133,10 @@ func (s *Server) site(w http.ResponseWriter, r *http.Request) {
 		data["FilesBackups"], _ = s.agent.FilesBackups(r.Context(), st.Spec.Name)
 		data["FilesKeepDays"] = int(agent.FilesKeep.Hours() / 24)
 	}
+	if !lightRefresh(r) {
+		certs, _ := s.agent.Certs(r.Context())
+		data["DNS"] = dnsRecords(st.Spec.Domains, certs, firstOf(srv.IPv4))
+	}
 	s.render(w, r, "site", data)
 }
 
@@ -193,6 +159,51 @@ func (s *Server) findSite(w http.ResponseWriter, r *http.Request) (agent.SiteSta
 	}
 	http.NotFound(w, r)
 	return agent.SiteStatus{}, false
+}
+
+// ---- moving a site to another group ----
+
+func (s *Server) siteMoveForm(w http.ResponseWriter, r *http.Request) {
+	st, ok := s.findSite(w, r)
+	if !ok {
+		return
+	}
+	s.render(w, r, "site_move", map[string]any{"Title": st.Spec.Name + " grubunu değiştir", "S": st, "Groups": sites.Groups})
+}
+
+func (s *Server) siteMove(w http.ResponseWriter, r *http.Request) {
+	st, ok := s.findSite(w, r)
+	if !ok {
+		return
+	}
+	group := r.PostFormValue("group")
+	again := func(problems ...string) {
+		s.renderStatus(w, r, http.StatusUnprocessableEntity, "site_move", map[string]any{"Title": st.Spec.Name + " grubunu değiştir",
+			"S": st, "Groups": sites.Groups, "Group": group, "Problems": problems})
+	}
+	if r.PostFormValue("confirm") != st.Spec.Name {
+		again("Onay için site adını aynen yaz.")
+		return
+	}
+	id, err := s.agent.MoveSite(r.Context(), st.Spec.Name, group, st.Spec.Name, s.actor(r))
+	if err != nil {
+		again(problemsOf(err)...)
+		return
+	}
+	http.Redirect(w, r, "/jobs/"+id, http.StatusSeeOther)
+}
+
+// siteDNS checks the site's domains when asked; nothing runs in the background.
+func (s *Server) siteDNS(w http.ResponseWriter, r *http.Request) {
+	st, ok := s.findSite(w, r)
+	if !ok {
+		return
+	}
+	checks, err := s.agent.SiteDNS(r.Context(), st.Spec.Name)
+	certs, _ := s.agent.Certs(r.Context())
+	srv, _ := s.agent.Server(r.Context())
+	s.render(w, r, "site_dns", map[string]any{"Title": st.Spec.Name + " DNS", "S": st, "Checks": checks, "Err": errString(err),
+		"Now": s.now(), "DNS": dnsRecords(st.Spec.Domains, certs, firstOf(srv.IPv4))})
 }
 
 func (s *Server) siteConfirm(verb string) http.HandlerFunc {
@@ -234,7 +245,7 @@ func (s *Server) job(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	j, err := s.agent.Job(r.Context(), id)
-	data := map[string]any{"Title": "İşlem", "J": j, "Err": errString(err)}
+	data := map[string]any{"Title": "İşlem", "J": j, "Err": errString(err), "Tpl": templateByID(r.URL.Query().Get("tpl")).ID}
 	if err == nil && !j.Done {
 		data["Refresh"], data["Live"] = 2, 2
 	}

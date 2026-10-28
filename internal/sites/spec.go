@@ -142,7 +142,7 @@ func (s Spec) Validate(env map[string]string) error {
 			add("%s: %v", d, err)
 		}
 	}
-	if !reImage.MatchString(s.Image) || strings.Contains(s.Image, "..") {
+	if !ValidImage(s.Image) {
 		add("imaj adı geçersiz (örn. ghcr.io/kullanici/site:main)")
 	}
 	if s.Port < 1 || s.Port > 65535 {
@@ -167,8 +167,10 @@ func (s Spec) Validate(env map[string]string) error {
 		if !reEnvKey.MatchString(k) {
 			add("ortam değişkeni adı geçersiz: %q", k)
 		}
-		if len(v) > maxValueLen || strings.ContainsAny(v, "\n\r\x00") {
-			add("%s değeri tek satır ve en fazla %d karakter olmalı", k, maxValueLen)
+		// Line breaks are fine (compose.yaml stores the value JSON-escaped); a carriage
+		// return or NUL never is.
+		if len(v) > maxValueLen || strings.ContainsAny(v, "\r\x00") {
+			add("%s değeri en fazla %d karakter olmalı, satır başı (\\r) ya da NUL içeremez", k, maxValueLen)
 		}
 		if s.Database && k == s.DBVar {
 			add("%s veritabanı bağlantısı için ayrıldı", k)
@@ -178,6 +180,11 @@ func (s Spec) Validate(env map[string]string) error {
 		return &ValidationError{Problems: p}
 	}
 	return nil
+}
+
+// ValidImage accepts an image reference such as ghcr.io/user/site:main.
+func ValidImage(ref string) bool {
+	return reImage.MatchString(ref) && !strings.Contains(ref, "..")
 }
 
 // ValidDataURL accepts a path like /uploads or /media/files (no "." or ".." parts).
@@ -192,6 +199,9 @@ func ValidDataURL(u string) bool {
 	}
 	return true
 }
+
+// ValidGroup reports whether g is one of the fixed groups.
+func ValidGroup(g string) bool { return validGroup(g) }
 
 func validGroup(g string) bool {
 	for _, x := range Groups {
@@ -214,28 +224,6 @@ func ValidateDomain(d string) error {
 		}
 	}
 	return nil
-}
-
-// ParseEnv reads KEY=VALUE lines. Blank lines and lines starting with # are ignored.
-// Values are taken literally (no quotes are removed), so what you type is what the app gets.
-func ParseEnv(text string) (map[string]string, error) {
-	env := map[string]string{}
-	for i, line := range strings.Split(text, "\n") {
-		line = strings.TrimRight(line, "\r")
-		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
-			continue
-		}
-		k, v, ok := strings.Cut(line, "=")
-		k = strings.TrimSpace(k)
-		if !ok || k == "" {
-			return nil, fmt.Errorf("satır %d: KEY=DEĞER biçiminde olmalı", i+1)
-		}
-		if _, dup := env[k]; dup {
-			return nil, fmt.Errorf("satır %d: %s iki kez tanımlanmış", i+1, k)
-		}
-		env[k] = v
-	}
-	return env, nil
 }
 
 // SortedKeys returns the map's keys in order, for deterministic output.

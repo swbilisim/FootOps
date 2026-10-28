@@ -30,6 +30,7 @@ type fakeNet struct {
 	networks map[string]map[string][]string // network -> container -> aliases
 	running  bool                           // state reported for site containers
 	restarts int
+	image    string // image ID reported for site containers
 	log      []string
 }
 
@@ -69,6 +70,9 @@ func (f *fakeNet) Connect(_ context.Context, network, container string, aliases 
 	if _, ok := f.networks[network]; !ok {
 		return &docker.APIError{Status: 404, Message: "network not found"}
 	}
+	if _, ok := f.networks[network][container]; ok { // as dockerd answers
+		return &docker.APIError{Status: 403, Message: "endpoint with name " + container + " already exists in network " + network}
+	}
 	f.networks[network][container] = aliases
 	f.rec("connect " + network + " " + container + " " + strings.Join(aliases, ","))
 	return nil
@@ -85,6 +89,9 @@ func (f *fakeNet) Disconnect(_ context.Context, network, container string) error
 func (f *fakeNet) RemoveNetwork(_ context.Context, name string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if len(f.networks[name]) > 0 { // as dockerd answers
+		return &docker.APIError{Status: 403, Message: "error while removing network: network " + name + " has active endpoints"}
+	}
 	delete(f.networks, name)
 	f.rec("remove " + name)
 	return nil
@@ -100,6 +107,7 @@ func (f *fakeNet) Inspect(_ context.Context, name string) (docker.Inspect, error
 	var in docker.Inspect
 	in.State.Running = f.running
 	in.RestartCount = f.restarts
+	in.Image = f.image
 	if !f.running {
 		in.State.Status = "exited"
 	}
@@ -188,8 +196,7 @@ func newOps(t *testing.T) *opsEnv {
 	n.networks = map[string]map[string][]string{}
 	uid, gid := os.Getuid(), os.Getgid()
 	r := &cmdRunner{fail: map[string]error{}, out: map[string]string{
-		"--entrypoint id ghcr.io/swbilisim/enisparta:main -u": fmt.Sprint(uid),
-		"--entrypoint id ghcr.io/swbilisim/enisparta:main -g": fmt.Sprint(gid),
+		"--entrypoint id ghcr.io/swbilisim/enisparta:main": fmt.Sprintf("uid=%d(app) gid=%d(app) groups=%d(app)", uid, gid, gid),
 	}}
 	e := &opsEnv{net: n, run: r, root: root}
 	e.ops = &SiteOps{

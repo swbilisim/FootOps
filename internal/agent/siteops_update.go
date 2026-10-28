@@ -148,6 +148,11 @@ func (o *SiteOps) Update(ctx context.Context, name string, u SiteUpdate, progres
 		return err
 	}
 	cur, next := p.cur, p.next
+	if next.Image == cur.Image {
+		if err := o.checkTag(ctx, cur); err != nil {
+			return err
+		}
+	}
 	dir := o.path(cur.Dir())
 	oldCompose, err := os.ReadFile(filepath.Join(dir, sites.ComposeFile))
 	if err != nil {
@@ -223,7 +228,10 @@ func (o *SiteOps) Update(ctx context.Context, name string, u SiteUpdate, progres
 
 	if next.Image != cur.Image {
 		if err := o.compose(ctx, next, "pull", "--quiet"); err != nil {
-			return fmt.Errorf("imaj indirilemedi (adı doğru mu, özel bir imaj mı?): %w", err)
+			return fmt.Errorf("imaj indirilemedi: %w", explainPull(err))
+		}
+		if err := o.checkPlatform(ctx, next.Image); err != nil {
+			return err
 		}
 		done("İmaj indirildi: " + next.Image)
 	}

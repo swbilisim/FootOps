@@ -38,6 +38,9 @@ func (st Store) List() ([]Spec, error) {
 			if err != nil {
 				return nil, fmt.Errorf("%s/%s: %w", g, e.Name(), err)
 			}
+			// Where the directory is decides the group: a move between groups renames the
+			// directory first, so one cut short still finds the site where its files are.
+			s.Group = g
 			out = append(out, s)
 		}
 	}

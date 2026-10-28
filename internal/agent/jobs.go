@@ -77,6 +77,7 @@ var (
 		"migrate.copy":     3 * time.Hour,
 		"migrate.discover": 6 * time.Minute,
 		"migrate.scan":     6 * time.Minute,
+		"image.check":      15 * time.Minute, // a pull of a few hundred MB on a slow link
 	}
 )
 

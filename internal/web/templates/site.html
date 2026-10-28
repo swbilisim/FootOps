@@ -23,6 +23,7 @@
 <div class="section-head"><h2>Ayarlar</h2><a class="btn sm" href="/sites/{{$s.Name}}/edit">{{icon "edit"}}Düzenle</a></div>
 <div class="table-wrap">
 <table class="kv">
+  <tr><th>Grup</th><td><span class="chip">{{$s.Group}}</span> <span class="mono small">/srv/{{$s.Group}}/{{$s.Name}}</span> · <a href="/sites/{{$s.Name}}/move">değiştir…</a></td></tr>
   <tr><th>Alan adları</th><td>{{range $i, $d := $s.Domains}}{{if $i}}, {{end}}<a href="https://{{$d}}" rel="noreferrer" target="_blank">{{$d}}</a>{{end}}</td></tr>
   <tr><th>İmaj</th><td class="mono">{{$s.Image}}</td></tr>
   <tr><th>Uygulama portu</th><td>{{$s.Port}}</td></tr>
@@ -47,7 +48,7 @@
     </form>
   </div>
 </div>
-<p class="muted small"><strong>Dışa aktar</strong> {{if $s.Database}}veritabanını{{end}}{{if and $s.Database $s.DataMount}} ve {{end}}{{if $s.DataMount}}kalıcı klasördeki dosyaları{{end}} taşınabilir bir FootOps arşivine (<span class="mono">.footops.tar</span>) yazar; sunucuda 24 saat indirilebilir, başka bir FootOps sunucusuna ya da bu siteye geri içe aktarılabilir. <strong>Sunucudan taşı</strong> veritabanını ve yüklenen dosyaları eski bir sunucudan SSH ile doğrudan buraya kopyalar. <strong>İçe aktar</strong> böyle bir arşivi, bir mongodump arşivini ya da dosyaların zip / tar.gz arşivini önce kontrol eder, önizleme gösterir, onaydan sonra değişecek olanın kopyasını alıp uygular.</p>
+<p class="muted small"><strong>Dışa aktar</strong> {{if $s.Database}}veritabanını{{end}}{{if and $s.Database $s.DataMount}} ve {{end}}{{if $s.DataMount}}kalıcı klasördeki dosyaları{{end}} taşınabilir bir FootOps arşivine (<span class="mono">.footops.tar</span>) yazar; sunucuda 24 saat indirilebilir, başka bir FootOps sunucusuna ya da bu siteye geri içe aktarılabilir. <strong>Sunucudan taşı</strong> veritabanını ve yüklenen dosyaları eski bir sunucudan SSH ile doğrudan buraya kopyalar. <strong>İçe aktar</strong> böyle bir arşivi, bir mongodump arşivini (bilgisayarındaki veritabanından: <span class="mono">mongodump --archive=yedek.gz --gzip --db &lt;ad&gt;</span>) ya da dosyaların zip / tar.gz arşivini önce kontrol eder, önizleme gösterir, onaydan sonra değişecek olanın kopyasını alıp uygular.</p>
 {{with .Data.Exports}}
 <div class="table-wrap">
 <table class="responsive">
@@ -117,15 +118,8 @@
 {{else}}{{if not .Data.SnapshotsErr}}<div class="card"><p class="muted">Henüz kopya yok.</p></div>{{end}}{{end}}
 {{end}}
 
-<div class="section-head"><h2>Cloudflare'de yapılacaklar</h2></div>
-<div class="card">
-  <ol class="steps">
-    <li>DNS: {{range $s.Domains}}<span class="mono">{{.}}</span> {{end}}için
-      {{with .Data.Server.IPv4}}<strong>A</strong> kaydı → <span class="mono">{{index . 0}}</span>{{else}}A kaydı → bu sunucunun IP'si{{end}},
-      <strong>Proxy açık</strong> (turuncu bulut).</li>
-    <li>SSL/TLS modu: <strong>Full (strict)</strong>. Zone genelinde değiştirmek diğer sunuculardaki siteleri etkileyecekse, sadece bu alan adları için bir Configuration Rule kullan.</li>
-  </ol>
-</div>
+<div class="section-head" id="dns"><h2>Cloudflare'de yapılacaklar</h2><a class="btn sm" href="/sites/{{$s.Name}}/dns">{{icon "search"}}DNS'i kontrol et</a></div>
+{{template "dnsguide" .Data.DNS}}
 
 <div class="section-head"><h2>Tehlikeli bölge</h2></div>
 <div class="card danger-zone">

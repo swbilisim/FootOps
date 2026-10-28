@@ -47,6 +47,8 @@ type Server struct {
 	Sites   *SiteOps
 	Data    *DataOps
 	Jobs    *Jobs
+	// Registries are the image registry logins docker pulls with.
+	Registries *Registries
 	// AllowedUIDs may connect; everyone else gets 403. Checked against the kernel's
 	// peer credentials, not anything the client sends.
 	AllowedUIDs map[uint32]bool
@@ -104,6 +106,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/audit", s.auditRecord)
 	mux.HandleFunc("GET /v1/sites", s.listSites)
 	mux.HandleFunc("POST /v1/sites", s.createSite)
+	mux.HandleFunc("POST /v1/sites/check", s.checkSite)
+	mux.HandleFunc("POST /v1/sites/{name}/move", s.moveSite)
+	mux.HandleFunc("GET /v1/sites/{name}/dns", s.siteDNS)
+	mux.HandleFunc("POST /v1/images/check", s.checkImage)
+	mux.HandleFunc("GET /v1/registries", s.listRegistries)
+	mux.HandleFunc("POST /v1/registries", s.loginRegistry)
+	mux.HandleFunc("POST /v1/registries/remove", s.logoutRegistry)
 	mux.HandleFunc("POST /v1/sites/{name}/redeploy", s.siteJob("site.redeploy"))
 	mux.HandleFunc("POST /v1/sites/{name}/update", s.updateSite)
 	mux.HandleFunc("POST /v1/sites/{name}/remove", s.siteJob("site.remove"))
@@ -363,6 +372,10 @@ type Config struct {
 	MigrationsDir string
 	PanelUser     string
 	PanelHost     string // refused as a site domain
+	// DockerConfig is docker's DOCKER_CONFIG (registry logins); RegistriesPath keeps
+	// when each login was saved.
+	DockerConfig   string
+	RegistriesPath string
 }
 
 // Main runs the agent until ctx is done.
@@ -395,7 +408,7 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 	}
 
 	d := docker.New(docker.DefaultSocket)
-	ops := &SiteOps{Store: sites.Store{Root: "/"}, Docker: d, Run: run.Exec{}, PanelHost: cfg.PanelHost}
+	ops := &SiteOps{Store: sites.Store{Root: "/"}, Docker: d, Run: run.Exec{}, Kill: run.Exec{KillOnCancel: true}, PanelHost: cfg.PanelHost}
 	data := &DataOps{Store: ops.Store, Docker: d, Run: run.Exec{KillOnCancel: true}, Stream: run.StreamExec{},
 		Staging: staging.New(cfg.StagingDir, staging.DefaultMax), SnapshotDir: cfg.SnapshotDir,
 		RecoveryDir: cfg.RecoveryDir, Sites: ops, MigrationsDir: cfg.MigrationsDir}
@@ -436,9 +449,12 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 	}
 	startRecovery(jobs, data, audit, tempDBs || data.TempLeft(), logger)
 	go housekeeping(ctx, jobs, data, logger)
+	regs := &Registries{ConfigDir: cfg.DockerConfig, MetaPath: cfg.RegistriesPath, Run: run.Exec{},
+		GitHubAPI: "https://api.github.com", HTTP: &http.Client{Timeout: 10 * time.Second}}
 	sampler := NewSampler(d, nil)
 	sampler.Alerts = NewAlerter()
 	sampler.Alerts.Certs = ops.Store.Certs
+	sampler.Alerts.Registries = regs.List
 	if cfg.HistoryPath != "" {
 		h, err := history.Load(cfg.HistoryPath, time.Now())
 		if err != nil {
@@ -479,6 +495,7 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 		Sites:       ops,
 		Data:        data,
 		Jobs:        jobs,
+		Registries:  regs,
 		AllowedUIDs: map[uint32]bool{0: true, uint32(uid): true},
 		Log:         logger,
 	}
@@ -680,6 +697,154 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request) {
 		return s.Sites.Create(ctx, spec, req.Env, t.Step)
 	}, s.recordJob)
 	s.jobResponse(w, id, err)
+}
+
+// checkSite validates a new site without creating it, for the review page.
+func (s *Server) checkSite(w http.ResponseWriter, r *http.Request) {
+	var req CreateSiteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "geçersiz istek")
+		return
+	}
+	spec, err := s.Sites.Check(req.Spec, req.Env)
+	if err != nil {
+		writeProblems(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, spec)
+}
+
+// checkImage pulls and inspects an image as a job; the result is an ImageInfo in JSON.
+func (s *Server) checkImage(w http.ResponseWriter, r *http.Request) {
+	var req CheckImageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "geçersiz istek")
+		return
+	}
+	image := strings.TrimSpace(req.Image)
+	if !sites.ValidImage(image) {
+		writeJSON(w, http.StatusUnprocessableEntity, errorResponse{Error: "imaj adı geçersiz",
+			Problems: []string{"imaj adı geçersiz (örn. ghcr.io/kullanici/site:main)"}})
+		return
+	}
+	id, err := s.Jobs.Start(JobSpec{Kind: "image.check", Target: image, Actor: req.Actor, Cancellable: true}, func(ctx context.Context, t *Task) error {
+		info, err := s.Sites.CheckImage(ctx, image, t)
+		if err != nil {
+			return err
+		}
+		b, err := json.Marshal(info)
+		if err != nil {
+			return err
+		}
+		t.SetResult(string(b))
+		return nil
+	}, s.recordJob)
+	s.jobResponse(w, id, err)
+}
+
+// moveSite puts a site into another group, as a job.
+func (s *Server) moveSite(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	var req MoveSiteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "geçersiz istek")
+		return
+	}
+	cur, next, err := s.Sites.CheckMove(name, req.Group)
+	switch {
+	case errors.Is(err, sites.ErrNotFound):
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	case err != nil:
+		writeErr(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	case req.Confirm != name:
+		writeErr(w, http.StatusUnprocessableEntity, "Onay için site adını aynen yaz.")
+		return
+	}
+	for _, rec := range s.Data.Recoveries() {
+		if rec.Site == name {
+			writeErr(w, http.StatusConflict, "bu sitede yarım kalmış bir geri yükleme var; önce o bitmeli")
+			return
+		}
+	}
+	detail := cur.Group + " → " + next.Group
+	id, err := s.Jobs.Start(JobSpec{Kind: "site.move", Target: name, Actor: req.Actor}, func(ctx context.Context, t *Task) error {
+		return s.Sites.Move(ctx, name, next.Group, t.Step)
+	}, func(j Job) {
+		if j.Err != "" {
+			detail += " — hata: " + j.Err
+		}
+		s.recordJobDetail(j, detail)
+	})
+	s.jobResponse(w, id, err)
+}
+
+// siteDNS reports where a site's domains point and whether it answers.
+func (s *Server) siteDNS(w http.ResponseWriter, r *http.Request) {
+	list, err := s.Sites.CheckDNS(r.Context(), r.PathValue("name"))
+	if errors.Is(err, sites.ErrNotFound) {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+// ---- registry logins ----
+
+func (s *Server) listRegistries(w http.ResponseWriter, r *http.Request) {
+	list, err := s.Registries.List()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+// loginRegistry saves a login. The audit log gets the registry and the user, never the
+// token.
+func (s *Server) loginRegistry(w http.ResponseWriter, r *http.Request) {
+	var req RegistryLoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "geçersiz istek")
+		return
+	}
+	l, notes, err := s.Registries.Login(r.Context(), req.Host, req.User, req.Token, req.Actor.User)
+	// Only what passed validation is recorded: a token pasted as the user name must not
+	// end up in the audit log.
+	host, user, verr := CheckLogin(req.Host, req.User)
+	target := host + " " + user
+	if verr != nil {
+		target = "(geçersiz giriş bilgisi)"
+		if reRegistryHost.MatchString(host) {
+			target = host + " (geçersiz kullanıcı adı)"
+		}
+	}
+	s.record(AuditEntry{Actor: req.Actor, Action: "registry.login", Target: target}, err)
+	if err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, RegistryLoginResponse{Login: l, Notes: notes})
+}
+
+func (s *Server) logoutRegistry(w http.ResponseWriter, r *http.Request) {
+	var req RegistryLogoutRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "geçersiz istek")
+		return
+	}
+	err := s.Registries.Logout(r.Context(), req.Host)
+	s.record(AuditEntry{Actor: req.Actor, Action: "registry.logout", Target: req.Host}, err)
+	if err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) siteJob(kind string) http.HandlerFunc {

@@ -1,0 +1,29 @@
+{{template "top" .}}
+{{$s := .Data.S.Spec}}
+<div class="dialog">
+  <a class="crumb" href="/sites/{{$s.Name}}">{{icon "back"}}{{$s.Name}}</a>
+  <div class="card">
+    <div class="dialog-icon">{{icon "move"}}</div>
+    <h1>{{$s.Name}} başka gruba taşınsın mı?</h1>
+    <p>Şu an <strong>{{$s.Group}}</strong> grubunda: <span class="mono">/srv/{{$s.Group}}/{{$s.Name}}</span>. Klasör (dosyalar, kopyalar, çöp kutusu dahil) yeni grubun altına taşınır, site o grubun ağına geçer ve container yeniden oluşturulur: <strong>birkaç saniye kesinti</strong>. Veritabanı, alan adları ve ayarlar aynı kalır.</p>
+    <p class="muted small">Bir adım başarısız olursa her şey eski hâline döner.</p>
+    {{template "problems" .Data.Problems}}
+    <form method="post" action="/sites/{{$s.Name}}/move" class="stack">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <label class="field"><span>Yeni grup</span>
+        <select name="group" required>
+          <option value="" disabled{{if not .Data.Group}} selected{{end}}>Seç…</option>
+          {{range .Data.Groups}}{{if ne . $s.Group}}<option value="{{.}}"{{if eq . $.Data.Group}} selected{{end}}>{{.}}</option>{{end}}{{end}}
+        </select>
+      </label>
+      <label class="field"><span>Onaylamak için site adını yaz: <strong>{{$s.Name}}</strong></span>
+        <input name="confirm" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      </label>
+      <div class="form-actions">
+        <button type="submit" class="primary">{{icon "move"}}Taşı</button>
+        <a class="btn" href="/sites/{{$s.Name}}">Vazgeç</a>
+      </div>
+    </form>
+  </div>
+</div>
+{{template "bottom" .}}

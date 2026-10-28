@@ -4,7 +4,10 @@
     <h1>Siteler</h1>
     <p class="sub">{{len .Data.Sites}} site</p>
   </div>
-  {{if .Data.Sites}}<a class="btn primary" href="/sites/new">{{icon "plus"}}Yeni site</a>{{end}}
+  <div class="page-actions">
+    <a class="btn" href="/registries">{{icon "key"}}İmaj girişleri</a>
+    {{if .Data.Sites}}<a class="btn primary" href="/sites/new">{{icon "plus"}}Yeni site</a>{{end}}
+  </div>
 </div>
 {{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>Agent'a ulaşılamadı: {{.}}</div></div>{{end}}
 {{if .Data.Sites}}

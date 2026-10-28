@@ -114,7 +114,7 @@ func TestUpdateRejects(t *testing.T) {
 		"db var set":     {func(u *SiteUpdate) { u.Set = map[string]string{"MONGODB_URI": "x"} }, "veritabanı bağlantısı için ayrıldı"},
 		"db var unset":   {func(u *SiteUpdate) { u.Unset = []string{"MONGODB_URI"} }, "silinemez"},
 		"bad memory":     {func(u *SiteUpdate) { u.MemoryMB = 10 }, "bellek sınırı"},
-		"newline value":  {func(u *SiteUpdate) { u.Set = map[string]string{"A": "x\ny"} }, "tek satır"},
+		"CR in value":    {func(u *SiteUpdate) { u.Set = map[string]string{"A": "x\ry"} }, "satır başı"},
 	} {
 		u := updateFrom(specFor("enisparta"))
 		tc.mod(&u)
@@ -156,8 +156,7 @@ func TestUpdateRollsBack(t *testing.T) {
 			caddyPath := filepath.Join(e.root, core.CaddySitesDir, "enisparta.caddy")
 			oldCompose, oldMeta, oldCaddy := readFile(t, filepath.Join(dir, "compose.yaml")), readFile(t, filepath.Join(dir, "footops.json")), readFile(t, caddyPath)
 
-			e.run.out["--entrypoint id ghcr.io/swbilisim/enisparta:v2 -u"] = fmt.Sprint(os.Getuid())
-			e.run.out["--entrypoint id ghcr.io/swbilisim/enisparta:v2 -g"] = fmt.Sprint(os.Getgid())
+			e.run.out["--entrypoint id ghcr.io/swbilisim/enisparta:v2"] = fmt.Sprintf("uid=%d gid=%d(x)", os.Getuid(), os.Getgid())
 			breakIt(e)
 			u := updateFrom(specFor("enisparta"))
 			u.Domains = []string{"enisparta.com"}

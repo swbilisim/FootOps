@@ -12,6 +12,7 @@
 <link rel="stylesheet" href="/static/style.css">
 <script src="/static/live.js" defer></script>
 {{if .Data.Upload}}<script src="/static/upload.js" defer></script>{{end}}
+{{if .Data.EnvFile}}<script src="/static/envfile.js" defer></script>{{end}}
 </head>
 <body class="{{if .Session.ID}}app{{else}}bare{{end}}">
 {{sprite}}
@@ -73,4 +74,31 @@
   <div><dt>Yeniden başlama</dt><dd>{{.RestartCount}}</dd></div>
   <div><dt>Başlama</dt><dd>{{since .StartedAt}}</dd></div>
 </dl>
+{{end}}
+
+{{/* The Cloudflare records and settings a site needs (a list of dnsRecord). */}}
+{{define "dnsguide"}}
+{{with .}}
+<div class="table-wrap">
+<table class="responsive">
+  <thead><tr><th>Alan adı</th><th>Zone</th><th>Kayıt</th><th>Proxy</th></tr></thead>
+  <tbody>
+  {{range .}}
+    <tr>
+      <td class="primary mono">{{.Domain}}</td>
+      <td data-label="Zone" class="mono">{{.Zone}}</td>
+      <td data-label="Kayıt"><span class="mono">{{.Type}}</span> · ad <span class="mono">{{.Name}}</span> · içerik <span class="mono">{{.Content}}</span></td>
+      <td data-label="Proxy">açık (turuncu bulut)</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{end}}
+<ol class="steps">
+  <li><strong>DNS → Records:</strong> yukarıdaki kayıtları ekle ya da var olanı bu içerikle değiştir; proxy açık (turuncu bulut).</li>
+  <li><strong>SSL/TLS → Overview:</strong> <strong>Full (strict)</strong>. Zone'daki başka turuncu kayıtlar geçerli sertifikası olmayan bir sunucuya gidiyorsa zone'u değiştirme; Rules → Configuration Rules ile yalnız bu alan adları için SSL'i Full (strict) yap.</li>
+  <li><strong>SSL/TLS → Edge Certificates:</strong> <strong>Always Use HTTPS</strong> açık (bu sunucu yalnız 443'ten cevap verir).</li>
+  <li>(İsteğe bağlı) <strong>Rules → Redirect Rules:</strong> “Redirect from WWW to root” şablonu, 301, sorgu dizesi korunur.</li>
+</ol>
 {{end}}

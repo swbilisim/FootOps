@@ -53,6 +53,9 @@ func (o *SiteOps) Start(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
+	if err := o.syncCompose(spec, nil); err != nil {
+		return err
+	}
 	base := o.restartBaseline(ctx, spec)
 	if err := o.compose(ctx, spec, "up", "--detach"); err != nil {
 		return fmt.Errorf("site başlatılamadı: %w", err)

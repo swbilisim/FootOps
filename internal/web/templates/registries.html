@@ -1,0 +1,56 @@
+{{template "top" .}}
+{{$f := .Data.F}}
+<a class="crumb" href="/sites">{{icon "back"}}Siteler</a>
+<div class="page-head">
+  <div>
+    <h1>İmaj girişleri</h1>
+    <p class="sub">Özel (private) imajları indirebilmek için sunucunun kayıt defterlerine girişi. Token sunucuda kalır, panelde bir daha gösterilmez.</p>
+  </div>
+</div>
+{{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>Girişler okunamadı: {{.}}</div></div>{{end}}
+{{with .Data.List}}
+<div class="table-wrap">
+<table class="responsive">
+  <thead><tr><th>Kayıt defteri</th><th>Kullanıcı</th><th>Token</th><th></th></tr></thead>
+  <tbody>
+  {{range .}}
+    <tr>
+      <td class="primary mono">{{.Host}}</td>
+      <td data-label="Kullanıcı" class="mono">{{or .User "—"}}</td>
+      <td data-label="Token">
+        {{if .Expires.IsZero}}{{if .Saved.IsZero}}<span class="muted">elle girilmiş</span>{{else}}bitiş tarihi bilinmiyor{{end}}
+        {{else}}{{$d := daysLeft .Expires $.Data.Now}}<span class="badge {{if lt $d 3}}bad{{else if lt $d 14}}warn{{else}}ok{{end}}">{{if lt $d 0}}süresi doldu{{else}}{{$d}} gün kaldı{{end}}</span> <span class="muted small">{{datefmt .Expires}}</span>{{end}}
+        {{with .Scopes}}<div class="cell-sub muted">yetkiler: {{range $i, $sc := .}}{{if $i}}, {{end}}{{$sc}}{{end}}</div>{{end}}
+        {{if not .Saved.IsZero}}<div class="cell-sub muted">kaydedildi {{datefmt .Saved}}{{with .Actor}} · {{.}}{{end}}</div>{{end}}
+      </td>
+      <td class="actions"><a class="btn sm" href="/registries/remove?host={{.Host}}">{{icon "trash"}}Kaldır…</a></td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}{{if not .Data.Err}}<div class="card"><p class="muted">Kayıtlı giriş yok: sunucu yalnız herkese açık imajları indirebilir.</p></div>{{end}}{{end}}
+
+<div class="section-head"><h2>Giriş ekle ya da yenile</h2></div>
+{{template "problems" .Data.Problems}}
+<form method="post" action="/registries" class="card stack">
+  <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+  <div class="row">
+    <label class="field"><span>Kayıt defteri</span>
+      <input name="host" value="{{$f.Host}}" required class="mono" autocapitalize="off" spellcheck="false">
+      <span class="hint">GitHub için <span class="mono">ghcr.io</span></span>
+    </label>
+    <label class="field"><span>Kullanıcı adı</span>
+      <input name="user" value="{{$f.User}}" required autocomplete="off" autocapitalize="off" spellcheck="false">
+      <span class="hint">GitHub kullanıcı adın</span>
+    </label>
+  </div>
+  <label class="field"><span>Token</span>
+    <input type="password" name="token" required autocomplete="new-password" class="mono" spellcheck="false">
+    <span class="hint">GitHub → Settings → Developer settings → Personal access tokens (classic) → yalnız <strong>read:packages</strong>. Bitiş tarihini GitHub'dan okuruz, yaklaşınca uyarırız. Aynı kayıt defterine yeniden giriş eskisinin yerine geçer.</span>
+  </label>
+  <div class="form-actions">
+    <button type="submit" class="primary">{{icon "key"}}Giriş yap ve kaydet</button>
+  </div>
+</form>
+{{template "bottom" .}}

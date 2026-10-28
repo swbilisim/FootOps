@@ -205,6 +205,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	sess := current(r)
 	s.sessions.delete(sess.ID)
+	s.pending.dropSession(sess.ID)
 	s.recordAuth(r, sess.User, "auth.logout", true, "")
 	s.clearCookie(w, r)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
@@ -260,6 +261,7 @@ type alertSummary struct {
 var navOf = map[string]string{
 	"dashboard": "server", "container": "server", "logs": "server", "restart": "server",
 	"sites": "sites", "site": "sites", "site_new": "sites", "site_edit": "sites", "site_confirm": "sites", "job": "sites",
+	"site_form": "sites", "site_review": "sites", "site_move": "sites", "site_dns": "sites", "registries": "sites", "registry_remove": "sites",
 	"import": "sites", "import_preview": "sites", "restore_confirm": "sites",
 	"files": "sites", "files_rename": "sites", "files_move": "sites", "files_trash": "sites", "files_unpack": "sites",
 	"trash": "sites", "trash_empty": "sites", "migrate": "sites", "sources": "sites", "source_confirm": "sites",
@@ -496,6 +498,7 @@ var (
 		"db.recover": "Yarıda kalan işlemi tamamlama", "files.restore": "Dosyaları geri yükleme",
 		"files.unpack": "Arşiv açılıyor", "migrate.discover": "Taşıma — kaynak taranıyor",
 		"migrate.scan": "Taşıma — uygulama klasörü inceleniyor", "migrate.copy": "Taşıma — ön kopya",
+		"image.check": "İmaj kontrolü", "site.move": "Grup değiştiriliyor",
 	}
 	reasonNames = map[string]string{"manual": "elle", "before-import": "içe aktarmadan önce", "before-restore": "geri yüklemeden önce",
 		"before-migrate": "taşımadan önce"}

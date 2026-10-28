@@ -81,7 +81,11 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			cfg := agent.Config{Socket: agent.DefaultSocket, AuditPath: agent.DefaultAuditPath,
 				HistoryPath: agent.DefaultHistory, JobsDir: agent.DefaultJobsDir, SnapshotDir: agent.DefaultSnapshotDir,
 				StagingDir: staging.DefaultRoot, RecoveryDir: agent.DefaultRecoveryDir, PanelUser: agent.PanelUser,
-				SourcesDir: remote.DefaultDir, MigrationsDir: agent.DefaultMigrationsDir}
+				SourcesDir: remote.DefaultDir, MigrationsDir: agent.DefaultMigrationsDir,
+				DockerConfig: os.Getenv("DOCKER_CONFIG"), RegistriesPath: agent.DefaultRegistriesPath}
+			if cfg.DockerConfig == "" {
+				cfg.DockerConfig = agent.DefaultDockerConfig
+			}
 			if p, err := config.Load(config.Path); err == nil {
 				cfg.PanelHost = p.PanelHost
 			}

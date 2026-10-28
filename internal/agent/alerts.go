@@ -46,6 +46,8 @@ const (
 type Alerter struct {
 	// Certs lists installed certificates; nil means certificates are not checked.
 	Certs func() ([]sites.Cert, error)
+	// Registries lists saved registry logins (their token expiry); nil skips them.
+	Registries func() ([]RegistryLogin, error)
 	// OnChange, if set, is called (outside the lock) with alerts that opened or resolved.
 	OnChange func(opened, resolved []Alert)
 
@@ -55,9 +57,10 @@ type Alerter struct {
 	cpu      []timedValue
 	restarts map[string][]timedCount
 
-	certs       []sites.Cert // last read, refreshed every certEvery
+	certs       []sites.Cert // last read, refreshed every certEvery (with regs)
 	certErr     error
 	certsReadAt time.Time
+	regs        []RegistryLogin
 }
 
 type timedValue struct {
@@ -98,17 +101,26 @@ func sortAlerts(list []Alert) {
 // Evaluate checks one overview taken at now.
 func (a *Alerter) Evaluate(o Overview, now time.Time) {
 	a.mu.Lock()
-	refresh := a.Certs != nil && (a.certsReadAt.IsZero() || now.Sub(a.certsReadAt) >= certEvery || now.Before(a.certsReadAt))
+	refresh := (a.Certs != nil || a.Registries != nil) &&
+		(a.certsReadAt.IsZero() || now.Sub(a.certsReadAt) >= certEvery || now.Before(a.certsReadAt))
 	a.mu.Unlock()
 	if refresh {
-		certs, err := a.Certs()
+		var certs []sites.Cert
+		var err error
+		if a.Certs != nil {
+			certs, err = a.Certs()
+		}
+		var regs []RegistryLogin
+		if a.Registries != nil {
+			regs, _ = a.Registries() // an unreadable docker config shows on the registries page
+		}
 		a.mu.Lock()
-		a.certs, a.certErr, a.certsReadAt = certs, err, now
+		a.certs, a.certErr, a.regs, a.certsReadAt = certs, err, regs, now
 		a.mu.Unlock()
 	}
 
 	a.mu.Lock()
-	found := a.conditions(o, a.certs, a.certErr, now)
+	found := append(a.conditions(o, a.certs, a.certErr, now), tokenAlerts(a.regs, now)...)
 	var opened, resolved []Alert
 	seen := map[string]bool{}
 	for _, c := range found {

@@ -1,0 +1,61 @@
+{{template "top" .}}
+{{$s := .Data.S}}
+<div class="form-page">
+<a class="crumb" href="/sites">{{icon "back"}}Siteler</a>
+<div class="page-head">
+  <div>
+    <h1>Yeni site: {{$s.Name}}</h1>
+    <p class="sub">3 / 3 · Özet. Oluştur'a basana kadar hiçbir şey değişmez; bu özet 15 dakika geçerli.</p>
+  </div>
+</div>
+
+<div class="notice info">{{icon "folder"}}<div>Site <strong>{{$s.Group}}</strong> grubuna kurulacak: <span class="mono">/srv/{{$s.Group}}/{{$s.Name}}</span></div></div>
+
+{{range .Data.Warnings}}<div class="notice warn">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
+
+<div class="section-head"><h2>Oluşturulacaklar</h2></div>
+<div class="table-wrap">
+<table class="kv">
+  <tr><th>Klasör</th><td class="mono">/srv/{{$s.Group}}/{{$s.Name}}</td></tr>
+  <tr><th>Docker ağı</th><td class="mono">{{$s.Network}}</td></tr>
+  <tr><th>Container</th><td><span class="mono">{{$s.Name}}</span> · imaj <span class="mono">{{$s.Image}}</span> · port {{$s.Port}} · en çok {{$s.MemoryMB}} MB</td></tr>
+  <tr><th>Kalıcı klasör</th><td>{{if $s.DataMount}}<span class="mono">/srv/{{$s.Group}}/{{$s.Name}}/data → {{$s.DataMount}}</span>{{else}}yok{{end}}</td></tr>
+  <tr><th>Veritabanı</th><td>{{if $s.Database}}MongoDB <span class="mono">{{$s.Name}}</span>, kullanıcı <span class="mono">{{$s.Name}}</span> (rastgele şifre), adres <span class="mono">{{$s.DBVar}}</span> değişkeninde{{else}}yok{{end}}</td></tr>
+  <tr><th>Alan adları</th><td>{{range $i, $d := .Data.Domains}}{{if $i}}<br>{{end}}<span class="mono">{{.Domain}}</span> <span class="muted small">sertifika: {{or .Cert "—"}}</span>{{end}}</td></tr>
+  {{with .Data.Info}}<tr><th>İmaj kontrolü</th><td>{{.Platform}} · {{bytes .Size}}{{if ge .UID 0}} · kullanıcı {{if .User}}{{.User}} {{end}}({{.UID}}){{end}}{{with .Ports}} · EXPOSE {{range $i, $p := .}}{{if $i}}, {{end}}{{$p}}{{end}}{{end}} · <span class="mono">{{.ID}}</span></td></tr>{{else}}<tr><th>İmaj kontrolü</th><td class="muted">yapılmadı; imaj oluştururken indirilecek</td></tr>{{end}}
+</table>
+</div>
+
+<div class="section-head"><h2>Ortam değişkenleri</h2></div>
+{{range .Data.Notes}}<div class="notice info">{{icon "info"}}<div>{{.}}</div></div>{{end}}
+{{with .Data.Env}}
+<p class="muted small">Değerler gösterilmez; yalnız uzunlukları ve dikkat edilecekler.</p>
+<div class="table-wrap">
+<table class="responsive">
+  <thead><tr><th>Değişken</th><th>Uzunluk</th><th>Not</th></tr></thead>
+  <tbody>
+  {{range .}}
+    <tr>
+      <td class="primary mono">{{.Key}}</td>
+      <td data-label="Uzunluk" class="nowrap">{{.Chars}} karakter</td>
+      <td data-label="Not"><span class="env-note">{{if .Warn}}<span class="badge warn">dikkat</span> {{end}}{{range $i, $n := .Notes}}{{if $i}}<br>{{end}}{{$n}}{{else}}<span class="muted">—</span>{{end}}</span></td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}<div class="card"><p class="muted">Ortam değişkeni yok{{if $s.Database}} (veritabanı adresi panelden gelecek){{end}}.</p></div>{{end}}
+
+<div class="section-head"><h2>Sonra Cloudflare'de</h2></div>
+<p class="muted small">Site oluşunca bu sunucuda HTTPS ile cevap verir; ziyaretçiler için DNS'i sen açarsın (site sayfasında da yazar).</p>
+{{template "dnsguide" .Data.DNS}}
+
+<form method="post" action="/sites/new/review/{{.Data.ID}}" class="form-actions">
+  <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+  <button type="submit" name="action" value="create" class="primary">{{icon "plus"}}Siteyi oluştur</button>
+  <button type="submit" name="action" value="edit" class="btn">{{icon "edit"}}Geri dön, düzelt</button>
+  <a class="btn" href="/sites">Vazgeç</a>
+</form>
+<p class="hint">Oluşturma bir adımda başarısız olursa yapılanların hepsi geri alınır.</p>
+</div>
+{{template "bottom" .}}

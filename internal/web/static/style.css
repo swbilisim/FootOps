@@ -555,3 +555,12 @@ td.actions form + .btn, td.actions .btn + form button { margin-left: 6px; }
 @media (max-width: 719px) { table.responsive td.actions form + .btn, table.responsive td.actions .btn + form button { margin-left: 0; } }
 .card > input[type="hidden"] + h3 { margin-top: 0; }
 details.more + .notice, .table-wrap + details.more + .notice { margin-top: 12px; }
+
+/* F6: new-site flow */
+.notice.ok { background: var(--ok-soft); border-color: transparent; color: var(--text); }
+.notice.ok .i { color: var(--ok); }
+.env-file { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 12px; }
+.env-file[hidden] { display: none; }
+.env-file label.btn { cursor: pointer; }
+.env-file label.btn:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 719px) { table.responsive td .env-note { text-align: left; } }

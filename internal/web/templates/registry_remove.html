@@ -1,0 +1,18 @@
+{{template "top" .}}
+<div class="dialog">
+  <a class="crumb" href="/registries">{{icon "back"}}İmaj girişleri</a>
+  <div class="card">
+    <div class="dialog-icon bad">{{icon "trash"}}</div>
+    <h1>{{.Data.Host}} girişi kaldırılsın mı?</h1>
+    <p>Sunucu bu kayıt defterindeki özel imajları artık indiremez: o imajlarla yeni site kurmak ve yeniden dağıtmak başarısız olur. Çalışan siteler etkilenmez.</p>
+    <form method="post" action="/registries/remove">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <input type="hidden" name="host" value="{{.Data.Host}}">
+      <div class="form-actions">
+        <button type="submit" class="danger">{{icon "trash"}}Kaldır</button>
+        <a class="btn" href="/registries">Vazgeç</a>
+      </div>
+    </form>
+  </div>
+</div>
+{{template "bottom" .}}

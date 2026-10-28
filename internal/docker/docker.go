@@ -133,6 +133,7 @@ func (c *Client) Containers(ctx context.Context) ([]Container, error) {
 type Inspect struct {
 	ID           string `json:"Id"`
 	Name         string `json:"Name"`
+	Image        string `json:"Image"` // the image ID the container was created from`
 	RestartCount int    `json:"RestartCount"`
 	State        struct {
 		Status    string `json:"Status"`

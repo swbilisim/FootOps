@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"html"
 	"io"
@@ -157,6 +158,22 @@ func (p *previewAgent) Job(_ context.Context, id string) (agent.Job, error) {
 				"✓ Kalıcı klasör değiştirildi (tamamen değiştir); önceki hali data.old-20261028-090001, 7 gün saklanır",
 				"✓ Site başlatıldı", "✓ Site sağlıklı cevap veriyor",
 				"✓ Ön kopya tamam: site bu sunucuda kaynaktaki verinin kopyasıyla çalışıyor; DNS hâlâ eski sunucuyu gösteriyor"}}, nil
+	}
+	if id == "imgcheck" || id == "imgfail" {
+		info := agent.ImageInfo{Image: "ghcr.io/ornek/magaza:main", ID: "4f2a9c1b7d3e", Size: 312 << 20, Platform: "linux/amd64",
+			Server: "linux/amd64", User: "nextjs", UID: 1001, GID: 1001, Ports: []int{3000}, Volumes: []string{"/app/uploads"},
+			EnvKeys: []string{"HOSTNAME", "NODE_ENV", "PORT"}, EnvPort: "3000", EnvHostname: "0.0.0.0", Created: time.Now().Add(-5 * time.Hour)}
+		b, _ := json.Marshal(info)
+		j := agent.Job{ID: id, Kind: "image.check", Target: info.Image, Started: time.Now().Add(-14 * time.Second), Finished: time.Now(), Done: true,
+			Steps: []string{"İmaj indiriliyor (ya da güncel mi diye bakılıyor): " + info.Image, "✓ İmaj hazır: 312.0 MB, linux/amd64, 4f2a9c1b7d3e (12.8 sn)",
+				"✓ Kullanıcı: nextjs (uid 1001, gid 1001)", "✓ Port önerisi: 3000 (EXPOSE)", "ℹ İmajın veri klasörleri (VOLUME): /app/uploads"},
+			Result: string(b)}
+		if id == "imgfail" {
+			j.Steps, j.Result = j.Steps[:1], ""
+			j.Err = "imaja erişim yok: özel bir imajsa bu sunucuda kayıt defterine giriş yapılmamış ya da token'ın bu pakete okuma izni yok (İmaj girişleri sayfası) (Error response from daemon: unauthorized)"
+			j.Steps = append(j.Steps, "✗ "+j.Err)
+		}
+		return j, nil
 	}
 	if id == "done" {
 		j.Done, j.Finished, j.Result = true, time.Now(), "20261027-110000"
@@ -320,6 +337,20 @@ var previewSource = agent.SourceView{Source: remote.Source{ID: "kaynak000001", L
 	PublicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOrnek footops-h1-kaynak000001", HostKeys: []string{"ED25519 SHA256:3fQkV0mF6c1x2pXq9Zr0b8yWk4u7Lh1sQe2nTt5aBcD"},
 	Checked: time.Now().Add(-40 * time.Minute), System: "CentOS Linux 7 (Core) · 3.10.0-1160.el7.x86_64", Created: time.Now().Add(-2 * time.Hour)},
 	UsedBy: []string{"magaza"}}
+
+func (p *previewAgent) Registries(context.Context) ([]agent.RegistryLogin, error) {
+	return []agent.RegistryLogin{
+		{Host: "ghcr.io", User: "ornek", Saved: time.Now().Add(-80 * 24 * time.Hour), Actor: "admin", Expires: time.Now().Add(10 * 24 * time.Hour), Scopes: []string{"read:packages"}},
+		{Host: "registry.example.com:5000", User: "deploy"},
+	}, nil
+}
+
+func (p *previewAgent) SiteDNS(_ context.Context, site string) ([]agent.DomainCheck, error) {
+	return []agent.DomainCheck{
+		{Domain: site + ".example.com", DNS: "cloudflare", IPs: []string{"104.21.32.1", "172.67.150.2"}, Public: 200, CFRay: true, Local: 200},
+		{Domain: "www." + site + ".example.com", DNS: "elsewhere", IPs: []string{"203.0.113.20"}, Public: 502, CFRay: true, Local: 200},
+	}, nil
+}
 
 func (p *previewAgent) Sources(context.Context) ([]agent.SourceView, error) {
 	fresh := agent.SourceView{Source: remote.Source{ID: "kaynak000002", Label: "arkadaşın sunucusu", Host: "eski.example.net", Port: 2222, User: "root",

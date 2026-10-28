@@ -1,7 +1,7 @@
 {{template "top" .}}
 {{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
 {{with .Data.J}}
-{{if eq .Kind "site.create" "site.remove" "db.recover"}}<a class="crumb" href="/sites">{{icon "back"}}Siteler</a>{{else}}<a class="crumb" href="/sites/{{.Target}}">{{icon "back"}}{{.Target}}</a>{{end}}
+{{if eq .Kind "image.check"}}<a class="crumb" href="/sites/new?tpl={{$.Data.Tpl}}&amp;image={{.Target}}">{{icon "back"}}Yeni site</a>{{else if eq .Kind "site.create" "site.remove" "db.recover"}}<a class="crumb" href="/sites">{{icon "back"}}Siteler</a>{{else}}<a class="crumb" href="/sites/{{.Target}}">{{icon "back"}}{{.Target}}</a>{{end}}
 <div class="page-head">
   <div>
     <h1>{{jobTitle .Kind}}: {{.Target}}</h1>
@@ -35,9 +35,14 @@
     {{else}}{{$t := .Target}}{{range undoLinks .Result}}<a class="btn" href="/sites/{{$t}}/{{.Path}}/restore">{{icon "undo"}}{{.Label}}</a>{{end}}{{end}}
   {{end}}
   {{if eq .Kind "files.unpack"}}<a class="btn primary" href="/sites/{{.Target}}/files?dir={{.Result}}">{{icon "folder"}}Klasöre dön</a>{{end}}
+  {{if eq .Kind "image.check"}}
+    {{if .Err}}<a class="btn primary" href="/sites/new?tpl={{$.Data.Tpl}}&amp;image={{.Target}}">{{icon "back"}}İmaja dön</a><a class="btn" href="/registries">{{icon "key"}}İmaj girişleri</a>
+    {{else}}<a class="btn primary" href="/sites/new/form?check={{.ID}}&amp;tpl={{$.Data.Tpl}}">Forma geç{{icon "next"}}</a>{{end}}
+  {{end}}
+  {{if and (eq .Kind "site.create") (not .Err)}}<a class="btn" href="/sites/{{.Target}}#dns">{{icon "globe"}}DNS adımları</a>{{end}}
   {{if and .Err (eq .Kind "import.check" "import.apply")}}<a class="btn" href="/sites/{{.Target}}/import">{{icon "upload"}}Başka dosya yükle</a>{{end}}
-  {{if and (not .Err) (not (eq .Kind "site.remove" "db.recover"))}}<a class="btn{{if not (or $linked (eq .Kind "migrate.discover" "migrate.scan" "migrate.copy"))}} primary{{end}}" href="/sites/{{.Target}}">Siteye git</a>{{end}}
-  <a class="btn" href="/sites">Siteler</a>
+  {{if and (not .Err) (not (eq .Kind "site.remove" "db.recover" "image.check"))}}<a class="btn{{if not (or $linked (eq .Kind "migrate.discover" "migrate.scan" "migrate.copy"))}} primary{{end}}" href="/sites/{{.Target}}">Siteye git</a>{{end}}
+  {{if ne .Kind "image.check"}}<a class="btn" href="/sites">Siteler</a>{{end}}
 </div>
 {{end}}
 </div>

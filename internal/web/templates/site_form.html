@@ -1,0 +1,91 @@
+{{template "top" .}}
+{{$f := .Data.F}}
+<div class="form-page">
+<a class="crumb" href="/sites/new?tpl={{$f.Template}}&amp;image={{$f.Image}}">{{icon "back"}}İmaj</a>
+<div class="page-head">
+  <div>
+    <h1>Yeni site</h1>
+    <p class="sub">2 / 3 · Ayarlar. Sonraki adımda ne oluşturulacağını gözden geçirirsin; o ana kadar hiçbir şey değişmez.</p>
+  </div>
+</div>
+{{template "problems" .Data.Problems}}
+{{with .Data.Info}}
+<div class="notice ok">{{icon "check"}}<div><strong>İmaj kontrol edildi:</strong> <span class="mono">{{.Image}}</span> · {{bytes .Size}} · {{.Platform}}{{if ge .UID 0}} · kullanıcı {{if .User}}{{.User}} {{end}}({{.UID}}){{end}}{{with .Ports}} · port {{range $i, $p := .}}{{if $i}}, {{end}}{{$p}}{{end}}{{end}}{{with .Volumes}} · VOLUME {{range $i, $v := .}}{{if $i}}, {{end}}<span class="mono">{{$v}}</span>{{end}}{{end}}. Port{{if .Volumes}} ve kalıcı klasör{{end}} buna göre önerildi.</div></div>
+{{end}}
+<form method="post" action="/sites/new/form" class="stack">
+  <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+  <input type="hidden" name="template" value="{{$f.Template}}">
+  <input type="hidden" name="check" value="{{$f.Check}}">
+
+  <fieldset>
+    <legend>Site</legend>
+    <div class="row">
+      <label class="field"><span>Proje adı</span>
+        <input name="name" value="{{$f.Name}}" required pattern="[a-z][a-z0-9-]{1,30}[a-z0-9]" placeholder="ornek-site" autocapitalize="off" spellcheck="false">
+        <span class="hint">küçük harf, rakam, tire. Container ve veritabanı adı da bu olur.</span>
+      </label>
+      <label class="field"><span>Grup</span>
+        <select name="group" required>
+          <option value=""{{if not $f.Group}} selected{{end}} disabled>Seç…</option>
+          {{range .Data.Groups}}<option value="{{.}}"{{if eq . $f.Group}} selected{{end}}>{{.}}</option>{{end}}
+        </select>
+        <span class="hint">klasör: /srv/&lt;grup&gt;/&lt;proje&gt;. Sonra site sayfasından değiştirilebilir.</span>
+      </label>
+    </div>
+    <label class="field"><span>Alan adları</span>
+      <textarea name="domains" rows="3" required placeholder="ornek.com&#10;www.ornek.com" autocapitalize="off" spellcheck="false">{{$f.Domains}}</textarea>
+      <span class="hint">her satıra bir tane; hepsi için yüklenmiş bir Cloudflare Origin sertifikası olmalı (<a href="/certs">Sertifikalar</a>)</span>
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Uygulama</legend>
+    <label class="field"><span>Docker imajı</span>
+      <input name="image" value="{{$f.Image}}" required placeholder="ghcr.io/kullanici/ornek-site:main" class="mono" autocapitalize="off" spellcheck="false">
+      <span class="hint">özel imajlar için sunucunun girişi olmalı: <a href="/registries">İmaj girişleri</a></span>
+    </label>
+    <div class="row">
+      <label class="field"><span>Uygulama portu</span>
+        <input name="port" value="{{$f.Port}}" inputmode="numeric" required>
+        <span class="hint">uygulamanın container içinde dinlediği port</span>
+      </label>
+      <label class="field"><span>Bellek sınırı (MB)</span>
+        <input name="memory_mb" value="{{$f.MemoryMB}}" inputmode="numeric" required>
+        <span class="hint">aşarsa container yeniden başlatılır</span>
+      </label>
+    </div>
+    <label class="field"><span>Kalıcı klasör (isteğe bağlı)</span>
+      <input name="data_mount" value="{{$f.DataMount}}" placeholder="/app/uploads" class="mono" autocapitalize="off" spellcheck="false">
+      <span class="hint">container içindeki yol; yüklenen dosyalar burada kalır (sunucuda /srv/&lt;grup&gt;/&lt;proje&gt;/data)</span>
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Veritabanı</legend>
+    <label class="check"><input type="checkbox" name="database"{{if $f.Database}} checked{{end}}> MongoDB veritabanı ve kullanıcısı oluştur</label>
+    <label class="field"><span>Bağlantı adresinin verileceği değişken</span>
+      <input name="db_var" value="{{$f.DBVar}}" list="dbvars" class="mono" autocapitalize="off" spellcheck="false">
+      <datalist id="dbvars">{{range .Data.DBVars}}<option value="{{.}}">{{end}}</datalist>
+      <span class="hint">uygulamanın okuduğu ad. Veriyi bilgisayarından getirmek için site oluşunca: <span class="mono">mongodump --archive=yedek.gz --gzip --db &lt;ad&gt;</span> → site sayfası → İçe aktar</span>
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Ortam değişkenleri</legend>
+    <div class="env-file" data-env-file="env" hidden>
+      <label class="btn sm">{{icon "upload"}}<span>.env dosyasından ekle</span><input type="file" accept=".env,text/plain,*/*" class="sr"></label>
+      <span class="hint" data-env-msg>Dosya tarayıcında okunur ve aşağıya eklenir; ayrıca bir yere yüklenmez.</span>
+    </div>
+    <label class="field"><span>.env biçiminde, her satıra bir değişken</span>
+      <textarea id="env" name="env" rows="9" class="mono" placeholder="NODE_ENV=production&#10;SESSION_SECRET=...&#10;# yorum satırları ve tırnaklı değerler olur" autocomplete="off" autocapitalize="off" spellcheck="false">{{$f.Env}}</textarea>
+      <span class="hint"><span class="mono">KEY=değer</span>, <span class="mono">export KEY=değer</span>, tırnaklı ve çok satırlı değerler; <span class="mono">$</span> olduğu gibi kalır. Değerler sunucuda yalnız root'un okuyabildiği dosyada saklanır ve panelde bir daha gösterilmez{{if $f.Database}}; veritabanı değişkeni burada olsa da kullanılmaz{{end}}.</span>
+    </label>
+  </fieldset>
+
+  <div class="form-actions">
+    <button type="submit" class="primary">Devam: özet{{icon "next"}}</button>
+    <a class="btn" href="/sites">Vazgeç</a>
+  </div>
+</form>
+</div>
+{{template "bottom" .}}

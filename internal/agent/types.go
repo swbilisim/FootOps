@@ -152,3 +152,36 @@ type ConfirmRequest struct {
 	Confirm string `json:"confirm"`
 	Actor   Actor  `json:"actor"`
 }
+
+// CheckImageRequest starts pulling and inspecting an image for a new site.
+type CheckImageRequest struct {
+	Image string `json:"image"`
+	Actor Actor  `json:"actor"`
+}
+
+// RegistryLoginRequest saves a registry login. Token is a secret: it goes to docker
+// login's stdin and is never logged or sent back.
+type RegistryLoginRequest struct {
+	Host  string `json:"host"`
+	User  string `json:"user"`
+	Token string `json:"token"`
+	Actor Actor  `json:"actor"`
+}
+
+// RegistryLoginResponse is the saved login and what is worth knowing about its token.
+type RegistryLoginResponse struct {
+	Login RegistryLogin `json:"login"`
+	Notes []string      `json:"notes,omitempty"`
+}
+
+type RegistryLogoutRequest struct {
+	Host  string `json:"host"`
+	Actor Actor  `json:"actor"`
+}
+
+// MoveSiteRequest moves a site to another group. Confirm must be the site's name.
+type MoveSiteRequest struct {
+	Group   string `json:"group"`
+	Confirm string `json:"confirm"`
+	Actor   Actor  `json:"actor"`
+}

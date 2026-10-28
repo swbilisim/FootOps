@@ -38,6 +38,13 @@ type AgentAPI interface {
 	AuditTail(ctx context.Context, limit int) ([]agent.AuditEntry, error)
 	Sites(ctx context.Context) ([]agent.SiteStatus, error)
 	CreateSite(ctx context.Context, req agent.CreateSiteRequest) (string, error)
+	CheckSite(ctx context.Context, req agent.CreateSiteRequest) (sites.Spec, error)
+	CheckImage(ctx context.Context, image string, a agent.Actor) (string, error)
+	MoveSite(ctx context.Context, name, group, confirm string, a agent.Actor) (string, error)
+	SiteDNS(ctx context.Context, name string) ([]agent.DomainCheck, error)
+	Registries(ctx context.Context) ([]agent.RegistryLogin, error)
+	RegistryLogin(ctx context.Context, host, user, token string, a agent.Actor) (agent.RegistryLoginResponse, error)
+	RegistryLogout(ctx context.Context, host string, a agent.Actor) error
 	UpdateSite(ctx context.Context, name string, req agent.UpdateSiteRequest) (string, error)
 	SiteJob(ctx context.Context, name, verb string, a agent.Actor) (string, error)
 	Job(ctx context.Context, id string) (agent.Job, error)
@@ -105,8 +112,9 @@ type Server struct {
 	store    *auth.Store
 	access   AccessVerifier // nil when Cloudflare Access is not configured
 	sessions *sessions
-	ipLimit  *limiter // login attempts per client IP
-	allLimit *limiter // login attempts overall (distributed guessing)
+	pending  *pendingStore // new sites between the form and their review
+	ipLimit  *limiter      // login attempts per client IP
+	allLimit *limiter      // login attempts overall (distributed guessing)
 	tmpl     *template.Template
 	now      func() time.Time
 	log      *log.Logger
@@ -121,6 +129,7 @@ func NewServer(cfg config.Panel, a AgentAPI, store *auth.Store, access AccessVer
 	return &Server{
 		cfg: cfg, agent: a, store: store, access: access, log: logger, tmpl: t, now: now,
 		sessions: newSessions(now),
+		pending:  newPendingStore(now),
 		ipLimit:  newLimiter(10, 10*time.Minute, now),
 		allLimit: newLimiter(50, 10*time.Minute, now),
 	}, nil
@@ -158,7 +167,18 @@ func (s *Server) Handler(via string) http.Handler {
 	mux.Handle("GET /audit", s.requireSession(s.audit))
 	mux.Handle("GET /sites", s.requireSession(s.sitesList))
 	mux.Handle("GET /sites/new", s.requireSession(s.siteNew))
-	mux.Handle("POST /sites/new", s.requireSession(s.siteCreate))
+	mux.Handle("POST /sites/new", s.requireSession(s.siteNewImage))
+	mux.Handle("GET /sites/new/form", s.requireSession(s.siteNewForm))
+	mux.Handle("POST /sites/new/form", s.requireSession(s.siteNewReview))
+	mux.Handle("GET /sites/new/review/{id}", s.requireSession(s.siteNewReviewPage))
+	mux.Handle("POST /sites/new/review/{id}", s.requireSession(s.siteNewCreate))
+	mux.Handle("GET /sites/{name}/move", s.requireSession(s.siteMoveForm))
+	mux.Handle("POST /sites/{name}/move", s.requireSession(s.siteMove))
+	mux.Handle("GET /sites/{name}/dns", s.requireSession(s.siteDNS))
+	mux.Handle("GET /registries", s.requireSession(s.registries))
+	mux.Handle("POST /registries", s.requireSession(s.registryLogin))
+	mux.Handle("GET /registries/remove", s.requireSession(s.registryRemoveConfirm))
+	mux.Handle("POST /registries/remove", s.requireSession(s.registryRemove))
 	mux.Handle("GET /sites/{name}", s.requireSession(s.site))
 	mux.Handle("GET /sites/{name}/edit", s.requireSession(s.siteEdit))
 	mux.Handle("POST /sites/{name}/edit", s.requireSession(s.siteUpdate))
@@ -364,6 +384,7 @@ func (s *Server) Run(ctx context.Context) error {
 				return
 			case <-t.C:
 				s.sessions.sweep()
+				s.pending.sweep() // an abandoned review's secrets do not stay in memory
 			}
 		}
 	}()

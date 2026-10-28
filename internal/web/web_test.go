@@ -61,6 +61,7 @@ type fakeAgent struct {
 	dataURL   string
 	fm        fakeFM  // the file manager (files_test.go)
 	mig       fakeMig // moving sites (migrate_test.go)
+	f6        fakeF6  // new-site flow, registries, groups, DNS (newsite_test.go)
 }
 
 func (f *fakeAgent) Overview(context.Context) (agent.Overview, error) {
@@ -362,6 +363,7 @@ func newEnv(t *testing.T) *env {
 	clock := time.Now()
 	s.now = func() time.Time { return clock }
 	s.sessions.now = s.now
+	s.pending.now = s.now
 	e := &env{srv: s, agent: fa, access: acc, secret: secret, clock: &clock}
 	e.local = httptest.NewServer(s.Handler(viaSSH))
 	// Browsers reach the tunnel over HTTPS (Cloudflare), so the test does too: Secure

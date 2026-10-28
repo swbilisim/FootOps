@@ -6,7 +6,7 @@
 <div class="page-head">
   <div>
     <h1>Siteyi düzenle</h1>
-    <p class="sub"><span class="chip">{{$s.Group}}</span> ad, grup ve veritabanı değiştirilemez</p>
+    <p class="sub"><span class="chip">{{$s.Group}}</span> ad ve veritabanı değiştirilemez; grup site sayfasından değiştirilir</p>
   </div>
 </div>
 {{template "problems" .Data.Problems}}
@@ -51,10 +51,20 @@
     </div>
     {{end}}
     {{if $s.Database}}<p class="hint"><span class="mono">{{$s.DBVar}}</span> veritabanı bağlantısıdır; FootOps yönetir, burada değişmez.</p>{{end}}
-    <label class="field"><span>Eklenecek veya değişecek değişkenler (KEY=DEĞER)</span>
-      <textarea name="env" rows="6" class="mono" placeholder="NODE_ENV=production" autocomplete="off" autocapitalize="off" spellcheck="false">{{$f.Env}}</textarea>
-      <span class="hint">sadece burada yazdıkların değişir; diğerleri olduğu gibi kalır</span>
+    <div class="env-file" data-env-file="env" hidden>
+      <label class="btn sm">{{icon "upload"}}<span>.env dosyasından ekle</span><input type="file" accept=".env,text/plain,*/*" class="sr"></label>
+      <span class="hint" data-env-msg>Dosya tarayıcında okunur ve aşağıya eklenir; ayrıca bir yere yüklenmez.</span>
+    </div>
+    <label class="field"><span>Eklenecek veya değişecek değişkenler (.env biçiminde)</span>
+      <textarea id="env" name="env" rows="6" class="mono" placeholder="NODE_ENV=production" autocomplete="off" autocapitalize="off" spellcheck="false">{{$f.Env}}</textarea>
+      <span class="hint">sadece burada yazdıkların değişir; diğerleri olduğu gibi kalır. Tırnaklı ve çok satırlı değerler olur, <span class="mono">$</span> olduğu gibi kalır.</span>
     </label>
+    {{with .Data.EnvNotes}}
+    <div class="notice warn">{{icon "alert"}}<div><strong>Dikkat edilecekler</strong> (değerler gösterilmez)
+      <ul>{{range .}}<li><span class="mono">{{.Key}}</span> ({{.Chars}} karakter): {{range $i, $n := .Notes}}{{if $i}}; {{end}}{{$n}}{{end}}</li>{{end}}</ul>
+    </div></div>
+    <label class="check"><input type="checkbox" name="env_ack"> Gördüm, bu değerlerle uygula</label>
+    {{end}}
   </fieldset>
 
   <div class="notice info">{{icon "info"}}<div>Kaydedince container yeni ayarlarla yeniden oluşturulur (birkaç saniye kesinti). Site ayağa kalkmazsa eski ayarlara otomatik dönülür.</div></div>

@@ -31,6 +31,7 @@ var iconPaths = map[string]string{
 	"info":     `<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>`,
 	"external": `<path d="M14 4h6v6M20 4l-9 9M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/>`,
 	"back":     `<path d="M15 6l-6 6 6 6"/>`,
+	"next":     `<path d="M9 6l6 6-6 6"/>`,
 	"box":      `<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>`,
 	"pause":    `<path d="M9 5v14M15 5v14"/>`,
 	"play":     `<path d="M7 5l12 7-12 7z"/>`,

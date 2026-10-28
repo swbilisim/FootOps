@@ -24,7 +24,7 @@ func validSpec() Spec {
 }
 
 func TestValidate(t *testing.T) {
-	if err := validSpec().Validate(map[string]string{"NODE_ENV": "production"}); err != nil {
+	if err := validSpec().Validate(map[string]string{"NODE_ENV": "production", "PEM": "-----BEGIN-----\nabc\n-----END-----"}); err != nil {
 		t.Fatalf("valid spec rejected: %v", err)
 	}
 	cases := map[string]func(*Spec, map[string]string){
@@ -41,7 +41,8 @@ func TestValidate(t *testing.T) {
 		"relative mount":   func(s *Spec, _ map[string]string) { s.DataMount = "uploads" },
 		"root mount":       func(s *Spec, _ map[string]string) { s.DataMount = "/" },
 		"bad env key":      func(_ *Spec, e map[string]string) { e["1BAD"] = "x" },
-		"newline in value": func(_ *Spec, e map[string]string) { e["A"] = "x\ny" },
+		"carriage return":  func(_ *Spec, e map[string]string) { e["A"] = "x\ry" },
+		"NUL in value":     func(_ *Spec, e map[string]string) { e["A"] = "x\x00y" },
 		"db var collision": func(_ *Spec, e map[string]string) { e["MONGODB_URI"] = "mongodb://elsewhere" },
 	}
 	for name, mutate := range cases {
@@ -61,22 +62,6 @@ func TestNormalize(t *testing.T) {
 	s.Normalize()
 	if s.Name != "enisparta" || s.Group != "musteri" || strings.Join(s.Domains, ",") != "enisparta.com,www.enisparta.com" || s.DBVar != "MONGODB_URI" {
 		t.Errorf("normalized = %+v", s)
-	}
-}
-
-func TestParseEnv(t *testing.T) {
-	env, err := ParseEnv("# comment\nNODE_ENV=production\n\nSECRET=a=b=c\nQUOTED=\"kept\"\r\n")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if env["SECRET"] != "a=b=c" || env["QUOTED"] != `"kept"` || len(env) != 3 {
-		t.Errorf("env = %v", env)
-	}
-	if _, err := ParseEnv("A=1\nA=2"); err == nil {
-		t.Error("duplicate key accepted")
-	}
-	if _, err := ParseEnv("just text"); err == nil {
-		t.Error("line without = accepted")
 	}
 }
 
@@ -216,6 +201,26 @@ func TestStoreListAndConflicts(t *testing.T) {
 	}
 	if _, err := st.Get("nope"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("get missing: %v", err)
+	}
+}
+
+// A move between groups renames the directory before footops.json is rewritten: the
+// directory's place decides the group, so a move cut short in between is consistent.
+func TestStoreListGroupFromDirectory(t *testing.T) {
+	st := Store{Root: t.TempDir()}
+	a := validSpec()
+	if err := st.WriteMeta(a); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(st.Root, "/srv/kisisel"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(st.Root, a.Dir()), filepath.Join(st.Root, "/srv/kisisel", a.Name)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.Get(a.Name)
+	if err != nil || got.Group != "kisisel" || got.Dir() != "/srv/kisisel/enisparta" || got.Network() != "prj_kisisel_enisparta" {
+		t.Fatalf("got %+v, %v", got, err)
 	}
 }
 

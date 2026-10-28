@@ -173,6 +173,52 @@ func (c *Client) CreateSite(ctx context.Context, req CreateSiteRequest) (string,
 	return r.JobID, err
 }
 
+// CheckSite validates a new site without creating it; it returns the normalized spec.
+func (c *Client) CheckSite(ctx context.Context, req CreateSiteRequest) (sites.Spec, error) {
+	var sp sites.Spec
+	err := c.call(ctx, http.MethodPost, "/v1/sites/check", req, &sp)
+	return sp, err
+}
+
+// CheckImage starts an image check job.
+func (c *Client) CheckImage(ctx context.Context, image string, a Actor) (string, error) {
+	var r JobResponse
+	err := c.call(ctx, http.MethodPost, "/v1/images/check", CheckImageRequest{Image: image, Actor: a}, &r)
+	return r.JobID, err
+}
+
+// MoveSite starts moving a site to another group.
+func (c *Client) MoveSite(ctx context.Context, name, group, confirm string, a Actor) (string, error) {
+	var r JobResponse
+	err := c.call(ctx, http.MethodPost, "/v1/sites/"+url.PathEscape(name)+"/move", MoveSiteRequest{Group: group, Confirm: confirm, Actor: a}, &r)
+	return r.JobID, err
+}
+
+// SiteDNS checks where a site's domains point.
+func (c *Client) SiteDNS(ctx context.Context, name string) ([]DomainCheck, error) {
+	var out []DomainCheck
+	err := c.call(ctx, http.MethodGet, "/v1/sites/"+url.PathEscape(name)+"/dns", nil, &out)
+	return out, err
+}
+
+// Registries lists the saved registry logins (no tokens).
+func (c *Client) Registries(ctx context.Context) ([]RegistryLogin, error) {
+	var out []RegistryLogin
+	err := c.call(ctx, http.MethodGet, "/v1/registries", nil, &out)
+	return out, err
+}
+
+// RegistryLogin saves a login; the token only travels to the agent.
+func (c *Client) RegistryLogin(ctx context.Context, host, user, token string, a Actor) (RegistryLoginResponse, error) {
+	var out RegistryLoginResponse
+	err := c.call(ctx, http.MethodPost, "/v1/registries", RegistryLoginRequest{Host: host, User: user, Token: token, Actor: a}, &out)
+	return out, err
+}
+
+func (c *Client) RegistryLogout(ctx context.Context, host string, a Actor) error {
+	return c.call(ctx, http.MethodPost, "/v1/registries/remove", RegistryLogoutRequest{Host: host, Actor: a}, nil)
+}
+
 // SiteJob starts "redeploy" or "remove" for a site.
 func (c *Client) SiteJob(ctx context.Context, name, verb string, a Actor) (string, error) {
 	var r JobResponse

@@ -1,11 +1,10 @@
 {{template "top" .}}
-{{$f := .Data.F}}
 <div class="form-page">
 <a class="crumb" href="/sites">{{icon "back"}}Siteler</a>
 <div class="page-head">
   <div>
     <h1>Yeni site</h1>
-    <p class="sub">Panel container'ı, ağı, Caddy'yi ve istersen veritabanını hazırlar; bir adım başarısız olursa hepsi geri alınır.</p>
+    <p class="sub">1 / 3 · İmaj. Önce uygulamanın Docker imajını kontrol edelim: indirilebiliyor mu, hangi portu dinliyor, nereye dosya yazıyor.</p>
   </div>
 </div>
 {{template "problems" .Data.Problems}}
@@ -13,68 +12,30 @@
   <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
 
   <fieldset>
-    <legend>Site</legend>
-    <div class="row">
-      <label class="field"><span>Proje adı</span>
-        <input name="name" value="{{$f.Name}}" required pattern="[a-z][a-z0-9-]{1,30}[a-z0-9]" placeholder="ornek-site" autocapitalize="off" spellcheck="false">
-        <span class="hint">küçük harf, rakam, tire. Container ve veritabanı adı da bu olur.</span>
-      </label>
-      <label class="field"><span>Grup</span>
-        <select name="group">
-          {{range .Data.Groups}}<option value="{{.}}"{{if eq . $f.Group}} selected{{end}}>{{.}}</option>{{end}}
-        </select>
-        <span class="hint">klasör: /srv/&lt;grup&gt;/&lt;proje&gt;</span>
-      </label>
+    <legend>Uygulama türü</legend>
+    <div class="choices" role="radiogroup" aria-label="Uygulama türü">
+      {{range .Data.Templates}}
+      <label class="choice"><input type="radio" name="template" value="{{.ID}}"{{if eq .ID $.Data.Tpl}} checked{{end}}>
+        <span><strong>{{.Label}}</strong>{{if .Hint}}<br><span class="muted small">{{.Hint}} · port {{.Port}}, {{.MemoryMB}} MB{{if .Database}}, veritabanı{{end}}</span>{{end}}</span></label>
+      {{end}}
     </div>
-    <label class="field"><span>Alan adları</span>
-      <textarea name="domains" rows="3" required placeholder="ornek.com&#10;www.ornek.com" autocapitalize="off" spellcheck="false">{{$f.Domains}}</textarea>
-      <span class="hint">her satıra bir tane; hepsi için yüklenmiş bir Cloudflare Origin sertifikası olmalı</span>
-    </label>
+    <p class="hint">Yalnız formu önceden doldurur; her şeyi sonra değiştirebilirsin.</p>
   </fieldset>
 
   <fieldset>
-    <legend>Uygulama</legend>
-    <label class="field"><span>Docker imajı</span>
-      <input name="image" value="{{$f.Image}}" required placeholder="ghcr.io/kullanici/ornek-site:main" class="mono" autocapitalize="off" spellcheck="false">
-      <span class="hint">GitHub Actions'ın GHCR'ye yüklediği imaj (şimdilik public olmalı)</span>
-    </label>
-    <div class="row">
-      <label class="field"><span>Uygulama portu</span>
-        <input name="port" value="{{$f.Port}}" inputmode="numeric" required>
-        <span class="hint">uygulamanın container içinde dinlediği port</span>
-      </label>
-      <label class="field"><span>Bellek sınırı (MB)</span>
-        <input name="memory_mb" value="{{$f.MemoryMB}}" inputmode="numeric" required>
-        <span class="hint">aşarsa container yeniden başlatılır</span>
-      </label>
-    </div>
-    <label class="field"><span>Kalıcı klasör (isteğe bağlı)</span>
-      <input name="data_mount" value="{{$f.DataMount}}" placeholder="/app/uploads" class="mono" autocapitalize="off" spellcheck="false">
-      <span class="hint">container içindeki yol; yüklenen dosyalar burada kalır (sunucuda /srv/&lt;grup&gt;/&lt;proje&gt;/data)</span>
-    </label>
-  </fieldset>
-
-  <fieldset>
-    <legend>Veritabanı</legend>
-    <label class="check"><input type="checkbox" name="database"{{if $f.Database}} checked{{end}}> MongoDB veritabanı ve kullanıcısı oluştur</label>
-    <label class="field"><span>Bağlantı adresinin verileceği değişken</span>
-      <input name="db_var" value="{{$f.DBVar}}" class="mono" autocapitalize="off" spellcheck="false">
-      <span class="hint">uygulamanın okuduğu ad (MONGODB_URI, MONGO_URL...)</span>
-    </label>
-  </fieldset>
-
-  <fieldset>
-    <legend>Ortam değişkenleri</legend>
-    <label class="field"><span>KEY=DEĞER, her satıra bir tane</span>
-      <textarea name="env" rows="8" class="mono" placeholder="NODE_ENV=production&#10;SESSION_SECRET=..." autocapitalize="off" spellcheck="false">{{$f.Env}}</textarea>
-      <span class="hint">değerler sunucuda sadece root'un okuyabildiği dosyada saklanır ve panelde tekrar gösterilmez</span>
+    <legend>Docker imajı</legend>
+    <label class="field"><span>İmaj</span>
+      <input name="image" value="{{.Data.Image}}" required placeholder="ghcr.io/kullanici/ornek-site:main" class="mono" autocapitalize="off" spellcheck="false">
+      <span class="hint">GitHub Actions'ın GHCR'ye yüklediği imaj. Özel (private) bir imajsa sunucunun ona erişimi olmalı: <a href="/registries">İmaj girişleri</a>.</span>
     </label>
   </fieldset>
 
   <div class="form-actions">
-    <button type="submit" class="primary">{{icon "plus"}}Siteyi oluştur</button>
+    <button type="submit" name="action" value="check" class="primary">{{icon "check"}}İmajı kontrol et</button>
+    <button type="submit" name="action" value="skip" class="btn" formnovalidate>Kontrol etmeden devam et</button>
     <a class="btn" href="/sites">Vazgeç</a>
   </div>
+  <p class="hint">Kontrol imajı bu sunucuya indirir (siteyi oluştururken zaten indirilecekti) ve içine bakar; birkaç saniye ile birkaç dakika sürer.</p>
 </form>
 </div>
 {{template "bottom" .}}

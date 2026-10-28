@@ -1,0 +1,46 @@
+{{template "top" .}}
+{{$s := .Data.S.Spec}}
+<a class="crumb" href="/sites/{{$s.Name}}">{{icon "back"}}{{$s.Name}}</a>
+<div class="page-head">
+  <div>
+    <h1>DNS kontrolü</h1>
+    <p class="sub">Alan adları nereyi gösteriyor, site dışarıdan açılıyor mu? Şimdi denendi: {{ts .Data.Now}}.</p>
+  </div>
+  <div class="page-actions"><a class="btn" href="/sites/{{$s.Name}}/dns">{{icon "restart"}}Tekrar dene</a></div>
+</div>
+{{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>Kontrol edilemedi: {{.}}</div></div>{{end}}
+{{with .Data.Checks}}
+<div class="table-wrap">
+<table class="responsive">
+  <thead><tr><th>Alan adı</th><th>DNS</th><th>Dışarıdan (Cloudflare)</th><th>Bu sunucuda</th></tr></thead>
+  <tbody>
+  {{range .}}
+    <tr>
+      <td class="primary mono">{{.Domain}}</td>
+      <td data-label="DNS">
+        {{if eq .DNS "cloudflare"}}<span class="badge ok">Cloudflare, proxy açık</span>
+        {{else if eq .DNS "here"}}<span class="badge warn">bu sunucu, proxy kapalı</span><div class="cell-sub muted">Kayıtta turuncu bulutu aç: sertifika yalnız Cloudflare'e geçerli.</div>
+        {{else if eq .DNS "elsewhere"}}<span class="badge bad">başka bir yer</span><div class="cell-sub muted mono">{{range $i, $ip := .IPs}}{{if $i}}, {{end}}{{$ip}}{{end}}</div>
+        {{else if eq .DNS "none"}}<span class="badge bad">kayıt yok</span>
+        {{else}}<span class="badge warn">bilinmiyor</span><div class="cell-sub muted">{{.DNSErr}}</div>{{end}}
+      </td>
+      <td data-label="Dışarıdan">
+        {{if .Public}}<span class="badge {{if lt .Public 400}}ok{{else if lt .Public 500}}warn{{else}}bad{{end}}">HTTP {{.Public}}</span>{{if .CFRay}} <span class="muted small">Cloudflare üzerinden</span>{{end}}
+        {{else if .PublicErr}}<span class="badge bad">açılmadı</span><div class="cell-sub muted">{{.PublicErr}}</div>
+        {{else}}<span class="muted">—</span>{{end}}
+      </td>
+      <td data-label="Bu sunucuda">
+        {{if .Local}}<span class="badge {{if lt .Local 500}}ok{{else}}bad{{end}}">HTTP {{.Local}}</span>
+        {{else}}<span class="badge bad">cevap yok</span><div class="cell-sub muted">{{.LocalErr}}</div>{{end}}
+      </td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+<p class="muted small">Proxy açıkken Cloudflare'in arkasındaki sunucu dışarıdan görünmez: başka bir sunucudan taşıdıysan kaydın içeriğinin bu sunucunun IP'si olduğunu Cloudflare panelinden kontrol et.</p>
+{{end}}
+
+<div class="section-head"><h2>Cloudflare'de yapılacaklar</h2></div>
+{{template "dnsguide" .Data.DNS}}
+{{template "bottom" .}}
