@@ -81,7 +81,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			cfg := agent.Config{Socket: agent.DefaultSocket, AuditPath: agent.DefaultAuditPath,
 				HistoryPath: agent.DefaultHistory, JobsDir: agent.DefaultJobsDir, SnapshotDir: agent.DefaultSnapshotDir,
 				StagingDir: staging.DefaultRoot, RecoveryDir: agent.DefaultRecoveryDir, PanelUser: agent.PanelUser,
-				SourcesDir: remote.DefaultDir, MigrationsDir: agent.DefaultMigrationsDir,
+				SourcesDir: remote.DefaultDir, MigrationsDir: agent.DefaultMigrationsDir, DBEditsDir: agent.DefaultDBEditsDir,
 				DockerConfig: os.Getenv("DOCKER_CONFIG"), RegistriesPath: agent.DefaultRegistriesPath}
 			if cfg.DockerConfig == "" {
 				cfg.DockerConfig = agent.DefaultDockerConfig

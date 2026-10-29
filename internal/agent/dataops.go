@@ -84,6 +84,10 @@ type DataOps struct {
 	// move between the wizard's steps.
 	Sources       *remote.Store
 	MigrationsDir string
+	// MongoAddr is where the database browser connects (default 127.0.0.1:27017, the
+	// server's MongoDB); DBEditsDir keeps the previous versions of documents it changed.
+	MongoAddr  string
+	DBEditsDir string
 
 	now       func() time.Time
 	sleep     func(time.Duration)
@@ -93,6 +97,9 @@ type DataOps struct {
 	mu          sync.Mutex
 	uploadLocks map[string]*uploadLock
 	chunk       int64 // upload chunk size; tests use small ones
+
+	browse chan struct{} // database browser connections at once
+	editMu sync.Mutex    // change records being marked undone
 }
 
 func (d *DataOps) init() {
@@ -113,6 +120,7 @@ func (d *DataOps) init() {
 		if d.chunk == 0 {
 			d.chunk = UploadChunk
 		}
+		d.browse = make(chan struct{}, dbBrowsers)
 	})
 }
 

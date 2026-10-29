@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"html/template"
 	"math"
+	"mime"
 	"net/http"
 	"net/url"
 	"path"
@@ -82,8 +83,18 @@ func (s *Server) session(h http.HandlerFunc, stream bool) http.Handler {
 				r.Body = http.MaxBytesReader(w, r.Body, maxAuthedForm)
 			}
 		default:
-			r.Body = http.MaxBytesReader(w, r.Body, maxAuthedForm)
-			if err := r.ParseForm(); err != nil ||
+			limit, parse := int64(maxAuthedForm), r.ParseForm
+			if isDBEditPost(r) { // a whole document's text, on any connection speed
+				limit = dbEditForm
+				_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(dbEditRead))
+				if ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); ct == "multipart/form-data" {
+					// ParseForm leaves multipart bodies unread; the values stay in memory
+					// within the body limit (the form has no files).
+					parse = func() error { return r.ParseMultipartForm(32 << 10) }
+				}
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
+			if err := parse(); err != nil ||
 				subtle.ConstantTimeCompare([]byte(r.PostFormValue("csrf")), []byte(sess.CSRF)) != 1 {
 				http.Error(w, "geçersiz form (CSRF); sayfayı yenileyip tekrar dene", http.StatusForbidden)
 				return
@@ -265,6 +276,7 @@ var navOf = map[string]string{
 	"import": "sites", "import_preview": "sites", "restore_confirm": "sites",
 	"files": "sites", "files_rename": "sites", "files_move": "sites", "files_trash": "sites", "files_unpack": "sites",
 	"trash": "sites", "trash_empty": "sites", "migrate": "sites", "sources": "sites", "source_confirm": "sites",
+	"db": "sites", "db_coll": "sites", "db_doc": "sites", "db_edit": "sites", "db_delete": "sites", "db_undo": "sites",
 	"certs": "certs", "cert_remove": "certs",
 	"audit": "audit",
 }
@@ -378,7 +390,19 @@ var funcs = template.FuncMap{
 		}
 		return "silindi"
 	},
-	"add":   func(a, b int) int { return a + b },
+	"add":    func(a, b int) int { return a + b },
+	"dbURL":  dbURL,
+	"idText": idText,
+	"itoa":   strconv.Itoa,
+	"opTR": func(op string) string {
+		return map[string]string{"edit": "düzenlendi", "delete": "silindi", "undo": "geri alma"}[op]
+	},
+	"kindTR": func(k string) string {
+		return map[string]string{"added": "eklendi", "removed": "silindi", "changed": "değişti"}[k]
+	},
+	"collTR": func(t string) string {
+		return map[string]string{"collection": "koleksiyon", "view": "görünüm", "timeseries": "time-series"}[t]
+	},
 	"int64": func(n int) int64 { return int64(n) },
 	"pct": func(used, total uint64) float64 {
 		if total == 0 {

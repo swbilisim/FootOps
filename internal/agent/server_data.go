@@ -30,6 +30,8 @@ func bodyLimit(r *http.Request) int64 {
 		return MaxUploadChunk + 1
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/uploads/single"):
 		return MaxSingleUpload + 1
+	case r.Method == http.MethodPost && (strings.HasSuffix(r.URL.Path, "/db/replace") || strings.HasSuffix(r.URL.Path, "/db/preview")):
+		return dbEditBody
 	}
 	return maxBody
 }

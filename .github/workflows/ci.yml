@@ -11,6 +11,21 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-24.04
+    # A real MongoDB for the database browser's tests (FOOTOPS_TEST_MONGO); the same
+    # image the servers run.
+    services:
+      mongo:
+        image: mongo:7.0.45
+        env:
+          MONGO_INITDB_ROOT_USERNAME: root
+          MONGO_INITDB_ROOT_PASSWORD: ci-root-pw
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping: 1}).ok'"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      FOOTOPS_TEST_MONGO: mongodb://root:ci-root-pw@127.0.0.1:27017
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

@@ -345,8 +345,9 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ReadWritePaths=/var/lib/footops/web
 # Defence in depth: even if the web process were compromised it cannot read site and
-# database files, secrets, Docker's data or the audit log (it asks the agent instead).
-InaccessiblePaths=-/srv -/etc/footops/secrets -/var/lib/docker -/var/lib/containerd -/var/lib/footops/audit.jsonl -/var/lib/footops/audit.jsonl.1 -/var/run/docker.sock
+# database files, secrets, Docker's data, the audit log or documents kept for undo (it
+# asks the agent instead).
+InaccessiblePaths=-/srv -/etc/footops/secrets -/var/lib/docker -/var/lib/containerd -/var/lib/footops/audit.jsonl -/var/lib/footops/audit.jsonl.1 -/var/lib/footops/dbedits -/var/run/docker.sock
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes

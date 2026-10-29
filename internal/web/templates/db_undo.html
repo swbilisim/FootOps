@@ -1,0 +1,31 @@
+{{template "top" .}}
+{{$s := .Data.S}}{{$e := .Data.E}}{{$v := .Data.V}}
+<div class="dialog wide">
+  <a class="crumb" href="{{dbURL $s.Name ""}}">{{icon "back"}}Veritabanı</a>
+  <div class="card">
+    <div class="dialog-icon">{{icon "undo"}}</div>
+    <h1>Değişiklik geri alınsın mı?</h1>
+    <p><span class="mono">{{$e.Collection}}</span> · <span class="mono">_id {{idText $e.DocID}}</span> · {{opTR $e.Op}}, {{ts $e.Time}}{{with $e.Actor}} ({{.}}){{end}}</p>
+    {{if not $e.After}}<p>Silinen belge aynen geri eklenir; aynı <span class="mono">_id</span> ile bir belge oluşmuşsa hiçbir şey yazılmaz.</p>
+    {{else if not $e.Before}}<p>Bu değişiklikle geri gelen belge yeniden silinir; o zamandan beri değiştiyse hiçbir şey yazılmaz.</p>
+    {{else}}<p>Belge bu değişiklikten önceki haline döner. O zamandan beri belge yeniden değiştiyse (uygulama da değiştirebilir) hiçbir şey yazılmaz.</p>{{end}}
+    {{with $e.Changes}}<p class="muted small">Alanlar: {{range $i, $c := .}}{{if $i}}, {{end}}<span class="mono">{{$c.Field}}</span> ({{kindTR $c.Kind}}){{end}}{{with $e.More}} ve {{.}} alan daha{{end}}</p>{{end}}
+    {{if $e.Pending}}<div class="notice warn">{{icon "alert"}}<div>Bu değişikliğin sonucu kesin değil (MongoDB'nin cevabı alınamamıştı). Geri alma, belge hâlâ değişikliğin bıraktığı haldeyse çalışır.</div></div>{{end}}
+    {{with .Data.Problem}}<div class="notice bad" role="alert">{{icon "alert"}}<div>{{.}}{{if and $e.Before $e.After $v.BeforeExact}} Önceki hali aşağıda: istersen <a href="{{dbURL $s.Name "/edit" "c" $e.Collection "id" $e.DocID "from" $e.ID}}">düzenleme formunda aç</a>, farkı görüp kaydet.{{end}}</div></div>{{end}}
+    {{if $e.Before}}
+      <h3>{{if $e.After}}Geri alınınca belge şu olur{{else}}Geri eklenecek belge{{end}}</h3>
+      {{with $v.Before}}<pre class="doc short">{{.}}</pre>{{else}}<p class="muted small">Belge panelde gösterilemeyecek kadar büyük ({{bytes $v.BeforeSize}}).</p>{{end}}
+    {{end}}
+    {{if $e.UndoneBy}}<div class="notice info">{{icon "info"}}<div>Bu değişiklik zaten geri alındı ({{$e.UndoneBy}}).</div></div>
+    {{else}}
+    <form method="post" action="/sites/{{$s.Name}}/db/undo/{{$e.ID}}">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <div class="form-actions">
+        <button type="submit" class="primary">{{icon "undo"}}Geri al</button>
+        <a class="btn" href="{{dbURL $s.Name ""}}">Vazgeç</a>
+      </div>
+    </form>
+    {{end}}
+  </div>
+</div>
+{{template "bottom" .}}

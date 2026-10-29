@@ -1,0 +1,51 @@
+{{template "top" .}}
+{{$s := .Data.S}}{{$c := .Data.C}}{{$id := .Data.ID}}
+<a class="crumb" href="{{dbURL $s.Name "/doc" "c" $c "id" $id}}">{{icon "back"}}Belge</a>
+<div class="page-head">
+  <div>
+    <h1>{{if .Data.PV}}Değişiklikleri kontrol et{{else}}Belgeyi düzenle{{end}}</h1>
+    <p class="sub"><span class="mono">{{$c}}</span> · <span class="mono">_id {{idText $id}}</span></p>
+  </div>
+</div>
+{{with .Data.Problem}}<div class="notice bad" role="alert">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
+<form method="post" action="/sites/{{$s.Name}}/db/edit" enctype="multipart/form-data">
+  <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+  <input type="hidden" name="c" value="{{$c}}">
+  <input type="hidden" name="id" value="{{$id}}">
+  <input type="hidden" name="h" value="{{.Data.Hash}}">
+  {{with .Data.PV}}
+    {{if .Changes}}
+    <div class="table-wrap">
+    <table class="responsive db-diff">
+      <thead><tr><th>Alan</th><th>Değişiklik</th><th>Önce</th><th>Sonra</th></tr></thead>
+      <tbody>
+      {{range .Changes}}<tr>
+        <td class="primary mono">{{.Field}}</td>
+        <td data-label="Değişiklik"><span class="badges"><span class="{{if eq .Kind "added"}}note-new{{else if eq .Kind "removed"}}note-gone{{else}}note-diff{{end}}">{{kindTR .Kind}}</span>{{if and .OldType .NewType}}<span class="badge warn">tür {{.OldType}} → {{.NewType}}</span>{{end}}</span></td>
+        <td data-label="Önce" class="mono">{{.Old}}</td>
+        <td data-label="Sonra" class="mono">{{.New}}</td>
+      </tr>{{end}}
+      </tbody>
+    </table>
+    </div>
+    {{if .More}}<p class="muted small mt">… ve {{.More}} alan daha değişiyor (liste kısaltıldı).</p>{{end}}
+    <p class="muted small mt">Kaydedilince belge {{bytes .Size}} olur. Önceki hali saklanır; Veritabanı sayfasındaki “Son değişiklikler”den geri alınabilir. Belge bu arada uygulama ya da başka biri tarafından değiştirilirse hiçbir şey yazılmaz.</p>
+    {{else}}<div class="notice info">{{icon "info"}}<div>Değişiklik yok: kaydedilecek bir fark bulunmadı.</div></div>{{end}}
+    <textarea name="text" hidden>{{$.Data.Text}}</textarea>
+    <div class="form-actions">
+      {{if .Changes}}<button type="submit" name="do" value="save" class="primary">{{icon "check"}}Kaydet</button>{{end}}
+      <button type="submit" name="do" value="back" class="btn">{{icon "edit"}}Düzenlemeye dön</button>
+      <a class="btn ghost" href="{{dbURL $s.Name "/doc" "c" $c "id" $id}}">Vazgeç</a>
+    </div>
+  {{else}}
+    <label class="field"><span>Belge (JSON)</span>
+      <textarea name="text" rows="{{.Data.Rows}}" class="mono db-text" spellcheck="false" autocapitalize="off" autocomplete="off" required>{{.Data.Text}}</textarea>
+      <span class="hint">Sayılar türlerini korur: <span class="mono">5</span> tam sayı (int32), <span class="mono">5.0</span> ondalıklı (double), <span class="mono">{"$numberLong": "5"}</span> 64 bitlik tam sayı, <span class="mono">{"$numberDecimal": "12.50"}</span> ondalık; tarih <span class="mono">{"$date": "2026-10-28T09:47:19.647Z"}</span>, kimlik <span class="mono">{"$oid": "…"}</span>. <span class="mono">_id</span> değiştirilemez; belge en çok {{bytes .Data.EditMax}}. Önce değişiklikler gösterilir, onaydan sonra kaydedilir.</span>
+    </label>
+    <div class="form-actions">
+      <button type="submit" name="do" value="preview" class="primary">{{icon "search"}}Değişiklikleri gör</button>
+      <a class="btn" href="{{dbURL $s.Name "/doc" "c" $c "id" $id}}">Vazgeç</a>
+    </div>
+  {{end}}
+</form>
+{{template "bottom" .}}

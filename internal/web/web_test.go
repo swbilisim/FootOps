@@ -62,6 +62,7 @@ type fakeAgent struct {
 	fm        fakeFM  // the file manager (files_test.go)
 	mig       fakeMig // moving sites (migrate_test.go)
 	f6        fakeF6  // new-site flow, registries, groups, DNS (newsite_test.go)
+	db        fakeDB  // the database browser (db_test.go)
 }
 
 func (f *fakeAgent) Overview(context.Context) (agent.Overview, error) {

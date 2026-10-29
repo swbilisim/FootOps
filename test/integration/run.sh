@@ -53,6 +53,6 @@ until docker exec "$NAME" systemctl is-system-running 2>/dev/null | grep -Eq 'ru
 docker cp "$WORK/footops" "$NAME:/root/footops"
 python3 install.py "$NAME" "$WORK/id_it.pub" "$WORK/login"
 docker exec "$NAME" rm -f /root/footops
-for s in ${*:-f0 f2 f2b f3 f4 f6}; do
+for s in ${*:-f0 f2 f2b f3 f4 f5 f6}; do
 	python3 "$s.py" "$NAME" "$WORK/login"
 done

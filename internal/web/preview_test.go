@@ -30,6 +30,7 @@ import (
 	"github.com/swbilisim/FootOps/internal/config"
 	"github.com/swbilisim/FootOps/internal/datafs"
 	"github.com/swbilisim/FootOps/internal/history"
+	"github.com/swbilisim/FootOps/internal/mongo"
 	"github.com/swbilisim/FootOps/internal/remote"
 	"github.com/swbilisim/FootOps/internal/run"
 	"github.com/swbilisim/FootOps/internal/sites"
@@ -162,7 +163,7 @@ func (p *previewAgent) Job(_ context.Context, id string) (agent.Job, error) {
 	if id == "imgcheck" || id == "imgfail" {
 		info := agent.ImageInfo{Image: "ghcr.io/ornek/magaza:main", ID: "4f2a9c1b7d3e", Size: 312 << 20, Platform: "linux/amd64",
 			Server: "linux/amd64", User: "nextjs", UID: 1001, GID: 1001, Ports: []int{3000}, Volumes: []string{"/app/uploads"},
-			EnvKeys: []string{"HOSTNAME", "NODE_ENV", "PORT"}, EnvPort: "3000", EnvHostname: "0.0.0.0", Created: time.Now().Add(-5 * time.Hour)}
+			EnvPort: "3000", EnvHostname: "0.0.0.0"}
 		b, _ := json.Marshal(info)
 		j := agent.Job{ID: id, Kind: "image.check", Target: info.Image, Started: time.Now().Add(-14 * time.Second), Finished: time.Now(), Done: true,
 			Steps: []string{"İmaj indiriliyor (ya da güncel mi diye bakılıyor): " + info.Image, "✓ İmaj hazır: 312.0 MB, linux/amd64, 4f2a9c1b7d3e (12.8 sn)",
@@ -451,4 +452,97 @@ func TestPreview(t *testing.T) {
 	}))
 	t.Log("http://localhost:7799/dev-login")
 	t.Fatal(http.ListenAndServe("127.0.0.1:7799", mux))
+}
+
+// ---- database browser (F5): /sites/magaza/db, /db/coll?c=products, /db/doc?c=products&id=… ----
+
+const previewDoc = `{"_id": {"$oid": "6ae1c4a7ec711d712539599d"}, "ad": "Kurşun kalem, 2B (12'li kutu)", "slug": "kursun-kalem-2b-12li",
+	"fiyat": 129.9, "stok": 42, "aktif": true, "kategori": {"$oid": "6ae1c4a7ec711d7125395000"},
+	"etiketler": ["kırtasiye", "okul", "çizim"], "ölçü": {"en": 18.5, "boy": 4.0, "birim": "cm"},
+	"aciklama": "Yumuşak uçlu, kolay silinen grafit kalemler. Çizim ve eskiz için idealdir; ahşap gövde, kırılmaya dayanıklı uç.",
+	"gorseller": [{"url": "/uploads/kalem-1.jpg", "alt": "Kutu"}, {"url": "/uploads/kalem-2.jpg", "alt": "Kalem"}],
+	"olusturma": {"$date": "2026-09-14T10:22:31.512Z"}, "guncelleme": {"$date": "2026-10-27T18:03:09.004Z"},
+	"satis": {"$numberLong": "1843"}, "kdv": {"$numberDecimal": "0.20"}, "__v": 3}`
+
+func (p *previewAgent) DBCollections(context.Context, string) (agent.DBOverview, error) {
+	return agent.DBOverview{DB: "magaza", Took: 9 * time.Millisecond, Collections: []agent.DBCollection{
+		{Name: "aktif_urunler", Type: "view", Count: -1},
+		{Name: "contactrequests", Type: "collection", Count: 3, Size: 1200, Indexes: 2, IndexSize: 36 << 10},
+		{Name: "customers", Type: "collection", Count: 128, Size: 96 << 10, Indexes: 3, IndexSize: 72 << 10},
+		{Name: "payments", Type: "collection", Count: 412, Size: 310 << 10, Indexes: 2, IndexSize: 64 << 10},
+		{Name: "products", Type: "collection", Count: 1240, Size: 2 << 20, Indexes: 4, IndexSize: 220 << 10},
+		{Name: "sessions", Type: "collection", Count: 12, Size: 8 << 10, Indexes: 2, IndexSize: 36 << 10, Capped: true},
+	}}, nil
+}
+
+func (p *previewAgent) DBFind(_ context.Context, site string, q agent.DBQuery) (agent.DBPage, error) {
+	page := agent.DBPage{Collection: agent.DBCollection{Name: q.Collection, Type: "collection"}, Page: max(q.Page, 1), PerPage: 20,
+		Total: 1240, More: true, Took: 6 * time.Millisecond, Sort: "-_id",
+		Indexes: []agent.DBIndex{{Name: "_id_", Keys: `{"_id": 1}`, TTL: -1}, {Name: "slug_1", Keys: `{"slug": 1}`, Unique: true, TTL: -1},
+			{Name: "kategori_1_fiyat_-1", Keys: `{"kategori": 1, "fiyat": -1}`, TTL: -1}, {Name: "olusturma_1", Keys: `{"olusturma": 1}`, TTL: 2592000}}}
+	if q.Collection == "aktif_urunler" {
+		page.Collection.Type, page.Total, page.Indexes = "view", 812, nil
+	}
+	if q.Filter != "" {
+		page.Filter, page.Total, page.More = q.Filter, 3, false
+	}
+	names := []string{"Kurşun kalem, 2B (12'li kutu)", "Defter A4 kareli", "Silgi", "Cetvel 30 cm", "Boya kalemi seti 24 renk"}
+	for i := range 20 {
+		if q.Filter != "" && i >= 3 {
+			break
+		}
+		id := fmt.Sprintf(`{"$oid": "6ae1c4a7ec711d7125395%03d"}`, 999-i)
+		page.Docs = append(page.Docs, agent.DBDocSummary{ID: id, IDText: id, Size: int64(600 + i*37), Fields: 16, Rest: 8,
+			Preview: []agent.DBField{{Key: "ad", Text: strconv.Quote(names[i%len(names)])}, {Key: "slug", Text: `"urun-` + strconv.Itoa(i) + `"`},
+				{Key: "fiyat", Text: strconv.FormatFloat(19.9+float64(i)*10, 'f', 1, 64)}, {Key: "stok", Text: strconv.Itoa(40 - i)},
+				{Key: "aktif", Text: "true"}, {Key: "kategori", Text: `{"$oid": "6ae1c4a7ec711d7125395000"}`},
+				{Key: "etiketler", Text: "[…] 3 öğe"}, {Key: "aciklama", Text: `"Yumuşak uçlu, kolay silinen grafit kalemler. Çizim ve eskiz için idealdir; ahşap gö…"`}}})
+	}
+	return page, nil
+}
+
+func (p *previewAgent) DBDoc(_ context.Context, site, coll, id string) (agent.DBDocument, error) {
+	d, err := mongo.ParseDoc(previewDoc)
+	if err != nil {
+		return agent.DBDocument{}, err
+	}
+	text, _ := mongo.DocText(d, true)
+	sum := sha256.Sum256(d)
+	return agent.DBDocument{Collection: agent.DBCollection{Name: coll, Type: "collection"}, ID: id, Text: text, Size: int64(len(d)),
+		Fields: 16, Hash: hex.EncodeToString(sum[:]), Editable: coll != "aktif_urunler", Deletable: coll != "aktif_urunler",
+		Why: map[bool]string{true: "görünüm ve time-series koleksiyonları yalnız okunur"}[coll == "aktif_urunler"], Took: 4 * time.Millisecond}, nil
+}
+
+func (p *previewAgent) DBPreview(_ context.Context, site string, req agent.DBEditRequest) (agent.DBPreview, error) {
+	return agent.DBPreview{Size: 742, Changes: []agent.DBChange{
+		{Field: "fiyat", Kind: "changed", Old: "129.9", New: "139.9"},
+		{Field: "stok", Kind: "changed", Old: "42", New: "40.0", OldType: "int", NewType: "double"},
+		{Field: "indirim", Kind: "added", New: `{"oran": 10, "bitis": {"$date": "2026-11-30T00:00:00.000Z"}}`, NewType: "object"},
+		{Field: "__v", Kind: "removed", Old: "3", OldType: "int"}}}, nil
+}
+
+func (p *previewAgent) DBEdits(context.Context, string) ([]agent.DBEdit, error) {
+	now := time.Now()
+	return []agent.DBEdit{
+		{ID: "20261028-120501-000001-abcd", Collection: "products", DocID: `{"$oid": "6ae1c4a7ec711d712539599d"}`, Op: "edit", Time: now.Add(-20 * time.Minute),
+			Actor: "admin", Changes: []agent.DBChange{{Field: "fiyat", Kind: "changed"}, {Field: "indirim", Kind: "added"}}, Before: true, After: true},
+		{ID: "20261028-110000-000001-abcd", Collection: "contactrequests", DocID: `{"$oid": "6ae1c4a7ec711d7125391111"}`, Op: "delete", Time: now.Add(-2 * time.Hour),
+			Actor: "admin", Before: true},
+		{ID: "20261027-090000-000001-abcd", Collection: "customers", DocID: `"musteri-42"`, Op: "edit", Time: now.Add(-27 * time.Hour),
+			Actor: "admin", Changes: []agent.DBChange{{Field: "telefon", Kind: "changed"}}, Before: true, After: true, UndoneBy: "20261027-091000-000001-abcd"},
+		{ID: "20261027-091000-000001-abcd", Collection: "customers", DocID: `"musteri-42"`, Op: "undo", Time: now.Add(-26 * time.Hour),
+			Actor: "admin", Changes: []agent.DBChange{{Field: "telefon", Kind: "changed"}}, Before: true, After: true, Pending: true},
+	}, nil
+}
+
+func (p *previewAgent) DBEdit(_ context.Context, site, id string) (agent.DBEditView, error) {
+	edits, _ := p.DBEdits(context.Background(), site)
+	d, _ := mongo.ParseDoc(previewDoc)
+	text, _ := mongo.DocText(d, true)
+	for _, e := range edits {
+		if e.ID == id {
+			return agent.DBEditView{Edit: e, Before: text, After: text, BeforeSize: int64(len(d)), AfterSize: int64(len(d))}, nil
+		}
+	}
+	return agent.DBEditView{}, &agent.Error{Status: 404, Message: "kayıt bulunamadı"}
 }

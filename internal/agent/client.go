@@ -51,11 +51,14 @@ func (e *Error) Error() string { return e.Message }
 func (c *Client) call(ctx context.Context, method, path string, body, out any) error {
 	var rd *bytes.Reader
 	if body != nil {
-		b, err := json.Marshal(body)
-		if err != nil {
+		// No HTML escaping: a document's text full of <, > and & would grow sixfold.
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(body); err != nil {
 			return err
 		}
-		rd = bytes.NewReader(b)
+		rd = bytes.NewReader(buf.Bytes())
 	} else {
 		rd = bytes.NewReader(nil)
 	}
@@ -523,6 +526,73 @@ func (c *Client) EmptyTrash(ctx context.Context, site, confirm string, a Actor) 
 // SetDataURL records where the site serves its data directory's files.
 func (c *Client) SetDataURL(ctx context.Context, site, u string, a Actor) error {
 	return c.call(ctx, http.MethodPost, filesPath(site, "/files/url"), DataURLRequest{URL: u, Actor: a}, nil)
+}
+
+// ---- database browser (F5) ----
+
+// DBCollections lists a site's collections.
+func (c *Client) DBCollections(ctx context.Context, site string) (DBOverview, error) {
+	var o DBOverview
+	err := c.call(ctx, http.MethodGet, filesPath(site, "/db"), nil, &o)
+	return o, err
+}
+
+// DBFind returns a page of a collection's documents.
+func (c *Client) DBFind(ctx context.Context, site string, q DBQuery) (DBPage, error) {
+	v := url.Values{"c": {q.Collection}, "filter": {q.Filter}, "sort": {q.Sort},
+		"page": {strconv.Itoa(q.Page)}, "n": {strconv.Itoa(q.PerPage)}}
+	var p DBPage
+	err := c.call(ctx, http.MethodGet, filesPath(site, "/db/find?"+v.Encode()), nil, &p)
+	return p, err
+}
+
+// DBDoc returns one document.
+func (c *Client) DBDoc(ctx context.Context, site, coll, id string) (DBDocument, error) {
+	var d DBDocument
+	err := c.call(ctx, http.MethodGet, filesPath(site, "/db/doc?"+url.Values{"c": {coll}, "id": {id}}.Encode()), nil, &d)
+	return d, err
+}
+
+// DBPreview checks an edited document and lists what saving it would change.
+func (c *Client) DBPreview(ctx context.Context, site string, req DBEditRequest) (DBPreview, error) {
+	var p DBPreview
+	err := c.call(ctx, http.MethodPost, filesPath(site, "/db/preview"), req, &p)
+	return p, err
+}
+
+// DBReplace saves an edited document.
+func (c *Client) DBReplace(ctx context.Context, site string, req DBEditRequest) (DBEdit, error) {
+	var e DBEdit
+	err := c.call(ctx, http.MethodPost, filesPath(site, "/db/replace"), req, &e)
+	return e, err
+}
+
+// DBDelete deletes one document (kept for undo).
+func (c *Client) DBDelete(ctx context.Context, site string, req DBEditRequest) (DBEdit, error) {
+	var e DBEdit
+	err := c.call(ctx, http.MethodPost, filesPath(site, "/db/delete"), req, &e)
+	return e, err
+}
+
+// DBEdits lists a site's document changes, newest first.
+func (c *Client) DBEdits(ctx context.Context, site string) ([]DBEdit, error) {
+	var l []DBEdit
+	err := c.call(ctx, http.MethodGet, filesPath(site, "/db/edits"), nil, &l)
+	return l, err
+}
+
+// DBEdit returns a change with its versions.
+func (c *Client) DBEdit(ctx context.Context, site, id string) (DBEditView, error) {
+	var v DBEditView
+	err := c.call(ctx, http.MethodGet, filesPath(site, "/db/edits/"+url.PathEscape(id)), nil, &v)
+	return v, err
+}
+
+// DBUndo reverses a change.
+func (c *Client) DBUndo(ctx context.Context, site, id string, a Actor) (DBEdit, error) {
+	var e DBEdit
+	err := c.call(ctx, http.MethodPost, filesPath(site, "/db/edits/"+url.PathEscape(id)+"/undo"), RestartRequest{Actor: a}, &e)
+	return e, err
 }
 
 // ---- moving sites from other servers (F4) ----

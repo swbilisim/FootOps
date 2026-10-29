@@ -8,6 +8,7 @@
   </div>
   <div class="page-actions">
     {{template "live"}}
+    {{if $s.Database}}<a class="btn" href="/sites/{{$s.Name}}/db">{{icon "database"}}Veritabanı</a>{{end}}
     {{if $s.DataMount}}<a class="btn" href="/sites/{{$s.Name}}/files">{{icon "folder"}}Dosyalar</a>{{end}}
     <a class="btn" href="/containers/{{$s.Container}}/logs">{{icon "logs"}}Loglar</a>
     <a class="btn" href="/containers/{{$s.Container}}/restart">{{icon "restart"}}Yeniden başlat</a>
@@ -29,7 +30,7 @@
   <tr><th>Uygulama portu</th><td>{{$s.Port}}</td></tr>
   <tr><th>Bellek sınırı</th><td>{{$s.MemoryMB}} MB</td></tr>
   <tr><th>Kalıcı klasör</th><td>{{if $s.DataMount}}<span class="mono">/srv/{{$s.Group}}/{{$s.Name}}/data → {{$s.DataMount}}</span> · <a href="/sites/{{$s.Name}}/files">dosyaları yönet</a>{{else}}yok{{end}}</td></tr>
-  <tr><th>Veritabanı</th><td>{{if $s.Database}}MongoDB <span class="mono">{{$s.Name}}</span> (kullanıcı <span class="mono">{{$s.Name}}</span>), adres <span class="mono">{{$s.DBVar}}</span> değişkeninde{{else}}yok{{end}}</td></tr>
+  <tr><th>Veritabanı</th><td>{{if $s.Database}}MongoDB <span class="mono">{{$s.Name}}</span> (kullanıcı <span class="mono">{{$s.Name}}</span>), adres <span class="mono">{{$s.DBVar}}</span> değişkeninde · <a href="/sites/{{$s.Name}}/db">verileri gör</a>{{else}}yok{{end}}</td></tr>
   <tr><th>Ortam değişkenleri</th><td class="mono">{{range $i, $k := $s.EnvKeys}}{{if $i}}, {{end}}{{$k}}{{else}}—{{end}}</td></tr>
   <tr><th>Oluşturma</th><td>{{ts $s.CreatedAt}}</td></tr>
   <tr><th>Son güncelleme</th><td>{{ts $s.UpdatedAt}}</td></tr>

@@ -1,0 +1,78 @@
+{{template "top" .}}
+{{$s := .Data.S}}{{$c := .Data.C}}{{$q := .Data.Q}}
+<a class="crumb" href="{{dbURL $s.Name ""}}">{{icon "back"}}Veritabanı</a>
+<div class="page-head">
+  <div>
+    <h1 class="mono">{{$c}}</h1>
+    {{with .Data.P}}<p class="sub">{{collTR .Collection.Type}}{{if .Collection.ReadOnly}} · yalnız okunur{{end}} · {{if ge .Total 0}}{{.Total}} belge{{if .Filter}} filtreye uyuyor{{end}}{{else}}belge sayısı süre sınırında sayılamadı{{end}} · {{took .Took}}</p>{{end}}
+  </div>
+</div>
+
+<form class="card db-filter" method="get" action="/sites/{{$s.Name}}/db/coll">
+  <input type="hidden" name="c" value="{{$c}}">
+  <label class="field"><span>Filtre</span>
+    <textarea name="filter" rows="2" class="mono" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder='{"ad": "Kalem"}'>{{$q.Filter}}</textarea>
+    <span class="hint">MongoDB sorgusu (JSON), boşsa hepsi; en çok 2 saniye çalışır. Ör. <span class="mono">{"adet": {"$gt": 10}}</span> · <span class="mono">{"ad": {"$regex": "kalem", "$options": "i"}}</span> · <span class="mono">{"tarih": {"$gte": {"$date": "2026-10-01"}}}</span></span>
+  </label>
+  <div class="db-sort">
+    <label class="field"><span>Sıralama</span>
+      <select name="sort">
+        <option value="-_id"{{if not .Data.CustomSort}}{{if ne $q.Sort "_id"}} selected{{end}}{{end}}>En yeni önce (_id azalan)</option>
+        <option value="_id"{{if eq $q.Sort "_id"}} selected{{end}}>En eski önce (_id artan)</option>
+      </select>
+    </label>
+    <label class="field"><span>ya da alana göre (isteğe bağlı)</span>
+      <input name="osort" class="mono" value="{{if .Data.CustomSort}}{{$q.Sort}}{{end}}" placeholder='{"tarih": -1}' autocomplete="off" autocapitalize="off" spellcheck="false">
+    </label>
+  </div>
+  <div class="form-actions">
+    <button type="submit" class="primary">{{icon "search"}}Ara</button>
+    {{if or $q.Filter .Data.CustomSort (eq $q.Sort "_id")}}<a class="btn" href="{{dbURL $s.Name "/coll" "c" $c}}">Temizle</a>{{end}}
+  </div>
+</form>
+
+{{with .Data.Err}}<div class="notice bad" role="alert">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
+{{with .Data.P}}
+{{with .Indexes}}
+<details class="more">
+  <summary>İndeksler ({{len .}})</summary>
+  <div class="table-wrap">
+  <table class="responsive">
+    <thead><tr><th>Ad</th><th>Alanlar</th><th>Özellik</th></tr></thead>
+    <tbody>
+    {{range .}}<tr>
+      <td class="primary mono">{{.Name}}</td>
+      <td data-label="Alanlar" class="mono">{{.Keys}}</td>
+      <td data-label="Özellik">{{if .Unique}}benzersiz {{end}}{{if .Sparse}}seyrek {{end}}{{if ge .TTL 0}}TTL: {{.TTL}} sn sonra silinir {{end}}{{with .Partial}}kısmi <span class="mono">{{.}}</span> {{end}}{{if .Hidden}}gizli{{end}}</td>
+    </tr>{{end}}
+    </tbody>
+  </table>
+  </div>
+</details>
+{{end}}
+
+{{if .Docs}}
+<div class="table-wrap mt">
+<table class="responsive db-docs">
+  <thead><tr><th>_id</th><th>Alanlar</th><th class="num">Boyut</th></tr></thead>
+  <tbody>
+  {{range .Docs}}
+    <tr>
+      <td class="primary">{{if .ID}}<a class="cell-title mono" href="{{dbURL $s.Name "/doc" "c" $c "id" .ID}}">{{idText .IDText}}</a>{{else}}<span class="mono">{{.IDText}}</span><span class="cell-sub">Bu _id panelde açılamıyor (çok uzun ya da metne tam çevrilemiyor).</span>{{end}}</td>
+      <td data-label="Alanlar" class="db-preview">{{range .Preview}}<span class="db-f"><span class="k">{{.Key}}</span> {{.Text}}</span> {{end}}{{if .Rest}}<span class="muted small">+{{.Rest}} alan</span>{{end}}</td>
+      <td data-label="Boyut" class="num nowrap">{{bytes .Size}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{if or (gt .Page 1) .More}}
+<nav class="pager" aria-label="Sayfalar">
+  {{if gt .Page 1}}<a class="btn sm" href="{{dbURL $s.Name "/coll" "c" $c "filter" .Filter "sort" .Sort "page" (itoa (add .Page -1))}}">{{icon "back"}}Önceki</a>{{end}}
+  <span class="muted small">{{$.Data.First}}–{{$.Data.Last}}{{if ge .Total 0}} / {{.Total}}{{end}}</span>
+  {{if .More}}<a class="btn sm" href="{{dbURL $s.Name "/coll" "c" $c "filter" .Filter "sort" .Sort "page" (itoa (add .Page 1))}}">Sonraki</a>{{end}}
+</nav>
+{{end}}
+{{else}}<div class="card mt"><p class="muted">{{if .Filter}}Filtreye uyan belge yok.{{else if gt .Page 1}}Bu sayfada belge yok.{{else}}Bu koleksiyonda belge yok.{{end}}</p></div>{{end}}
+{{end}}
+{{template "bottom" .}}

@@ -1,0 +1,52 @@
+{{template "top" .}}
+{{$s := .Data.S}}
+<a class="crumb" href="/sites/{{$s.Name}}">{{icon "back"}}{{$s.Name}}</a>
+<div class="page-head">
+  <div>
+    <h1>Veritabanı</h1>
+    <p class="sub">MongoDB <span class="mono">{{$s.Name}}</span>, sitenin kendi kullanıcısıyla (yalnız bu veritabanı). Belgeler sayfa sayfa okunur; panelden düzenlenen ya da silinen bir belgenin önceki hali {{.Data.KeepDays}} gün saklanır ve geri alınabilir.</p>
+  </div>
+</div>
+
+{{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>Veritabanı okunamadı: {{.}}</div></div>{{end}}
+{{with .Data.O}}
+<div class="section-head"><h2>Koleksiyonlar<span class="sub">{{len .Collections}}{{if .More}}+{{end}} koleksiyon{{if .Hidden}} · {{.Hidden}} sistem koleksiyonu gösterilmiyor{{end}} · {{took .Took}}</span></h2></div>
+{{if .Collections}}
+<div class="table-wrap">
+<table class="responsive">
+  <thead><tr><th>Ad</th><th class="num">Belge</th><th class="num">Veri</th><th class="num">İndeks</th></tr></thead>
+  <tbody>
+  {{range .Collections}}
+    <tr>
+      <td class="primary"><a class="cell-title mono" href="{{dbURL $s.Name "/coll" "c" .Name}}">{{.Name}}</a>{{if ne .Type "collection"}} <span class="chip">{{collTR .Type}}</span>{{end}}{{if .Capped}} <span class="chip">sınırlı (capped)</span>{{end}}{{with .Err}}<span class="cell-sub">bilgi alınamadı: {{.}}</span>{{end}}</td>
+      <td data-label="Belge" class="num">{{if ge .Count 0}}{{.Count}}{{else}}—{{end}}</td>
+      <td data-label="Veri" class="num nowrap">{{if eq .Type "collection"}}{{bytes .Size}}{{else}}—{{end}}</td>
+      <td data-label="İndeks" class="num nowrap">{{if eq .Type "collection"}}{{.Indexes}} · {{bytes .IndexSize}}{{else}}—{{end}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}<div class="card"><p class="muted">Bu veritabanında henüz koleksiyon yok.</p></div>{{end}}
+{{end}}
+
+<div class="section-head"><h2>Son değişiklikler<span class="sub">panelden yapılan belge değişiklikleri, son {{.Data.KeepDays}} gün</span></h2></div>
+{{with .Data.EditsErr}}<div class="notice warn">{{icon "alert"}}<div>Kayıtlar okunamadı: {{.}}</div></div>{{end}}
+{{with .Data.Edits}}
+<div class="table-wrap">
+<table class="responsive">
+  <thead><tr><th>Belge</th><th>İşlem</th><th>Zaman</th><th></th></tr></thead>
+  <tbody>
+  {{range .}}
+    <tr>
+      <td class="primary"><a class="cell-title mono" href="{{dbURL $s.Name "/doc" "c" .Collection "id" .DocID}}">{{idText .DocID}}</a><span class="cell-sub"><span class="mono">{{.Collection}}</span>{{with .Changes}} · {{range $i, $c := .}}{{if $i}}, {{end}}{{if eq $c.Kind "added"}}+{{else if eq $c.Kind "removed"}}−{{end}}{{$c.Field}}{{end}}{{end}}{{with .More}} +{{.}} alan daha{{end}}</span></td>
+      <td data-label="İşlem"><span class="badges">{{opTR .Op}}{{if .Pending}}<span class="badge warn">sonucu belirsiz</span>{{end}}{{if .UndoneBy}}<span class="badge">geri alındı</span>{{end}}</span></td>
+      <td data-label="Zaman" class="nowrap"><span title="{{ts .Time}}">{{since .Time}}</span>{{with .Actor}} · {{.}}{{end}}</td>
+      <td class="actions">{{if not .UndoneBy}}<a class="btn sm" href="/sites/{{$s.Name}}/db/undo/{{.ID}}">{{icon "undo"}}Geri al…</a>{{end}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}{{if not .Data.EditsErr}}<div class="card"><p class="muted">Henüz panelden bir belge değiştirilmedi.</p></div>{{end}}{{end}}
+{{template "bottom" .}}

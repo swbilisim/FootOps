@@ -1,0 +1,16 @@
+{{template "top" .}}
+{{$s := .Data.S}}{{$c := .Data.C}}{{$d := .Data.D}}
+<a class="crumb" href="{{dbURL $s.Name "/coll" "c" $c}}">{{icon "back"}}<span class="mono">{{$c}}</span></a>
+<div class="page-head">
+  <div>
+    <h1>Belge</h1>
+    <p class="sub"><span class="mono">_id {{idText $d.ID}}</span> · {{bytes $d.Size}}{{if $d.Fields}} · {{$d.Fields}} alan{{end}} · {{took $d.Took}}</p>
+  </div>
+  <div class="page-actions">
+    {{if $d.Editable}}<a class="btn primary" href="{{dbURL $s.Name "/edit" "c" $c "id" $d.ID}}">{{icon "edit"}}Düzenle</a>{{end}}
+    {{if and $d.Deletable (not $d.TooBig)}}<a class="btn" href="{{dbURL $s.Name "/delete" "c" $c "id" $d.ID}}">{{icon "trash"}}Sil…</a>{{end}}
+  </div>
+</div>
+{{if and (not $d.Editable) $d.Why}}<div class="notice info">{{icon "info"}}<div>{{$d.Why}}</div></div>{{end}}
+{{with $d.Text}}<pre class="doc">{{.}}</pre>{{end}}
+{{template "bottom" .}}

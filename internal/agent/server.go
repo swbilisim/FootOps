@@ -145,6 +145,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/sites/{name}/trash", s.listTrash)
 	mux.HandleFunc("POST /v1/sites/{name}/trash/{id}/restore", s.restoreTrash)
 	mux.HandleFunc("POST /v1/sites/{name}/trash/empty", s.emptyTrash)
+	mux.HandleFunc("GET /v1/sites/{name}/db", s.dbCollections)
+	mux.HandleFunc("GET /v1/sites/{name}/db/find", s.dbFind)
+	mux.HandleFunc("GET /v1/sites/{name}/db/doc", s.dbDoc)
+	mux.HandleFunc("POST /v1/sites/{name}/db/preview", s.dbPreview)
+	mux.HandleFunc("POST /v1/sites/{name}/db/replace", s.dbChange("edit"))
+	mux.HandleFunc("POST /v1/sites/{name}/db/delete", s.dbChange("delete"))
+	mux.HandleFunc("GET /v1/sites/{name}/db/edits", s.dbEdits)
+	mux.HandleFunc("GET /v1/sites/{name}/db/edits/{id}", s.dbEdit)
+	mux.HandleFunc("POST /v1/sites/{name}/db/edits/{id}/undo", s.dbUndo)
 	mux.HandleFunc("GET /v1/sources", s.listSources)
 	mux.HandleFunc("POST /v1/sources", s.createSource)
 	mux.HandleFunc("POST /v1/sources/{id}/test", s.testSource)
@@ -370,8 +379,10 @@ type Config struct {
 	// site's move (F4).
 	SourcesDir    string
 	MigrationsDir string
-	PanelUser     string
-	PanelHost     string // refused as a site domain
+	// DBEditsDir keeps the previous versions of documents changed from the panel (F5).
+	DBEditsDir string
+	PanelUser  string
+	PanelHost  string // refused as a site domain
 	// DockerConfig is docker's DOCKER_CONFIG (registry logins); RegistriesPath keeps
 	// when each login was saved.
 	DockerConfig   string
@@ -411,7 +422,14 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 	ops := &SiteOps{Store: sites.Store{Root: "/"}, Docker: d, Run: run.Exec{}, Kill: run.Exec{KillOnCancel: true}, PanelHost: cfg.PanelHost}
 	data := &DataOps{Store: ops.Store, Docker: d, Run: run.Exec{KillOnCancel: true}, Stream: run.StreamExec{},
 		Staging: staging.New(cfg.StagingDir, staging.DefaultMax), SnapshotDir: cfg.SnapshotDir,
-		RecoveryDir: cfg.RecoveryDir, Sites: ops, MigrationsDir: cfg.MigrationsDir}
+		RecoveryDir: cfg.RecoveryDir, Sites: ops, MigrationsDir: cfg.MigrationsDir, DBEditsDir: cfg.DBEditsDir}
+	// Made at start so the web process, which starts after the agent, has it hidden
+	// (InaccessiblePaths only covers paths that exist when a service starts).
+	if cfg.DBEditsDir != "" {
+		if err := os.MkdirAll(cfg.DBEditsDir, 0o700); err != nil {
+			logger.Printf("%s oluşturulamadı: %v", cfg.DBEditsDir, err)
+		}
+	}
 	host, _ := os.Hostname()
 	data.Sources = &remote.Store{Dir: cfg.SourcesDir, Run: run.Exec{KillOnCancel: true}, Stream: run.StreamExec{}, Name: host}
 	audit := NewAudit(cfg.AuditPath)
@@ -606,6 +624,9 @@ func housekeeping(ctx context.Context, jobs *Jobs, data *DataOps, logger *log.Lo
 			}
 			for _, x := range data.SweepTrash() {
 				logger.Printf("çöp kutusundan silindi (süresi doldu): %s", x)
+			}
+			for _, x := range data.SweepDBEdits() {
+				logger.Printf("süresi dolan belge değişikliği kaydı silindi: %s", x)
 			}
 		}
 		select {

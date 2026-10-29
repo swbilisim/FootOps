@@ -1,0 +1,22 @@
+{{template "top" .}}
+{{$s := .Data.S}}{{$c := .Data.C}}{{$d := .Data.D}}
+<div class="dialog wide">
+  <a class="crumb" href="{{dbURL $s.Name "/doc" "c" $c "id" $d.ID}}">{{icon "back"}}Belge</a>
+  <div class="card">
+    <div class="dialog-icon bad">{{icon "trash"}}</div>
+    <h1>Belge silinsin mi?</h1>
+    <p><span class="mono">{{$c}}</span> koleksiyonundaki <span class="mono">_id {{idText $d.ID}}</span> ({{bytes $d.Size}}). Uygulama onu artık göremez. Silinen hali {{.Data.KeepDays}} gün saklanır: Veritabanı → Son değişiklikler → <strong>Geri al</strong> ile aynen geri gelir.</p>
+    <pre class="doc short">{{$d.Text}}</pre>
+    <form method="post" action="/sites/{{$s.Name}}/db/delete">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <input type="hidden" name="c" value="{{$c}}">
+      <input type="hidden" name="id" value="{{$d.ID}}">
+      <input type="hidden" name="h" value="{{$d.Hash}}">
+      <div class="form-actions">
+        <button type="submit" class="danger">{{icon "trash"}}Sil</button>
+        <a class="btn" href="{{dbURL $s.Name "/doc" "c" $c "id" $d.ID}}">Vazgeç</a>
+      </div>
+    </form>
+  </div>
+</div>
+{{template "bottom" .}}
