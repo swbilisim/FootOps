@@ -17,7 +17,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,7 +32,7 @@ import (
 )
 
 // fakeMongo plays MongoDB for the data tests. A database is collection -> document
-// count (plus views); mongosh scripts are recognised by what they do; and the tool
+// count (plus views); users and counts go through its mongoAdmin methods; and the tool
 // containers really read and write archives — a real mongodump prelude followed by the
 // counts as JSON — so a restore loads exactly what was streamed into it.
 type fakeMongo struct {
@@ -43,10 +42,10 @@ type fakeMongo struct {
 	users map[string]bool
 
 	restores    int
-	failRestore int  // the n-th restore fails half-way (1-based; 0 never)
-	lieNext     bool // the next restore writes one document less than it reports
-	scripts     []string
-	failDrop    bool // dropping a temporary database fails
+	failRestore int      // the n-th restore fails half-way (1-based; 0 never)
+	lieNext     bool     // the next restore writes one document less than it reports
+	setUsers    []string // "db user" of every SetUser
+	failDrop    bool     // dropping a temporary database fails
 	helpers     int
 	failHelper  int         // the n-th file helper fails
 	fsCalls     []string    // file manager helpers: the command each ran (scope or not)
@@ -124,79 +123,101 @@ func gzipped(b []byte) []byte {
 	return buf.Bytes()
 }
 
-var reGetDB = regexp.MustCompile(`const [dt]=c\.getDB\(("(?:[^"\\]|\\.)*")\)`)
-
-func scriptDB(script string) string {
-	m := reGetDB.FindStringSubmatch(script)
-	if m == nil {
-		return ""
-	}
-	var s string
-	json.Unmarshal([]byte(m[1]), &s)
-	return s
-}
-
-// Run answers docker commands other than mongosh (docker kill).
+// Run answers docker commands (docker kill).
 func (m *fakeMongo) Run(ctx context.Context, name string, args ...string) (string, error) {
 	return "", nil
 }
 
 func (m *fakeMongo) RunInput(ctx context.Context, stdin, name string, args ...string) (string, error) {
+	return "", nil
+}
+
+// ---- mongoAdmin ----
+
+func (m *fakeMongo) Ping(context.Context) error { return nil }
+
+func (m *fakeMongo) SetUser(_ context.Context, db, user, pw string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.scripts = append(m.scripts, stdin)
-	db := scriptDB(stdin)
-	switch {
-	case strings.Contains(stdin, ".stats()"):
-		db = regexp.MustCompile(`getDB\("([^"]+)"\)\.stats`).FindStringSubmatch(stdin)[1]
-		var n int64
-		for _, v := range m.dbs[db] {
-			n += v
-		}
-		return fmt.Sprintf(`FOOTOPS_JSON {"dataSize":%d,"objects":%d,"collections":%d}`+"\nFOOTOPS_OK\n", n*100, n, len(m.dbs[db])), nil
-	case strings.Contains(stdin, "getCollectionInfos"):
-		counts := map[string]int64{}
-		for k, v := range m.dbs[db] {
-			if !strings.HasPrefix(k, "system.") { // like the real script
-				counts[k] = v
-			}
-		}
-		o := map[string]any{"counts": counts, "views": m.views[db]}
-		js, _ := json.Marshal(o)
-		return "FOOTOPS_JSON " + string(js) + "\nFOOTOPS_OK\n", nil
-	case strings.Contains(stdin, "system.users"):
-		n := 0
-		for u := range m.users {
-			if strings.HasPrefix(u, tmpDBPrefix) {
-				delete(m.users, u)
-				n++
-			}
-		}
-		for d := range m.dbs {
-			if strings.HasPrefix(d, tmpDBPrefix) {
-				delete(m.dbs, d)
-				n++
-			}
-		}
-		return fmt.Sprintf("FOOTOPS_DROPPED %d\nFOOTOPS_OK\n", n), nil
-	case strings.Contains(stdin, "createUser") && strings.Contains(stdin, tmpDBPrefix):
-		m.users[regexp.MustCompile(`getDB\("([^"]+)"\)\.createUser`).FindStringSubmatch(stdin)[1]] = true
-	case strings.Contains(stdin, "dropDatabase"):
-		if m.failDrop {
-			return "FOOTOPS_ERR connection closed\n", errors.New("exit status 3")
-		}
-		delete(m.users, db)
-		delete(m.dbs, db)
-		delete(m.views, db)
-	case strings.Contains(stdin, "for(const n of"):
-		var names []string
-		json.Unmarshal([]byte(regexp.MustCompile(`of (\[.*?\])\)`).FindStringSubmatch(stdin)[1]), &names)
-		for _, n := range names {
-			delete(m.dbs[db], n)
-			m.views[db] = remove(m.views[db], n)
+	m.setUsers = append(m.setUsers, db+" "+user)
+	m.users[db] = true
+	return nil
+}
+
+func (m *fakeMongo) DropUser(_ context.Context, db, user string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.users, db)
+	return nil
+}
+
+func (m *fakeMongo) DropTemp(_ context.Context, db string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !strings.HasPrefix(db, tmpDBPrefix) {
+		return fmt.Errorf("%q is not temporary", db)
+	}
+	if m.failDrop {
+		return errors.New("connection closed")
+	}
+	delete(m.users, db)
+	delete(m.dbs, db)
+	delete(m.views, db)
+	return nil
+}
+
+func (m *fakeMongo) DropTemps(context.Context) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for u := range m.users {
+		if strings.HasPrefix(u, tmpDBPrefix) {
+			delete(m.users, u)
+			n++
 		}
 	}
-	return "FOOTOPS_OK\n", nil
+	for d := range m.dbs {
+		if strings.HasPrefix(d, tmpDBPrefix) {
+			delete(m.dbs, d)
+			delete(m.views, d)
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (m *fakeMongo) Stats(_ context.Context, c dbCreds) (dbStats, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int64
+	for _, v := range m.dbs[c.DB] {
+		n += v
+	}
+	return dbStats{DataSize: n * 100, Objects: n, Collections: len(m.dbs[c.DB])}, nil
+}
+
+func (m *fakeMongo) Counts(_ context.Context, c dbCreds) (map[string]int64, []string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	counts := map[string]int64{}
+	for k, v := range m.dbs[c.DB] {
+		if !strings.HasPrefix(k, "system.") { // like the real one
+			counts[k] = v
+		}
+	}
+	views := append([]string(nil), m.views[c.DB]...)
+	sort.Strings(views)
+	return counts, views, nil
+}
+
+func (m *fakeMongo) DropCollections(_ context.Context, c dbCreds, names []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, n := range names {
+		delete(m.dbs[c.DB], n)
+		m.views[c.DB] = remove(m.views[c.DB], n)
+	}
+	return nil
 }
 
 func remove(list []string, s string) []string {
@@ -518,7 +539,7 @@ func newF2(t *testing.T) *f2Env {
 	m.set("magaza", map[string]int64{"urunler": 3, "sayfalar": 2, "eski": 7}, "ucuz")
 	f := &f2Env{opsEnv: e, mongo: m, sites: &fakeSites{running: true}, clock: time.Date(2026, 10, 27, 11, 0, 0, 0, time.UTC)}
 	var mu sync.Mutex
-	f.data = &DataOps{Store: sites.Store{Root: e.root}, Docker: e.net, Run: m, Stream: m, Sites: f.sites,
+	f.data = &DataOps{Store: sites.Store{Root: e.root}, Docker: e.net, Run: m, Stream: m, Mongo: m, Sites: f.sites,
 		Staging: staging.New(filepath.Join(e.root, "staging"), 1<<30), SnapshotDir: filepath.Join(e.root, "snapshots"),
 		RecoveryDir: filepath.Join(e.root, "recovery"), chunk: 1000,
 		// Every reading moves the clock a second on: copies are named by the second.
@@ -717,9 +738,9 @@ func TestImportReplace(t *testing.T) {
 	if loaded, err := f.data.LoadCheck("magaza", id); err != nil || !reflect.DeepEqual(loaded.Archive, want) {
 		t.Errorf("stored check: %+v %v", loaded, err)
 	}
-	for _, s := range f.mongo.scripts {
-		if strings.Contains(s, "createUser") && !strings.Contains(s, `role:"readWrite",db:"`+tmpDBPrefix) {
-			t.Errorf("temporary user not limited to its database: %s", s)
+	for _, s := range f.mongo.setUsers {
+		if db, user, _ := strings.Cut(s, " "); !strings.HasPrefix(db, tmpDBPrefix) || user != db {
+			t.Errorf("temporary user outside a temporary database: %s", s)
 		}
 	}
 

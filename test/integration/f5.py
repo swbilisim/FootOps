@@ -165,6 +165,11 @@ _, _, page = web("/login")
 code, loc, _ = web("/login", {"csrf": csrf(page), "username": user, "password": pw, "code": fresh_totp(secret)})
 if code != 303 or loc != "/":
     fail("login: %d %s" % (code, loc))
+# argon2id's 64 MiB goes back to the OS before the login answers (it stayed for minutes).
+measure["web_rss_after_login_mb"] = round(rss("footops web") / 1048576, 1)
+if measure["web_rss_after_login_mb"] > 40:
+    fail("web holds %.1f MB right after a login" % measure["web_rss_after_login_mb"])
+ok("girişten hemen sonra web %.1f MB (argon2id'nin 64 MiB'ı geri verildi)" % measure["web_rss_after_login_mb"])
 code, _, page = web(q("/sites/%s/db/edit" % SITE, c="f5", id=oid))
 if code != 200:
     fail("editor: %d" % code)

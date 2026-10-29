@@ -3,14 +3,18 @@ package install
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/swbilisim/FootOps/internal/auth"
 	"github.com/swbilisim/FootOps/internal/config"
 	"github.com/swbilisim/FootOps/internal/core"
+	"github.com/swbilisim/FootOps/internal/mongo"
 )
 
 func TestTunnelSecret(t *testing.T) {
@@ -262,70 +266,206 @@ func TestUnitsSeparatePrivileges(t *testing.T) {
 	}
 }
 
-func TestRotateMongoRoot(t *testing.T) {
-	var stdin string
-	h, f := newTestHost(t, nil)
-	f.handle = func(cmd string) (string, error) {
-		if strings.Contains(cmd, "mongosh") {
-			return "FOOTOPS_OK\n", nil
+// fakeRoot plays MongoDB's root user for rotate-mongo-root.
+type fakeRoot struct {
+	pw        string
+	refuse    bool // MongoDB refuses the change
+	lose      bool // the change is made, its answer lost
+	down      int  // the next logins fail: MongoDB is restarting
+	downAfter int  // down, from right after the change
+	sets      int
+}
+
+func useFakeRoot(t *testing.T, db *fakeRoot) {
+	login, set, nap := mongoLogin, mongoSetPassword, sleep
+	t.Cleanup(func() { mongoLogin, mongoSetPassword, sleep = login, set, nap })
+	mongoLogin = func(_ context.Context, addr string, c mongo.Credential) error {
+		switch {
+		case addr != core.MongoAddr || c.User != "root" || c.Source != "admin":
+			return fmt.Errorf("unexpected %s %+v", addr, c)
+		case db.down > 0:
+			db.down--
+			return errors.New("MongoDB'ye bağlanılamadı: connection refused")
+		case c.Password != db.pw:
+			return errors.New("MongoDB girişi reddedildi (kullanıcı ya da şifre yanlış)")
 		}
-		return "", nil
+		return nil
 	}
+	mongoSetPassword = func(ctx context.Context, addr string, c mongo.Credential, newPW string) (bool, error) {
+		if err := mongoLogin(ctx, addr, c); err != nil {
+			return false, err
+		}
+		db.sets++
+		if db.refuse {
+			return true, &mongo.Error{Code: 13, Name: "Unauthorized", Msg: "not authorized"}
+		}
+		db.pw, db.down = newPW, db.downAfter
+		if db.lose {
+			return true, context.DeadlineExceeded
+		}
+		return true, nil
+	}
+	naps := 0
+	sleep = func(context.Context, time.Duration) error {
+		if naps++; naps > 5 {
+			return context.DeadlineExceeded // two minutes passed
+		}
+		return nil
+	}
+}
+
+func TestRotateMongoRoot(t *testing.T) {
+	h, f := newTestHost(t, nil)
+	db := &fakeRoot{pw: "OldPassword123"}
+	useFakeRoot(t, db)
 	put(t, h, core.MongoSecretPath, core.MongoSecretEnv("OldPassword123"))
 	p, out := prompter("e\n")
 	if err := rotateMongoRoot(ctx, h, p); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range f.calls {
-		if strings.Contains(c.cmd, "mongosh") {
-			stdin = c.stdin
-		}
-		if strings.Contains(c.cmd, "OldPassword123") {
-			t.Fatalf("password on the command line: %s", c.cmd)
+		if strings.Contains(c.cmd, "OldPassword123") || strings.Contains(c.stdin, "OldPassword123") {
+			t.Fatalf("password given to a command: %s", c.cmd)
 		}
 	}
 	newPW := core.MongoPasswordFromEnv(read(t, h, core.MongoSecretPath))
-	if newPW == "OldPassword123" || len(newPW) != 32 {
-		t.Fatalf("secret file not updated: %q", newPW)
+	if newPW == "OldPassword123" || len(newPW) != 32 || db.pw != newPW {
+		t.Fatalf("file %q, MongoDB %q", newPW, db.pw)
 	}
-	if !strings.Contains(stdin, `"OldPassword123"`) || !strings.Contains(stdin, `changeUserPassword("root","`+newPW+`")`) {
-		t.Errorf("script = %s", stdin)
-	}
-	if !strings.Contains(out.String(), newPW) {
-		t.Error("new password not shown")
+	if !strings.Contains(out.String(), newPW) || strings.Contains(out.String(), "⚠") {
+		t.Errorf("output:\n%s", out)
 	}
 	if !f.ran("docker compose --project-name footops-core --file /srv/core/compose.yaml up --detach --wait") {
 		t.Error("mongo container not recreated with the new env file")
 	}
 }
 
-func TestRotateMongoRootKeepsOldPasswordOnFailure(t *testing.T) {
-	h, f := newTestHost(t, nil)
-	f.handle = func(cmd string) (string, error) {
-		if strings.Contains(cmd, "mongosh") {
-			return "FOOTOPS_ERR Authentication failed.\n", errExit
-		}
-		return "", nil
+func TestRotateMongoRootKeepsOldPassword(t *testing.T) {
+	for name, db := range map[string]*fakeRoot{
+		"refused":      {pw: "OldPassword123", refuse: true},
+		"wrong file":   {pw: "SomethingElse1"},
+		"mongodb down": {pw: "OldPassword123", down: 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, f := newTestHost(t, nil)
+			useFakeRoot(t, db)
+			before := db.pw
+			put(t, h, core.MongoSecretPath, core.MongoSecretEnv("OldPassword123"))
+			p, _ := prompter("e\n")
+			err := rotateMongoRoot(ctx, h, p)
+			if err == nil || !strings.Contains(err.Error(), "eski şifre geçerli") {
+				t.Fatalf("err = %v", err)
+			}
+			if core.MongoPasswordFromEnv(read(t, h, core.MongoSecretPath)) != "OldPassword123" || db.pw != before {
+				t.Error("a password changed")
+			}
+			if len(f.calls) != 0 {
+				t.Errorf("container recreated: %v", f.cmds())
+			}
+		})
 	}
+}
+
+// The change was made but its answer lost; MongoDB may restart right after it. The
+// file follows MongoDB: the new password is found by logging in.
+func TestRotateMongoRootLostAnswer(t *testing.T) {
+	for name, db := range map[string]*fakeRoot{
+		"answer lost":          {pw: "OldPassword123", lose: true},
+		"restarting meanwhile": {pw: "OldPassword123", lose: true, downAfter: 5},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, _ := newTestHost(t, nil)
+			useFakeRoot(t, db)
+			put(t, h, core.MongoSecretPath, core.MongoSecretEnv("OldPassword123"))
+			p, out := prompter("e\n")
+			if err := rotateMongoRoot(ctx, h, p); err != nil {
+				t.Fatal(err)
+			}
+			if got := core.MongoPasswordFromEnv(read(t, h, core.MongoSecretPath)); got != db.pw || got == "OldPassword123" {
+				t.Errorf("file %q, MongoDB %q", got, db.pw)
+			}
+			if !strings.Contains(out.String(), "cevabı alınamadı ama yeni şifreyle giriş yapılabiliyor") {
+				t.Errorf("output:\n%s", out)
+			}
+		})
+	}
+}
+
+// MongoDB does not come back: neither password can be checked. The file stays, and the
+// new password is shown so it is not lost.
+func TestRotateMongoRootUnknown(t *testing.T) {
+	h, f := newTestHost(t, nil)
+	db := &fakeRoot{pw: "OldPassword123", lose: true, downAfter: 1000}
+	useFakeRoot(t, db)
 	put(t, h, core.MongoSecretPath, core.MongoSecretEnv("OldPassword123"))
-	p, _ := prompter("e\n")
+	p, out := prompter("e\n")
 	err := rotateMongoRoot(ctx, h, p)
-	if err == nil || !strings.Contains(err.Error(), "Authentication failed") {
+	if err == nil || !strings.Contains(err.Error(), "anlaşılamadı") {
 		t.Fatalf("err = %v", err)
 	}
-	if core.MongoPasswordFromEnv(read(t, h, core.MongoSecretPath)) != "OldPassword123" {
-		t.Error("secret file changed although MongoDB kept the old password")
+	if core.MongoPasswordFromEnv(read(t, h, core.MongoSecretPath)) != "OldPassword123" || !strings.Contains(out.String(), db.pw) {
+		t.Errorf("file changed or new password not shown:\n%s", out)
+	}
+	if len(f.calls) != 0 {
+		t.Errorf("container recreated: %v", f.cmds())
 	}
 }
 
 func TestRotateMongoRootDeclined(t *testing.T) {
 	h, f := newTestHost(t, nil)
 	put(t, h, core.MongoSecretPath, core.MongoSecretEnv("OldPassword123"))
+	db := &fakeRoot{pw: "OldPassword123"}
+	useFakeRoot(t, db)
 	p, _ := prompter("\n") // default: no
-	if err := rotateMongoRoot(ctx, h, p); !errors.Is(err, ErrAborted) {
+	if err := rotateMongoRoot(ctx, h, p); !errors.Is(err, ErrAborted) || db.sets != 0 {
 		t.Fatalf("err = %v", err)
 	}
 	if len(f.calls) != 0 {
 		t.Errorf("ran commands after declining: %v", f.cmds())
+	}
+}
+
+// With a real MongoDB (FOOTOPS_TEST_MONGO): a throwaway administrator's password is
+// changed; only the new one logs in afterwards.
+func TestLiveChangeMongoPassword(t *testing.T) {
+	raw := os.Getenv("FOOTOPS_TEST_MONGO")
+	if raw == "" {
+		t.Skip("FOOTOPS_TEST_MONGO yok: gerçek MongoDB testleri atlandı")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		t.Fatal(err)
+	}
+	rootPW, _ := u.User.Password()
+	root, err := mongo.Dial(ctx, u.Host, mongo.Credential{User: u.User.Username(), Password: rootPW, Source: "admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	user, _ := randomPassword(8)
+	user = "rot" + user
+	cmd := mongo.NewBuilder().String("createUser", user).String("pwd", "Eski12345").
+		StartArray("roles").StartDoc("").String("role", "root").String("db", "admin").End().End().MustBuild()
+	if _, err := root.Run(ctx, "admin", cmd, 1<<20); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = root.Run(ctx, "admin", mongo.NewBuilder().String("dropUser", user).MustBuild(), 1<<20) })
+	login := func(pw string) error {
+		c, err := mongo.Dial(ctx, u.Host, mongo.Credential{User: user, Password: pw, Source: "admin"})
+		if err == nil {
+			c.Close()
+		}
+		return err
+	}
+
+	if state, err := changeMongoPassword(ctx, u.Host, mongo.Credential{User: user, Password: "Yanlis123", Source: "admin"}, "Yeni12345"); state != pwOld || err == nil {
+		t.Errorf("wrong old password: %v, %v", state, err)
+	}
+	state, err := changeMongoPassword(ctx, u.Host, mongo.Credential{User: user, Password: "Eski12345", Source: "admin"}, "Yeni12345")
+	if state != pwNew || err != nil {
+		t.Fatalf("%v, %v", state, err)
+	}
+	if login("Eski12345") == nil || login("Yeni12345") != nil {
+		t.Error("the new password is not the only one that logs in")
 	}
 }

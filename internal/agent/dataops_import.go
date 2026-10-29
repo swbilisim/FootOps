@@ -565,19 +565,19 @@ func (d *DataOps) trialRestore(ctx context.Context, t *Task, path string, sec db
 		return nil, nil, err
 	}
 	creds := dbCreds{User: tmp, Password: pw, DB: tmp}
-	if _, err := rootMongosh(ctx, d.Run, d.mongoSecret(), fmt.Sprintf(
-		`c.getDB(%s).createUser({user:%s,pwd:%s,roles:[{role:"readWrite",db:%s}]})`, q(tmp), q(tmp), q(pw), q(tmp))); err != nil {
-		return nil, nil, fmt.Errorf("geçici veritabanı kullanıcısı oluşturulamadı: %w", err)
-	}
+	// Registered first: a user whose creation answer was lost is removed too.
 	defer func() {
 		bg, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		if err := d.dropTemp(bg, tmp); err != nil {
+		if err := d.mongoOps().DropTemp(bg, tmp); err != nil {
 			t.Step("⚠ Geçici veritabanı silinemedi (agent bir sonraki açılışta siler): " + err.Error())
 			_ = os.MkdirAll(d.RecoveryDir, 0o700)
 			_ = os.WriteFile(d.tempMarker(), nil, 0o600)
 		}
 	}()
+	if err := d.mongoOps().SetUser(ctx, tmp, tmp, pw); err != nil {
+		return nil, nil, fmt.Errorf("geçici veritabanı kullanıcısı oluşturulamadı: %w", err)
+	}
 	t.Step("… Deneme yüklemesi: " + sourceDB + " → geçici veritabanı (site etkilenmez)")
 	src := restoreSource{Path: path, Sec: sec, DB: sourceDB}
 	res, err := d.mongorestore(ctx, t, creds, src, nil, true)
@@ -623,13 +623,6 @@ func (d *DataOps) mongoSecret() string { return filepath.Join(d.Store.Root, core
 // mongoData is where MongoDB keeps its files: restores need room there.
 func (d *DataOps) mongoData() string { return filepath.Join(d.Store.Root, core.MongoDataDir) }
 
-// dropTemp removes a temporary database and its user.
-func (d *DataOps) dropTemp(ctx context.Context, db string) error {
-	_, err := rootMongosh(ctx, d.Run, d.mongoSecret(), fmt.Sprintf(
-		`const t=c.getDB(%s);if(t.getUser(%s)){t.dropUser(%s)};t.dropDatabase()`, q(db), q(db), q(db)))
-	return err
-}
-
 // tempMarker exists while a temporary database may be left over (its removal failed).
 func (d *DataOps) tempMarker() string { return filepath.Join(d.RecoveryDir, "temp-databases") }
 
@@ -642,15 +635,12 @@ func (d *DataOps) TempLeft() bool {
 // DropTempDatabases removes temporary databases and users left by checks cut short by
 // an agent restart. It returns how many databases and users it removed.
 func (d *DataOps) DropTempDatabases(ctx context.Context) (string, error) {
-	out, err := rootMongosh(ctx, d.Run, d.mongoSecret(), fmt.Sprintf(`const p=%s;let n=0;`+
-		`c.getDB("admin").getCollection("system.users").find({db:{$regex:"^"+p}}).toArray().forEach(u=>{c.getDB(u.db).dropUser(u.user);n++});`+
-		`c.getDBNames().filter(x=>x.startsWith(p)).forEach(x=>{c.getDB(x).dropDatabase();n++});print("FOOTOPS_DROPPED "+n)`, q(tmpDBPrefix)))
+	n, err := d.mongoOps().DropTemps(ctx)
 	if err != nil {
 		return "", err
 	}
 	_ = os.Remove(d.tempMarker())
-	_, n, _ := strings.Cut(out, "FOOTOPS_DROPPED ")
-	return firstLine(n), nil
+	return strconv.Itoa(n), nil
 }
 
 func (d *DataOps) checkPath(uploadID string) string {
@@ -800,33 +790,11 @@ func (d *DataOps) mongorestore(ctx context.Context, t *Task, creds dbCreds, src 
 // collCounts lists a database's collections with their document counts, and its views.
 // System collections are left out (a site's user may not even read them).
 func (d *DataOps) collCounts(ctx context.Context, c dbCreds) (map[string]int64, []string, error) {
-	out, err := mongosh(ctx, d.Run, c.User, c.Password, c.DB, fmt.Sprintf(`const d=c.getDB(%s);const o={counts:{},views:[]};`+
-		`d.getCollectionInfos().forEach(i=>{if(i.name.startsWith("system."))return;`+
-		`if(i.type==="view"){o.views.push(i.name)}else{o.counts[i.name]=d.getCollection(i.name).countDocuments({})}});`+
-		`print("FOOTOPS_JSON "+JSON.stringify(o))`, q(c.DB)))
+	counts, views, err := d.mongoOps().Counts(ctx, c)
 	if err != nil {
 		return nil, nil, fmt.Errorf("koleksiyonlar sayılamadı: %w", err)
 	}
-	var o struct {
-		Counts map[string]int64 `json:"counts"`
-		Views  []string         `json:"views"`
-	}
-	_, js, ok := strings.Cut(out, "FOOTOPS_JSON ")
-	if !ok || json.Unmarshal([]byte(strings.TrimSpace(firstLine(js))), &o) != nil {
-		return nil, nil, errors.New("koleksiyon sayıları anlaşılamadı")
-	}
-	if o.Counts == nil {
-		o.Counts = map[string]int64{}
-	}
-	sort.Strings(o.Views)
-	return o.Counts, o.Views, nil
-}
-
-func (d *DataOps) dropCollections(ctx context.Context, c dbCreds, names []string) error {
-	list, _ := json.Marshal(names)
-	_, err := mongosh(ctx, d.Run, c.User, c.Password, c.DB,
-		fmt.Sprintf(`const d=c.getDB(%s);for(const n of %s){d.getCollection(n).drop()}`, q(c.DB), list))
-	return err
+	return counts, views, nil
 }
 
 // load restores src into the site's database and checks the result. It returns the
@@ -847,7 +815,7 @@ func (d *DataOps) load(ctx context.Context, t *Task, creds dbCreds, src restoreS
 			}
 		}
 		if len(extra) > 0 {
-			if err := d.dropCollections(ctx, creds, extra); err != nil {
+			if err := d.mongoOps().DropCollections(ctx, creds, extra); err != nil {
 				return before, nil, fmt.Errorf("arşivde olmayan koleksiyonlar silinemedi: %w", err)
 			}
 			t.Step(fmt.Sprintf("✓ Arşivde olmayan %d koleksiyon silindi: %s", len(extra), strings.Join(extra, ", ")))
@@ -913,7 +881,10 @@ func (d *DataOps) WaitMongo(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	for {
-		_, err := rootMongosh(ctx, d.Run, d.mongoSecret(), `c.getDB("admin").runCommand({ping:1})`)
+		// One try may not take the whole wait: a MongoDB that hangs is asked again.
+		try, stop := context.WithTimeout(ctx, 15*time.Second)
+		err := d.mongoOps().Ping(try)
+		stop()
 		if err == nil {
 			return nil
 		}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -55,6 +54,8 @@ type SiteOps struct {
 	// a cancelled or timed-out check never keeps the job slot; nil uses Run.
 	Kill      run.Runner
 	PanelHost string // never served by a site
+	// Mongo creates and drops the sites' database users (default: package mongo, as root).
+	Mongo mongoAdmin
 
 	mu  sync.Mutex
 	now func() time.Time
@@ -515,66 +516,26 @@ func (o *SiteOps) writeCaddy(ctx context.Context, s sites.Spec) error {
 	return nil
 }
 
-// mongoUser creates (or resets the password of) the site's database user. The script,
-// which contains the root password, goes through stdin: it never appears in a process
-// list. --file makes mongosh stop at the first error, unlike its interactive mode.
+// mongoUser creates (or resets the password of) the site's database user, with
+// readWrite on the site's database alone.
 func (o *SiteOps) mongoUser(ctx context.Context, s sites.Spec, pw string) error {
-	js := fmt.Sprintf(`const t=c.getDB(%s);const r=[{role:"readWrite",db:%s}];`+
-		`if(t.getUser(%s)){t.updateUser(%s,{pwd:%s,roles:r})}else{t.createUser({user:%s,pwd:%s,roles:r})}`,
-		q(s.DBName()), q(s.DBName()), q(s.DBUser()), q(s.DBUser()), q(pw), q(s.DBUser()), q(pw))
-	if err := o.mongo(ctx, js); err != nil {
+	if err := o.mongoOps().SetUser(ctx, s.DBName(), s.DBUser(), pw); err != nil {
 		return fmt.Errorf("MongoDB kullanıcısı oluşturulamadı: %w", err)
 	}
 	return nil
 }
 
 func (o *SiteOps) dropMongoUser(ctx context.Context, s sites.Spec) error {
-	return o.mongo(ctx, fmt.Sprintf(`const t=c.getDB(%s);if(t.getUser(%s)){t.dropUser(%s)}`, q(s.DBName()), q(s.DBUser()), q(s.DBUser())))
+	return o.mongoOps().DropUser(ctx, s.DBName(), s.DBUser())
 }
 
-func (o *SiteOps) mongo(ctx context.Context, body string) error {
-	_, err := rootMongosh(ctx, o.Run, o.path(core.MongoSecretPath), body)
-	return err
-}
-
-// rootMongosh runs a script as MongoDB's root user, whose password is read from the
-// secrets file. Root is only for managing users and databases (rule K4).
-func rootMongosh(ctx context.Context, r run.Runner, secretFile, body string) (string, error) {
-	env, err := os.ReadFile(secretFile)
-	if err != nil {
-		return "", err
+// mongoOps manages database users as MongoDB's root user, whose password is read from
+// the secrets file. Root is only for managing users and databases (rule K4).
+func (o *SiteOps) mongoOps() mongoAdmin {
+	if o.Mongo != nil {
+		return o.Mongo
 	}
-	rootPW := core.MongoPasswordFromEnv(string(env))
-	if rootPW == "" {
-		return "", errors.New("MongoDB root şifresi bulunamadı")
-	}
-	return mongosh(ctx, r, core.MongoRootUser, rootPW, "admin", body)
-}
-
-// mongosh runs a script in the MongoDB container as the given user. The script, which
-// contains the password, goes through stdin, so it never appears in a process list; the
-// connection is c. Output before "FOOTOPS_OK" is returned for scripts that print.
-func mongosh(ctx context.Context, r run.Runner, user, pw, authDB, body string) (string, error) {
-	script := fmt.Sprintf(`(function(){try{const c=new Mongo("mongodb://127.0.0.1:27017");`+
-		`c.getDB(%s).auth(%s,%s);%s;print("FOOTOPS_OK")}catch(e){print("FOOTOPS_ERR "+e.message);quit(3)}})()`,
-		q(authDB), q(user), q(pw), body)
-	out, err := r.RunInput(ctx, script+"\n", "docker", "exec", "-i", mongoContainer, "mongosh", "--quiet", "--nodb", "--file", "/dev/stdin")
-	if i := strings.Index(out, "FOOTOPS_ERR "); i >= 0 {
-		return out, errors.New(strings.TrimSpace(out[i+len("FOOTOPS_ERR "):]))
-	}
-	if err != nil {
-		return out, err
-	}
-	if !strings.Contains(out, "FOOTOPS_OK") {
-		return out, errors.New("mongosh beklenmeyen çıktı verdi")
-	}
-	return out, nil
-}
-
-// q quotes a string for JavaScript (JSON is valid JS).
-func q(s string) string {
-	b, _ := json.Marshal(s)
-	return string(b)
+	return mongoClient{Addr: defaultMongoAddr, SecretFile: o.path(core.MongoSecretPath)}
 }
 
 // prepareDataDir creates the persistent directory owned by the user the image runs as,

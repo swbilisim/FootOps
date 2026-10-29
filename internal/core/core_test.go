@@ -1,8 +1,12 @@
 package core
 
 import (
+	"encoding/binary"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/swbilisim/FootOps/internal/mongo"
 )
 
 func TestComposePinsImagesAndBindsMongoToLoopback(t *testing.T) {
@@ -72,5 +76,46 @@ func TestComposeTunnel(t *testing.T) {
 	}
 	if TunnelTokenFromEnv(TunnelSecretEnv("abc")) != "abc" {
 		t.Error("token round trip")
+	}
+}
+
+// The healthcheck's bytes are a well-formed OP_MSG holding {ping: 1, $db: "admin"}, and
+// the script survives the compose file's quoting.
+func TestMongoPing(t *testing.T) {
+	_, rest, _ := strings.Cut(MongoPing, `printf "`)
+	esc, _, ok := strings.Cut(rest, `" >&3`)
+	if !ok {
+		t.Fatal("no printf argument")
+	}
+	var msg []byte
+	for i := 0; i < len(esc); i++ {
+		if esc[i] == '\\' && i+3 < len(esc) && esc[i+1] == 'x' {
+			n, err := strconv.ParseUint(esc[i+2:i+4], 16, 8)
+			if err != nil {
+				t.Fatal(err)
+			}
+			msg = append(msg, byte(n))
+			i += 3
+			continue
+		}
+		msg = append(msg, esc[i])
+	}
+	le := binary.LittleEndian
+	if int(le.Uint32(msg)) != len(msg) || le.Uint32(msg[12:]) != 2013 || le.Uint32(msg[16:]) != 0 || msg[20] != 0 {
+		t.Fatalf("header: % x", msg[:21])
+	}
+	doc := mongo.Doc(msg[21:])
+	if err := doc.Validate(); err != nil || int(le.Uint32(doc)) != len(doc) {
+		t.Fatalf("document: %v", err)
+	}
+	text, _ := mongo.DocText(doc, false)
+	if text != `{"ping": 1, "$db": "admin"}` {
+		t.Errorf("command = %s", text)
+	}
+	if strings.ContainsAny(MongoPing, `'$%`) {
+		t.Error("the script holds a quote, $ or % (compose quoting, substitution, Sprintf)")
+	}
+	if !strings.Contains(Compose(Config{MongoCacheGB: 0.5}), `test: ["CMD", "bash", "-c", '`+MongoPing+`']`) {
+		t.Error("compose lacks the healthcheck")
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -151,13 +152,7 @@ func (r *cmdRunner) RunInput(_ context.Context, stdin, name string, args ...stri
 			return out, err // like a real command: output and an exit status
 		}
 	}
-	if out != "" {
-		return out, nil
-	}
-	if strings.Contains(cmd, "mongosh") {
-		return "FOOTOPS_OK\n", nil
-	}
-	return "", nil
+	return out, nil
 }
 
 func (r *cmdRunner) ran(sub string) int {
@@ -181,10 +176,60 @@ func certPair(t *testing.T, names ...string) (string, string) {
 		string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: kd}))
 }
 
+// fakeUsers plays MongoDB's user management for site operations.
+type fakeUsers struct {
+	mu    sync.Mutex
+	users map[string]string // "db user" -> password
+	calls []string
+	fail  error
+}
+
+func (f *fakeUsers) rec(s string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, s)
+	return f.fail
+}
+
+func (f *fakeUsers) Ping(context.Context) error { return f.rec("ping") }
+
+func (f *fakeUsers) SetUser(_ context.Context, db, user, pw string) error {
+	if err := f.rec("set " + db + " " + user); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.users[db+" "+user] = pw
+	return nil
+}
+
+func (f *fakeUsers) DropUser(_ context.Context, db, user string) error {
+	if err := f.rec("drop " + db + " " + user); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.users, db+" "+user)
+	return nil
+}
+
+func (f *fakeUsers) DropTemp(_ context.Context, db string) error { return f.rec("droptemp " + db) }
+func (f *fakeUsers) DropTemps(context.Context) (int, error)      { return 0, f.rec("droptemps") }
+func (f *fakeUsers) Stats(context.Context, dbCreds) (dbStats, error) {
+	return dbStats{}, f.rec("stats")
+}
+func (f *fakeUsers) Counts(context.Context, dbCreds) (map[string]int64, []string, error) {
+	return map[string]int64{}, nil, f.rec("counts")
+}
+func (f *fakeUsers) DropCollections(context.Context, dbCreds, []string) error {
+	return f.rec("dropcolls")
+}
+
 type opsEnv struct {
 	ops   *SiteOps
 	net   *fakeNet
 	run   *cmdRunner
+	users *fakeUsers
 	root  string
 	steps []string
 }
@@ -198,9 +243,9 @@ func newOps(t *testing.T) *opsEnv {
 	r := &cmdRunner{fail: map[string]error{}, out: map[string]string{
 		"--entrypoint id ghcr.io/swbilisim/enisparta:main": fmt.Sprintf("uid=%d(app) gid=%d(app) groups=%d(app)", uid, gid, gid),
 	}}
-	e := &opsEnv{net: n, run: r, root: root}
+	e := &opsEnv{net: n, run: r, users: &fakeUsers{users: map[string]string{}}, root: root}
 	e.ops = &SiteOps{
-		Store: sites.Store{Root: root}, Docker: n, Run: r, PanelHost: "panel-h1.example.com",
+		Store: sites.Store{Root: root}, Docker: n, Run: r, Mongo: e.users, PanelHost: "panel-h1.example.com",
 		dial:  func(context.Context, string) error { return nil },
 		https: func(context.Context, string) (int, error) { return 200, nil },
 		sleep: func(ctx context.Context, d time.Duration) error { return ctx.Err() },
@@ -280,14 +325,19 @@ func TestCreateSite(t *testing.T) {
 	if !(idx(" pull ") < idx(" up ") && idx("caddy validate") < idx("caddy reload")) {
 		t.Errorf("command order:\n%s", strings.Join(e.run.calls, "\n"))
 	}
-	// The root password goes through stdin only.
+	// No command sees the root password; the site's user gets the password of its URI.
 	for i, c := range e.run.calls {
-		if strings.Contains(c, "RootSecret42") {
-			t.Errorf("root password in argv: %s", c)
+		if strings.Contains(c, "RootSecret42") || strings.Contains(e.run.stdins[i], "RootSecret42") {
+			t.Errorf("root password given to a command: %s", c)
 		}
-		if strings.Contains(c, "mongosh") && !strings.Contains(e.run.stdins[i], "RootSecret42") {
-			t.Error("mongosh did not get the root password via stdin")
-		}
+	}
+	env, _ := e.ops.Store.Env(specFor("enisparta"))
+	u, err := url.Parse(env["MONGODB_URI"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pw, _ := u.User.Password(); pw == "" || e.users.users["enisparta enisparta"] != pw {
+		t.Errorf("database user %v, URI %s", e.users.users, env["MONGODB_URI"])
 	}
 	if last := e.steps[len(e.steps)-1]; !strings.Contains(last, "Site hazır") {
 		t.Errorf("last step = %q", last)
@@ -305,14 +355,8 @@ func assertRolledBack(t *testing.T, e *opsEnv) {
 	if _, err := os.Stat(filepath.Join(e.root, core.CaddySitesDir, "enisparta.caddy")); !errors.Is(err, os.ErrNotExist) {
 		t.Error("caddy block left behind")
 	}
-	dropped := false
-	for i, c := range e.run.calls {
-		if strings.Contains(c, "mongosh") && strings.Contains(e.run.stdins[i], "dropUser") {
-			dropped = true
-		}
-	}
-	if !dropped {
-		t.Error("database user not dropped")
+	if len(e.users.users) != 0 || !contains(e.users.calls, "drop enisparta enisparta") {
+		t.Errorf("database user not dropped: %v", e.users.calls)
 	}
 	if list, _ := e.ops.Store.List(); len(list) != 0 {
 		t.Errorf("site still listed: %+v", list)
@@ -467,10 +511,9 @@ func TestCertRenewalUpdatesSites(t *testing.T) {
 
 func TestMongoErrorSurfaces(t *testing.T) {
 	e := newOps(t)
-	e.run.out["mongosh"] = "FOOTOPS_ERR Authentication failed.\n"
-	e.run.fail["mongosh"] = errors.New("exit status 3")
+	e.users.fail = errors.New("MongoDB girişi reddedildi (kullanıcı ya da şifre yanlış)")
 	err := e.ops.Create(context.Background(), specFor("enisparta"), nil, e.progress)
-	if err == nil || !strings.Contains(err.Error(), "Authentication failed") {
+	if err == nil || !strings.Contains(err.Error(), "MongoDB kullanıcısı oluşturulamadı: MongoDB girişi reddedildi") {
 		t.Fatalf("err = %v", err)
 	}
 }

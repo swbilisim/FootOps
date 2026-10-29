@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"runtime/debug"
 	"strings"
 
 	"golang.org/x/crypto/argon2"
@@ -66,6 +67,10 @@ func VerifyPassword(hash, password string) (bool, error) {
 		return false, errors.New("argon2 hash")
 	}
 	got := argon2.IDKey([]byte(password), salt, iter, mem, threads, uint32(len(want)))
+	// The 64 MiB just used is garbage now: hand it back to the OS at once (a few ms).
+	// Left to the runtime it stays for minutes, and the panel, ~20 MB at rest, shows
+	// ~85 MB after a login (~150 MB after two).
+	debug.FreeOSMemory()
 	return subtle.ConstantTimeCompare(got, want) == 1, nil
 }
 

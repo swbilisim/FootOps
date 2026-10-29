@@ -4,6 +4,7 @@ import (
 	"encoding/base32"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -90,6 +91,23 @@ func TestPasswordHash(t *testing.T) {
 	tampered := strings.Replace(h, "m=65536", "m=99999999", 1)
 	if _, err := VerifyPassword(tampered, "correct horse"); err == nil {
 		t.Error("absurd memory parameter accepted")
+	}
+}
+
+// After a login check, argon2id's 64 MiB is back with the operating system instead of
+// staying with the Go runtime: the panel idles at ~20 MB.
+func TestVerifyPasswordReturnsMemory(t *testing.T) {
+	h, err := HashPassword("correct horse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := VerifyPassword(h, "correct horse"); !ok || err != nil {
+		t.Fatalf("right password: %v %v", ok, err)
+	}
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	if held := m.HeapSys - m.HeapReleased; held > 32<<20 {
+		t.Errorf("the heap still holds %d MB of the operating system's memory", held>>20)
 	}
 }
 

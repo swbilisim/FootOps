@@ -238,8 +238,10 @@ again = json.loads(out)
 _, r = api("POST", "/v1/sites/%s/imports" % SITE, {"upload": again["id"], "actor": ACTOR})
 wait_job(r["job_id"])
 before_restart = counts()
+# Recoveries seen so far, by identity: the test container keeps its audit log between
+# runs, and a count within the newest 1000 entries stays flat once old ones fall out.
 _, audit = api("GET", "/v1/audit?limit=1000")
-recovers_before = len([a for a in audit if a["action"] == "db.recover"])
+recovers_before = {(a["time"], a["target"]) for a in audit if a["action"] == "db.recover"}
 _, r = api("POST", "/v1/sites/%s/imports/%s/apply" % (SITE, again["id"]), {"options": {"db": True, "db_mode": "replace"}, "confirm": SITE, "actor": ACTOR})
 jid = r["job_id"]
 
@@ -260,10 +262,10 @@ if not j.get("interrupted"):
 
 def recovered():
     _, audit = api("GET", "/v1/audit?limit=1000")
-    return [a for a in audit if a["action"] == "db.recover"]
+    return [a for a in audit if a["action"] == "db.recover" and (a["time"], a["target"]) not in recovers_before]
 
 
-wait(lambda: len(recovered()) > recovers_before, "the recovery job", 300)
+wait(lambda: len(recovered()) > 0, "the recovery job", 300)
 rec = recovered()[0]  # newest first
 after = counts()
 if not rec["ok"] or after not in (before_restart, ORIGINAL) or not site_running():

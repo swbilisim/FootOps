@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -68,29 +69,27 @@ func newData(t *testing.T) *dataEnv {
 	if err := e.ops.Create(context.Background(), specFor("magaza"), nil, e.progress); err != nil {
 		t.Fatal(err)
 	}
-	e.run.out["getDB(\"magaza\").stats()"] = "" // matched against the command line, not stdin
 	st := &fakeStream{out: gz(t, dumpOut), lines: []string{
 		"2026-10-27T11:00:00.000+0000\twriting magaza.users to archive on stdout",
 		"2026-10-27T11:00:00.000+0000\tdone dumping `magaza.users` (12 documents)",
 		"2026-10-27T11:00:00.000+0000\tdone dumping magaza.pages (1 document)",
 	}}
 	d := &dataEnv{opsEnv: e, stream: st, now: time.Date(2026, 10, 27, 11, 0, 0, 0, time.UTC)}
-	d.data = &DataOps{Store: sites.Store{Root: e.root}, Docker: e.net, Run: statsRunner{e.run}, Stream: st,
+	d.data = &DataOps{Store: sites.Store{Root: e.root}, Docker: e.net, Run: e.run, Stream: st, Mongo: &statsOnly{fakeUsers{users: map[string]string{}}},
 		Staging: staging.New(filepath.Join(e.root, "staging"), 1<<30), SnapshotDir: filepath.Join(e.root, "snapshots"),
 		now: func() time.Time { return d.now }, checkFree: func(string, int64) error { return nil }}
 	d.task = &Task{j: NewJobs(), job: &Job{ID: "job1"}}
 	return d
 }
 
-// statsRunner answers the dbStats script the way mongosh would.
-type statsRunner struct{ *cmdRunner }
+// statsOnly answers dbStats for the site's database.
+type statsOnly struct{ fakeUsers }
 
-func (r statsRunner) RunInput(ctx context.Context, stdin, name string, args ...string) (string, error) {
-	out, err := r.cmdRunner.RunInput(ctx, stdin, name, args...)
-	if strings.Contains(stdin, ".stats()") && err == nil {
-		return `FOOTOPS_JSON {"dataSize":4000,"objects":13,"collections":2}` + "\nFOOTOPS_OK\n", nil
+func (*statsOnly) Stats(_ context.Context, c dbCreds) (dbStats, error) {
+	if c.DB != "magaza" || c.User != "magaza" || c.Password == "" {
+		return dbStats{}, fmt.Errorf("unexpected credentials %+v", c)
 	}
-	return out, err
+	return dbStats{DataSize: 4000, Objects: 13, Collections: 2}, nil
 }
 
 func TestSnapshot(t *testing.T) {

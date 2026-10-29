@@ -84,10 +84,14 @@ type DataOps struct {
 	// move between the wizard's steps.
 	Sources       *remote.Store
 	MigrationsDir string
-	// MongoAddr is where the database browser connects (default 127.0.0.1:27017, the
-	// server's MongoDB); DBEditsDir keeps the previous versions of documents it changed.
+	// MongoAddr is the server's MongoDB (default 127.0.0.1:27017) for the database
+	// browser and Mongo; DBEditsDir keeps the previous versions of documents the browser
+	// changed.
 	MongoAddr  string
 	DBEditsDir string
+	// Mongo manages users and temporary databases and counts collections (default:
+	// package mongo on MongoAddr, root's password from the secrets file).
+	Mongo mongoAdmin
 
 	now       func() time.Time
 	sleep     func(time.Duration)
@@ -166,24 +170,19 @@ type dbStats struct {
 }
 
 func (d *DataOps) stats(ctx context.Context, c dbCreds) (dbStats, error) {
-	out, err := mongosh(ctx, d.Run, c.User, c.Password, c.DB,
-		fmt.Sprintf(`const s=c.getDB(%s).stats();print("FOOTOPS_JSON "+JSON.stringify({dataSize:Number(s.dataSize),objects:Number(s.objects),collections:Number(s.collections)}))`, q(c.DB)))
+	st, err := d.mongoOps().Stats(ctx, c)
 	if err != nil {
 		return dbStats{}, fmt.Errorf("veritabanı bilgisi alınamadı: %w", err)
-	}
-	var st dbStats
-	_, js, ok := strings.Cut(out, "FOOTOPS_JSON ")
-	if !ok || json.Unmarshal([]byte(strings.TrimSpace(firstLine(js))), &st) != nil {
-		return dbStats{}, errors.New("veritabanı bilgisi anlaşılamadı")
 	}
 	return st, nil
 }
 
-func firstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return s[:i]
+// mongoOps is what copies and imports ask MongoDB through (users, counts, drops).
+func (d *DataOps) mongoOps() mongoAdmin {
+	if d.Mongo != nil {
+		return d.Mongo
 	}
-	return s
+	return mongoClient{Addr: d.mongoAddr(), SecretFile: d.mongoSecret()}
 }
 
 // Snapshot copies a site's database to the snapshot directory: mongodump in a limited
@@ -398,6 +397,12 @@ func (d *DataOps) toolConfig(jobID string, c dbCreds) (string, error) {
 		return "", err
 	}
 	return dir, nil
+}
+
+// q quotes a string for YAML (JSON is valid YAML).
+func q(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }
 
 // toolCmd runs a MongoDB tool in a one-off container: the server's own MongoDB image

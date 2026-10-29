@@ -38,6 +38,8 @@ const (
 	MongoConfigDir  = MongoDir + "/configdb"
 	MongoRootUser   = "root"
 	MongoSecretPath = "/etc/footops/secrets/mongo.env"
+	// MongoAddr is where the host reaches MongoDB (published on loopback only).
+	MongoAddr = "127.0.0.1:27017"
 
 	TunnelSecretPath = "/etc/footops/secrets/cloudflared.env"
 )
@@ -109,6 +111,7 @@ var CloudflareRanges = []string{
 //     are seen by the container.
 //   - Healthchecks use 127.0.0.1: in Alpine "localhost" resolves to ::1 first, where
 //     Caddy's admin endpoint does not listen.
+//   - MongoDB's healthcheck is MongoPing, not mongosh (see there).
 func Compose(c Config) string {
 	cache := strconv.FormatFloat(c.MongoCacheGB, 'f', -1, 64)
 	var b strings.Builder
@@ -150,7 +153,7 @@ services:
     ulimits:
       nofile: {soft: 64000, hard: 64000}
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      test: ["CMD", "bash", "-c", '%s']
       interval: 30s
       timeout: 10s
       retries: 3
@@ -158,7 +161,7 @@ services:
 `,
 		ProjectName,
 		CaddyImage, "footops-caddy", CaddyEtcDir, CaddyDataDir, CaddyConfigDir,
-		MongoImage, "footops-mongo", cache, MongoSecretPath, MongoDataDir, MongoConfigDir,
+		MongoImage, "footops-mongo", cache, MongoSecretPath, MongoDataDir, MongoConfigDir, MongoPing,
 	)
 	if c.Tunnel {
 		// Host networking: cloudflared must reach the panel on 127.0.0.1, and it only
@@ -177,6 +180,18 @@ services:
 	}
 	return b.String()
 }
+
+// MongoPing is MongoDB's healthcheck: bash alone sends {ping: 1} (an OP_MSG, written
+// out byte by byte) and the reply must start with ok: 1.0. mongosh, the image's own
+// client, is a ~260 MB process for half a CPU second doing the same — measured on a
+// 2-core server, every 30 seconds, all day; this takes ~1 ms and ~2 MB. ping needs no
+// login. The script holds no single quote (the compose file quotes it so) and no "$"
+// (compose would substitute it).
+const MongoPing = `exec 3<>/dev/tcp/127.0.0.1/27017 && printf "` +
+	`\x33\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\xdd\x07\x00\x00` + // length 51, request 1, OP_MSG
+	`\x00\x00\x00\x00\x00` + // no flags; section 0: one document
+	`\x1e\x00\x00\x00\x10ping\x00\x01\x00\x00\x00\x02\x24db\x00\x06\x00\x00\x00admin\x00\x00` + // {ping: 1, $db: "admin"}
+	`" >&3 && timeout 5 head -c 38 <&3 | od -An -tx1 | tr -d " \n" | grep -q 016f6b00000000000000f03f` // ok: 1.0
 
 // TunnelSecretEnv renders the env file holding the tunnel token.
 func TunnelSecretEnv(token string) string {

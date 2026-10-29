@@ -3,7 +3,6 @@ package install
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -16,6 +15,7 @@ import (
 	"github.com/swbilisim/FootOps/internal/auth"
 	"github.com/swbilisim/FootOps/internal/config"
 	"github.com/swbilisim/FootOps/internal/core"
+	"github.com/swbilisim/FootOps/internal/mongo"
 )
 
 const (
@@ -511,9 +511,10 @@ func recordReset(h Host, action string) {
 	})
 }
 
-// RotateMongoRoot gives the MongoDB root user a new password. The new password is
-// verified by logging in with it before the secret file is replaced; if anything fails
-// before that point, the old password stays in force and in the file.
+// RotateMongoRoot gives the MongoDB root user a new password. The secret file follows
+// the password MongoDB has afterwards, found out by logging in (also when the answer to
+// the change was lost); when MongoDB cannot tell, the new password is shown so it is
+// never lost.
 func RotateMongoRoot(ctx context.Context, h Host, p *Prompter) error {
 	if os.Geteuid() != 0 {
 		return errors.New("root olarak çalıştırılmalı: sudo footops rotate-mongo-root")
@@ -541,19 +542,17 @@ func rotateMongoRoot(ctx context.Context, h Host, p *Prompter) error {
 	if err != nil {
 		return err
 	}
-	// Both passwords travel on stdin, never on a command line.
-	script := fmt.Sprintf(`(function(){try{const c=new Mongo("mongodb://127.0.0.1:27017");const a=c.getDB("admin");`+
-		`a.auth(%[1]s,%[2]s);a.changeUserPassword(%[1]s,%[3]s);`+
-		`const v=new Mongo("mongodb://127.0.0.1:27017").getDB("admin");v.auth(%[1]s,%[3]s);`+
-		`print("FOOTOPS_OK")}catch(e){print("FOOTOPS_ERR "+e.message);quit(3)}})()`,
-		jsString(core.MongoRootUser), jsString(old), jsString(pw))
-	out, err := h.Run.RunInput(ctx, script+"\n", "docker", "exec", "-i", core.Services(core.Config{})["mongo"],
-		"mongosh", "--quiet", "--nodb", "--file", "/dev/stdin")
-	if i := strings.Index(out, "FOOTOPS_ERR "); i >= 0 {
-		return fmt.Errorf("şifre değiştirilemedi, eski şifre geçerli: %s", strings.TrimSpace(out[i+len("FOOTOPS_ERR "):]))
-	}
-	if err != nil || !strings.Contains(out, "FOOTOPS_OK") {
-		return fmt.Errorf("şifre değiştirilemedi, eski şifre geçerli: %v", err)
+	state, err := changeMongoPassword(ctx, core.MongoAddr,
+		mongo.Credential{User: core.MongoRootUser, Password: old, Source: "admin"}, pw)
+	switch {
+	case state == pwOld:
+		return fmt.Errorf("şifre değiştirilemedi, eski şifre geçerli: %w", err)
+	case state == pwUnknown:
+		p.Say("⚠ MongoDB cevap vermiyor: şifre değişmiş de olabilir, değişmemiş de.")
+		p.Say("%s içindeki şifre artık çalışmıyorsa yeni şifre: %s — dosyaya elle yaz.", core.MongoSecretPath, pw)
+		return fmt.Errorf("şifrenin değişip değişmediği anlaşılamadı: %w", err)
+	case err != nil:
+		p.Say("⚠ MongoDB'nin cevabı alınamadı ama yeni şifreyle giriş yapılabiliyor (%v).", err)
 	}
 	if err := h.WriteFile(core.MongoSecretPath, core.MongoSecretEnv(pw), 0o600); err != nil {
 		// MongoDB already uses the new password: show it so it is not lost.
@@ -576,8 +575,68 @@ func rotateMongoRoot(ctx context.Context, h Host, p *Prompter) error {
 	return nil
 }
 
-// jsString quotes s for JavaScript (JSON is valid JS).
-func jsString(s string) string {
-	b, _ := json.Marshal(s)
-	return string(b)
+// pwState is the password MongoDB has after a change.
+type pwState int
+
+const (
+	pwOld     pwState = iota // the change did not happen
+	pwNew                    // it did
+	pwUnknown                // MongoDB did not answer: either may be in force
+)
+
+// MongoDB as rotate-mongo-root uses it (package mongo: no mongosh, no password in any
+// process's input); tests replace these.
+var (
+	mongoLogin = func(ctx context.Context, addr string, cred mongo.Credential) error {
+		c, err := mongo.Dial(ctx, addr, cred)
+		if err == nil {
+			c.Close()
+		}
+		return err
+	}
+	// mongoSetPassword logs in with cred and sends updateUser; sent reports whether the
+	// command went out (after that, a lost answer leaves the outcome open).
+	mongoSetPassword = func(ctx context.Context, addr string, cred mongo.Credential, newPW string) (sent bool, err error) {
+		c, err := mongo.Dial(ctx, addr, cred)
+		if err != nil {
+			return false, err
+		}
+		defer c.Close()
+		_, err = c.Run(ctx, cred.Source, mongo.NewBuilder().String("updateUser", cred.User).String("pwd", newPW).MustBuild(), 1<<20)
+		return true, err
+	}
+)
+
+// changeMongoPassword gives a MongoDB user a new password and finds out by logging in
+// which one MongoDB has afterwards: on a context of its own (the first may have run out
+// with the answer on its way), for up to two minutes (MongoDB may be restarting).
+func changeMongoPassword(ctx context.Context, addr string, cred mongo.Credential, newPW string) (pwState, error) {
+	sctx, cancel := context.WithTimeout(ctx, time.Minute)
+	sent, err := mongoSetPassword(sctx, addr, cred, newPW)
+	cancel()
+	var refused *mongo.Error
+	if !sent || errors.As(err, &refused) {
+		return pwOld, err
+	}
+	vctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+	defer cancel()
+	next := cred
+	next.Password = newPW
+	for {
+		if mongoLogin(vctx, addr, next) == nil {
+			return pwNew, err
+		}
+		if mongoLogin(vctx, addr, cred) == nil {
+			if err == nil {
+				err = errors.New("MongoDB değişikliği onayladı ama eski şifre hâlâ geçerli")
+			}
+			return pwOld, err
+		}
+		if sleep(vctx, 3*time.Second) != nil {
+			if err == nil {
+				err = errors.New("MongoDB cevap vermiyor")
+			}
+			return pwUnknown, err
+		}
+	}
 }

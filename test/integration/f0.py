@@ -31,6 +31,21 @@ api("GET", "/v1/overview")
 ok("agent cevap veriyor")
 measure["agent_rss_idle"] = rss("footops agent")
 
+# ---- MongoDB's healthcheck: a ping sent by bash, no mongosh (~260 MB every 30 s) ----
+hc = sh("docker inspect footops-mongo --format '{{json .Config.Healthcheck.Test}}'")
+if "mongosh" in hc or '"bash"' not in hc:
+    fail("mongo healthcheck: %s" % hc)
+wait(lambda: sh("docker inspect footops-mongo --format '{{.State.Health.Status}}'").strip() == "healthy",
+     "MongoDB healthy", timeout=120)
+runs = [l.split() for l in sh("docker inspect footops-mongo --format "
+                              "'{{range .State.Health.Log}}{{.Start.UnixNano}} {{.End.UnixNano}} {{.ExitCode}}\n{{end}}'").splitlines() if l.strip()]
+# Probes during a fresh data directory's first start may fail (start_period): the last
+# one counts.
+if not runs or runs[-1][2] != "0":
+    fail("mongo healthcheck failed: %s" % runs)
+measure["mongo_healthcheck_ms"] = [round((int(e) - int(s)) / 1e6, 1) for s, e, code in runs if code == "0"]
+ok("MongoDB sağlık kontrolü bash ile, sağlıklı (%s ms)" % measure["mongo_healthcheck_ms"])
+
 # ---- site with a database ----
 code, sites = api("GET", "/v1/sites")
 if not any(s["spec"]["name"] == SITE for s in sites):

@@ -44,6 +44,7 @@ func (e *Error) Error() string {
 
 // Error codes the panel explains.
 const (
+	CodeUserNotFound      = 11
 	CodeUnauthorized      = 13
 	CodeNamespaceNotFound = 26
 	CodeMaxTimeExpired    = 50
