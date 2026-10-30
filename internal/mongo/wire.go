@@ -124,6 +124,12 @@ func (c *Conn) Run(ctx context.Context, db string, cmd Doc, maxReply int) (Doc, 
 	if err != nil {
 		c.broken = err
 		c.nc.Close()
+		// The socket's deadline is the context's and can fire a moment before the
+		// context's own timer: past the deadline, let the context catch up, so the error
+		// is its (and its cause, for the caller to tell whose time ran out).
+		if d, ok := ctx.Deadline(); ok && !time.Now().Before(d) {
+			<-ctx.Done()
+		}
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}

@@ -178,6 +178,39 @@ func TestRunStopsOnContext(t *testing.T) {
 	}
 }
 
+// lateCtx reports its deadline but is done only later: a context whose timer lags behind
+// the socket deadline set from it.
+type lateCtx struct {
+	context.Context
+	deadline time.Time
+	done     chan struct{}
+}
+
+func (c lateCtx) Deadline() (time.Time, bool) { return c.deadline, true }
+func (c lateCtx) Done() <-chan struct{}       { return c.done }
+func (c lateCtx) Err() error {
+	select {
+	case <-c.done:
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
+}
+
+// The socket's deadline fires before the context's timer: the error is still the
+// context's, not an i/o timeout (seen on CI: a limit's own message got lost).
+func TestRunDeadlineBeatsContextTimer(t *testing.T) {
+	c := fakeServer(t, func([]byte, int32) []byte {
+		time.Sleep(5 * time.Second)
+		return nil
+	})
+	ctx := lateCtx{Context: context.Background(), deadline: time.Now().Add(50 * time.Millisecond), done: make(chan struct{})}
+	time.AfterFunc(150*time.Millisecond, func() { close(ctx.done) })
+	if _, err := c.Run(ctx, "x", NewBuilder().Int32("ping", 1).MustBuild(), 1<<10); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestWriteErr(t *testing.T) {
 	reply := NewBuilder().Int32("ok", 1).Int32("n", 0).StartArray("writeErrors").
 		StartDoc("").Int32("index", 0).Int32("code", 11000).String("errmsg", "E11000 duplicate key").End().End().MustBuild()
