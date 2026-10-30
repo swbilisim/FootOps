@@ -11,7 +11,7 @@
     {{with .Data.Problem}}<div class="notice bad">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
     <form method="post" action="/sources/{{$src.ID}}/remove">
       <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
-      <label class="check"><input type="checkbox" name="cleanup"{{if $src.Pinned}} checked{{else}} disabled{{end}}> Bu sunucunun satırını kaynaktaki <span class="mono">authorized_keys</span> dosyasından da sil (önerilir)</label>
+      <label class="check"><input type="checkbox" name="cleanup"{{if $src.Pinned}} checked{{else}} disabled{{end}}> <span>Bu sunucunun satırını kaynaktaki <span class="mono">authorized_keys</span> dosyasından da sil (önerilir)</span></label>
       {{if not $src.Pinned}}<p class="hint">Bu kaynağa hiç bağlanılmadı; satır kaynağa eklendiyse elle sil: <span class="mono">{{$src.Authorized}}</span></p>{{end}}
       <div class="form-actions">
         <button type="submit" class="danger">{{icon "trash"}}Kaldır</button>

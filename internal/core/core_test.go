@@ -18,6 +18,8 @@ func TestComposePinsImagesAndBindsMongoToLoopback(t *testing.T) {
 		`"--wiredTigerCacheSizeGB", "0.5"`,
 		"env_file: " + MongoSecretPath,
 		"restart: unless-stopped",
+		`      - "443:443"`,
+		"    stop_grace_period: 60s\n    env_file: " + MongoSecretPath, // on the mongo service
 	} {
 		if !strings.Contains(c, want) {
 			t.Errorf("compose misses %q", want)
@@ -25,6 +27,10 @@ func TestComposePinsImagesAndBindsMongoToLoopback(t *testing.T) {
 	}
 	if strings.Contains(c, "latest") {
 		t.Error("unpinned image")
+	}
+	// Only 443 is published: nothing answers on 80.
+	if strings.Contains(c, "80:80") {
+		t.Error("port 80 published")
 	}
 	// Mongo must never be published on all interfaces.
 	if strings.Contains(c, `"27017:27017"`) || strings.Contains(c, "0.0.0.0:27017") {
@@ -44,7 +50,7 @@ func TestComposeIsDeterministic(t *testing.T) {
 func TestCaddyfileNeverRequestsCertificates(t *testing.T) {
 	c := Caddyfile()
 	if !strings.Contains(c, "auto_https off") || !strings.Contains(c, "import /etc/caddy/sites/*.caddy") ||
-		!strings.Contains(c, "trusted_proxies static 173.245.48.0/20") || !strings.Contains(c, "client_ip_headers CF-Connecting-IP") ||
+		!strings.Contains(c, "trusted_proxies static 173.245.48.0/20") || !strings.Contains(c, "client_ip_headers CF-Connecting-IP\n") ||
 		!strings.Contains(c, "https:// {\n\tabort\n}") {
 		t.Errorf("Caddyfile = %s", c)
 	}

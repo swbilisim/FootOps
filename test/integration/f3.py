@@ -244,6 +244,9 @@ ok("bağlantılar izlenmiyor: dis → /etc ve uygulamanın koyduğu pw → /etc/
 # ---- empty the trash ----
 if api("POST", "/v1/sites/%s/trash/empty" % SITE, {"confirm": "yanlis", "actor": ACTOR}, check=False)[0] != 422:
     fail("empty without the name")
+# Emptying keeps what was trashed in its own second (a deletion running meanwhile); the
+# unpack above trashed its archive a moment ago.
+time.sleep(1.1)
 _, before = api("GET", "/v1/sites/%s/trash" % SITE)
 code, res = api("POST", "/v1/sites/%s/trash/empty" % SITE, {"confirm": SITE, "actor": ACTOR})
 if res["entries"] != len(before) or sh("ls -A %s" % TRASH).strip():

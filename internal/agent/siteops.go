@@ -385,7 +385,11 @@ func (o *SiteOps) InstallCert(ctx context.Context, certPEM, keyPEM string) (site
 	if err := o.Store.InstallCert(c, key); err != nil {
 		return c, err
 	}
-	return c, o.rerenderCaddy(ctx)
+	certs, err := o.Store.Certs()
+	if err != nil {
+		return c, err
+	}
+	return c, o.rerenderCaddy(ctx, certs)
 }
 
 // RemoveCert deletes a certificate unless a site still depends on it.
@@ -422,44 +426,108 @@ func (o *SiteOps) RemoveCert(ctx context.Context, id string) error {
 	if len(users) > 0 {
 		return fmt.Errorf("bu sertifikayı kullanan siteler var: %s", strings.Join(users, ", "))
 	}
-	if err := o.Store.RemoveCert(*target); err != nil {
+	// Blocks still naming it move to the other certificates first; its files go only once
+	// Caddy runs without them, so a refused change never leaves a block naming a
+	// deleted file (Caddy would not start from that configuration).
+	if err := o.rerenderCaddy(ctx, rest); err != nil {
 		return err
 	}
-	return o.rerenderCaddy(ctx)
+	return o.Store.RemoveCert(*target)
 }
 
-func (o *SiteOps) rerenderCaddy(ctx context.Context) error {
+// SyncCaddy brings every site's Caddy block up to what this version renders: after an
+// update of FootOps the blocks on disk are the old version's until something rewrites
+// them. It reports false, changing nothing, until Caddy runs and its healthcheck (the
+// admin endpoint) passes; caddyResync paces the calls.
+func (o *SiteOps) SyncCaddy(ctx context.Context) (bool, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.init()
+	// Running is also true while the container restarts; Status is not.
+	in, err := o.Docker.Inspect(ctx, caddyContainer)
+	if err != nil || in.State.Status != "running" || (in.State.Health != nil && in.State.Health.Status != "healthy") {
+		return false, nil
+	}
+	certs, err := o.Store.Certs()
+	if err != nil {
+		return true, err
+	}
+	return true, o.rerenderCaddy(ctx, certs)
+}
+
+// caddyResync paces SyncCaddy from the reconcile loop: every tick until Caddy is up, then
+// once; after a failure again in a minute, waiting twice as long each time up to an hour.
+type caddyResync struct {
+	synced bool
+	next   time.Time
+	wait   time.Duration
+}
+
+func (c *caddyResync) due(now time.Time) bool { return !c.synced && !now.Before(c.next) }
+
+func (c *caddyResync) result(ran bool, err error, now time.Time) {
+	switch {
+	case !ran: // Caddy not up yet: the next tick
+	case err == nil:
+		c.synced = true
+	default:
+		c.wait = min(max(2*c.wait, time.Minute), time.Hour)
+		c.next = now.Add(c.wait)
+	}
+}
+
+// rerenderCaddy rewrites, for the given certificates, the site blocks that differ from
+// their rendering, validates the whole configuration and reloads. If Caddy refuses
+// either, the previous files go back: the files on disk always match what Caddy runs,
+// and a later change does not trip over a block Caddy never accepted. A site without a
+// block (a removal stopped halfway, or taken offline by hand) stays without one.
+func (o *SiteOps) rerenderCaddy(ctx context.Context, certs []sites.Cert) error {
 	list, err := o.Store.List()
 	if err != nil {
 		return err
 	}
-	certs, err := o.Store.Certs()
-	if err != nil {
-		return err
+	prev := map[string][]byte{} // file -> content before
+	restore := func() {
+		for f, b := range prev {
+			_ = writeFile(f, string(b), 0o644)
+		}
 	}
-	changed := false
 	for _, s := range list {
 		certFor, missing := sites.CertFor(s.Domains, certs)
 		if len(missing) > 0 {
 			continue
 		}
+		f := o.path(caddyFile(s))
+		have, err := os.ReadFile(f)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			restore()
+			return err
+		}
 		want := sites.CaddyBlock(s, certFor)
-		have, _ := os.ReadFile(o.path(caddyFile(s)))
 		if string(have) == want {
 			continue
 		}
-		if err := writeFile(o.path(caddyFile(s)), want, 0o644); err != nil {
+		prev[f] = have
+		if err := writeFile(f, want, 0o644); err != nil {
+			restore()
 			return err
 		}
-		changed = true
 	}
-	if !changed {
+	if len(prev) == 0 {
 		return nil
 	}
 	if err := o.caddy(ctx, "validate"); err != nil {
+		restore()
 		return fmt.Errorf("Caddy yapılandırması geçersiz: %w", err)
 	}
-	return o.caddy(ctx, "reload")
+	if err := o.caddy(ctx, "reload"); err != nil {
+		restore()
+		return fmt.Errorf("Caddy yeniden yüklenemedi: %w", err)
+	}
+	return nil
 }
 
 // ---- helpers ----

@@ -88,11 +88,21 @@ func ParseComposeEnv(text string) (map[string]string, error) {
 	return env, nil
 }
 
+// MaxRequestBody caps a request body at Caddy. It is what Cloudflare lets through on the
+// Free and Pro plans (100 MB), so nothing that works through Cloudflare is refused; a
+// request sent to the server directly can no longer stream an endless body into an app
+// that reads it whole.
+const MaxRequestBody = "100MiB"
+
 // CaddyBlock renders the site's Caddy configuration.
 //
 // Addresses carry an explicit https:// so Caddy listens on 443 only (automatic HTTPS
 // is off globally). Each domain is matched to the certificate that covers it; one
 // block per certificate keeps the tls directive unambiguous.
+//
+// X-Real-IP carries the visitor's address as Caddy determined it ({client_ip}, see
+// core.Caddyfile) and replaces whatever the visitor sent under that name. Apps should
+// read it rather than X-Forwarded-For, whose first entries the visitor chooses.
 func CaddyBlock(s Spec, certFor map[string]Cert) string {
 	byCert := map[string][]string{}
 	var order []string
@@ -114,9 +124,14 @@ func CaddyBlock(s Spec, certFor map[string]Cert) string {
 		fmt.Fprintf(&b, `%s {
 	tls %s %s
 	encode zstd gzip
-	reverse_proxy %s:%d
+	request_body {
+		max_size %s
+	}
+	reverse_proxy %s:%d {
+		header_up X-Real-IP {client_ip}
+	}
 }
-`, strings.Join(addrs, ", "), c.CertPath(), c.KeyPath(), s.Container(), s.Port)
+`, strings.Join(addrs, ", "), c.CertPath(), c.KeyPath(), MaxRequestBody, s.Container(), s.Port)
 	}
 	return b.String()
 }

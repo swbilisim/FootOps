@@ -12,7 +12,7 @@
 {{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>Agent'a ulaşılamadı: {{.}}</div></div>{{end}}
 {{if .Data.Sites}}
 <div class="table-wrap">
-<table class="responsive">
+<table class="responsive wide">
   <thead><tr><th>Site</th><th>Grup</th><th>Alan adları</th><th>Durum</th><th class="num">RAM</th></tr></thead>
   <tbody>
   {{range .Data.Sites}}
@@ -21,7 +21,7 @@
       <td data-label="Grup"><span class="chip">{{.Spec.Group}}</span></td>
       <td data-label="Alan adları"><span>{{range $i, $d := .Spec.Domains}}{{if $i}}<br>{{end}}{{$d}}{{end}}</span></td>
       <td data-label="Durum">{{with .Container}}{{template "state" .}}{{else}}<span class="badge bad">container yok</span>{{end}}</td>
-      <td data-label="RAM" class="num">{{with .Container}}{{if eq .State "running"}}<span>{{bytes .MemUsage}} <span class="muted">/ {{bytes .MemLimit}}</span></span>{{else}}—{{end}}{{else}}—{{end}}</td>
+      <td data-label="RAM" class="num wrap">{{with .Container}}{{if eq .State "running"}}<span><span class="nowrap">{{bytes .MemUsage}}</span> <span class="muted nowrap">/ {{bytes .MemLimit}}</span></span>{{else}}—{{end}}{{else}}—{{end}}</td>
     </tr>
   {{end}}
   </tbody>

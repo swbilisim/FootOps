@@ -564,7 +564,7 @@ func rotateMongoRoot(ctx context.Context, h Host, p *Prompter) error {
 	// keeps it in step (otherwise the next install run would restart it unexpectedly).
 	// The agent re-attaches it to the site networks within seconds.
 	if _, err := h.Run.Run(ctx, "docker", "compose", "--project-name", core.ProjectName, "--file", core.ComposePath,
-		"up", "--detach", "--wait", "--wait-timeout", "120", "mongo"); err != nil {
+		"up", "--detach", "--wait", "--wait-timeout", "120", "--timeout", strconv.Itoa(int(core.MongoStopGrace.Seconds())), "mongo"); err != nil {
 		p.Say("⚠ Şifre değişti ama MongoDB container'ı yeniden oluşturulamadı: %v", err)
 	}
 	recordReset(h, "mongo.rotate-root")

@@ -17,12 +17,12 @@
     <tr>
       <td class="primary mono">{{.Host}}</td>
       <td data-label="Kullanıcı" class="mono">{{or .User "—"}}</td>
-      <td data-label="Token">
+      <td data-label="Token"><div>
         {{if .Expires.IsZero}}{{if .Saved.IsZero}}<span class="muted">elle girilmiş</span>{{else}}bitiş tarihi bilinmiyor{{end}}
         {{else}}{{$d := daysLeft .Expires $.Data.Now}}<span class="badge {{if lt $d 3}}bad{{else if lt $d 14}}warn{{else}}ok{{end}}">{{if lt $d 0}}süresi doldu{{else}}{{$d}} gün kaldı{{end}}</span> <span class="muted small">{{datefmt .Expires}}</span>{{end}}
         {{with .Scopes}}<div class="cell-sub muted">yetkiler: {{range $i, $sc := .}}{{if $i}}, {{end}}{{$sc}}{{end}}</div>{{end}}
         {{if not .Saved.IsZero}}<div class="cell-sub muted">kaydedildi {{datefmt .Saved}}{{with .Actor}} · {{.}}{{end}}</div>{{end}}
-      </td>
+      </div></td>
       <td class="actions"><a class="btn sm" href="/registries/remove?host={{.Host}}">{{icon "trash"}}Kaldır…</a></td>
     </tr>
   {{end}}

@@ -68,7 +68,7 @@
 
 <div class="section-head"><h2>Container'lar <span class="sub">{{len $o.Containers}}</span></h2></div>
 <div class="table-wrap" data-live-id="containers">
-<table class="responsive">
+<table class="responsive wide">
   <thead>
     <tr><th>Container</th><th>Durum</th><th class="num">CPU</th><th class="num">RAM</th><th class="num">Restart</th><th>Başlama</th><th></th></tr>
   </thead>
@@ -78,7 +78,7 @@
       <td class="primary"><a class="cell-title" href="/containers/{{.Name}}">{{.Name}}</a><span class="cell-sub">{{.Image}}</span></td>
       <td data-label="Durum">{{template "state" .}}</td>
       <td data-label="CPU" class="num">{{if eq .State "running"}}%{{f1 .CPUPercent}}{{else}}—{{end}}</td>
-      <td data-label="RAM" class="num">{{if eq .State "running"}}<span>{{bytes .MemUsage}}{{if limited .MemLimit $o.System.MemTotal}} <span class="muted">/ {{bytes .MemLimit}}</span>{{end}}</span>{{else}}—{{end}}</td>
+      <td data-label="RAM" class="num wrap">{{if eq .State "running"}}<span><span class="nowrap">{{bytes .MemUsage}}</span>{{if limited .MemLimit $o.System.MemTotal}} <span class="muted nowrap">/ {{bytes .MemLimit}}</span>{{end}}</span>{{else}}—{{end}}</td>
       <td data-label="Restart" class="num">{{.RestartCount}}</td>
       <td data-label="Başlama" class="nowrap">{{since .StartedAt}}</td>
       <td class="actions">

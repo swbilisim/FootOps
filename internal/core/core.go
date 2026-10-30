@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Pinned images. Bumping a version is a FootOps release, never an implicit "latest".
@@ -18,6 +19,12 @@ const (
 	// cloudflared connects the panel to Cloudflare Tunnel (outbound only).
 	CloudflaredImage = "cloudflare/cloudflared:2026.10.3"
 )
+
+// MongoStopGrace is how long MongoDB gets to shut down cleanly when its container is
+// stopped, restarted or replaced; Docker's default is 10 seconds, then SIGKILL, and under
+// load a clean shutdown can take longer. (When the server shuts down, dockerd leaves the
+// containers running — live-restore — and systemd stops them with its own timeout.)
+const MongoStopGrace = 60 * time.Second
 
 // Host paths.
 const (
@@ -69,8 +76,11 @@ func Services(c Config) map[string]string {
 // automatic HTTPS is off: Caddy never contacts Let's Encrypt, whose validation would
 // not reach an origin that only accepts Cloudflare.
 //
-// Requests arrive from Cloudflare: its ranges are trusted proxies, so Caddy takes the
-// visitor's address from CF-Connecting-IP and passes it on in X-Forwarded-For.
+// Requests arrive from Cloudflare, whose ranges are trusted proxies: the visitor's
+// address ({client_ip}) is taken from CF-Connecting-IP, which Cloudflare sets and a
+// visitor cannot. X-Forwarded-For is not used for it: from a trusted proxy Caddy keeps
+// the incoming list and appends the proxy's address, so its first entries are whatever
+// the visitor wrote. Site blocks pass {client_ip} on as X-Real-IP.
 func Caddyfile() string {
 	return `# Managed by FootOps. Site blocks live in sites/*.caddy.
 {
@@ -78,7 +88,7 @@ func Caddyfile() string {
 	admin 127.0.0.1:2019
 	servers {
 		trusted_proxies static ` + strings.Join(CloudflareRanges, " ") + `
-		client_ip_headers CF-Connecting-IP X-Forwarded-For
+		client_ip_headers CF-Connecting-IP
 	}
 }
 
@@ -105,8 +115,11 @@ var CloudflareRanges = []string{
 // Compose renders the core compose file.
 //
 // Notes on choices:
-//   - Only Caddy publishes ports to the internet. MongoDB is published on 127.0.0.1 for
-//     SSH tunnels (Robo 3T); apps reach it over Docker networks.
+//   - Only Caddy publishes a port to the internet, 443: every site is https behind
+//     Cloudflare (whose Always Use HTTPS redirects plain http), and with automatic HTTPS
+//     off nothing in Caddy would answer on 80. MongoDB is published on 127.0.0.1 for SSH
+//     tunnels (Robo 3T); apps reach it over Docker networks.
+//   - MongoDB gets MongoStopGrace to stop.
 //   - Directories are bind-mounted (not single files) so atomically replaced config files
 //     are seen by the container.
 //   - Healthchecks use 127.0.0.1: in Alpine "localhost" resolves to ::1 first, where
@@ -124,7 +137,6 @@ services:
     container_name: %s
     restart: unless-stopped
     ports:
-      - "80:80"
       - "443:443"
     volumes:
       - %s:/etc/caddy:ro
@@ -144,6 +156,7 @@ services:
     container_name: %s
     restart: unless-stopped
     command: ["mongod", "--wiredTigerCacheSizeGB", "%s"]
+    stop_grace_period: %ds
     env_file: %s
     ports:
       - "127.0.0.1:27017:27017"
@@ -161,7 +174,7 @@ services:
 `,
 		ProjectName,
 		CaddyImage, "footops-caddy", CaddyEtcDir, CaddyDataDir, CaddyConfigDir,
-		MongoImage, "footops-mongo", cache, MongoSecretPath, MongoDataDir, MongoConfigDir, MongoPing,
+		MongoImage, "footops-mongo", cache, int(MongoStopGrace.Seconds()), MongoSecretPath, MongoDataDir, MongoConfigDir, MongoPing,
 	)
 	if c.Tunnel {
 		// Host networking: cloudflared must reach the panel on 127.0.0.1, and it only

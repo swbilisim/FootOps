@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io/fs"
 	"math/big"
 	"net/url"
 	"os"
@@ -30,6 +31,8 @@ type fakeNet struct {
 	mu       sync.Mutex
 	networks map[string]map[string][]string // network -> container -> aliases
 	running  bool                           // state reported for site containers
+	status   string                         // overrides the reported status ("restarting")
+	health   string                         // reported healthcheck status, if set
 	restarts int
 	image    string // image ID reported for site containers
 	log      []string
@@ -109,8 +112,17 @@ func (f *fakeNet) Inspect(_ context.Context, name string) (docker.Inspect, error
 	in.State.Running = f.running
 	in.RestartCount = f.restarts
 	in.Image = f.image
+	in.State.Status = "running"
 	if !f.running {
 		in.State.Status = "exited"
+	}
+	if f.status != "" {
+		in.State.Status = f.status
+	}
+	if f.health != "" {
+		in.State.Health = &struct {
+			Status string `json:"Status"`
+		}{f.health}
 	}
 	return in, nil
 }
@@ -506,6 +518,146 @@ func TestCertRenewalUpdatesSites(t *testing.T) {
 	}
 	if err := e.ops.RemoveCert(context.Background(), c.ID); err == nil || !strings.Contains(err.Error(), "enisparta") {
 		t.Errorf("removing the cert a site uses: %v", err)
+	}
+}
+
+// After an update the site blocks on disk are the previous version's rendering. Once
+// Caddy runs, SyncCaddy rewrites them; when Caddy refuses, the old files go back.
+func TestSyncCaddy(t *testing.T) {
+	e := newOps(t)
+	if err := e.ops.Create(ctx, specFor("enisparta"), nil, e.progress); err != nil {
+		t.Fatal(err)
+	}
+	f := filepath.Join(e.root, core.CaddySitesDir, "enisparta.caddy")
+	current := readFile(t, f)
+	old := "# Managed by FootOps: site enisparta (musteri)\nhttps://enisparta.com {\n\treverse_proxy enisparta:3000\n}\n"
+	if err := os.WriteFile(f, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Caddy not up yet (boot; restarting reports Running too; admin endpoint not
+	// answering yet): nothing is touched, the caller tries again.
+	calls := len(e.run.calls)
+	for _, down := range []func(){
+		func() { e.net.running = false },
+		func() { e.net.status = "restarting" },
+		func() { e.net.health = "starting" },
+	} {
+		down()
+		if done, err := e.ops.SyncCaddy(ctx); done || err != nil || readFile(t, f) != old || len(e.run.calls) != calls {
+			t.Fatalf("Caddy not up: done=%v err=%v calls=%v", done, err, e.run.calls[calls:])
+		}
+		e.net.running, e.net.status, e.net.health = true, "", ""
+	}
+	e.net.health = "healthy"
+
+	// Caddy refuses the configuration, or the reload: the old block is back.
+	for _, verb := range []string{"caddy validate", "caddy reload"} {
+		e.run.fail[verb] = errors.New("exit status 1")
+		if done, err := e.ops.SyncCaddy(ctx); !done || err == nil || readFile(t, f) != old {
+			t.Errorf("%s fails: done=%v err=%v\n%s", verb, done, err, readFile(t, f))
+		}
+		delete(e.run.fail, verb)
+	}
+
+	// Accepted: the block is this version's, validated before the reload.
+	validates, reloads := e.run.ran("caddy validate"), e.run.ran("caddy reload")
+	if done, err := e.ops.SyncCaddy(ctx); !done || err != nil || readFile(t, f) != current {
+		t.Fatalf("done=%v err=%v\n%s", done, err, readFile(t, f))
+	}
+	if e.run.ran("caddy validate") != validates+1 || e.run.ran("caddy reload") != reloads+1 {
+		t.Error("not validated and reloaded once")
+	}
+	// Up to date: no Caddy command at all.
+	calls = len(e.run.calls)
+	if done, err := e.ops.SyncCaddy(ctx); !done || err != nil || len(e.run.calls) != calls {
+		t.Errorf("up to date: done=%v err=%v calls=%v", done, err, e.run.calls[calls:])
+	}
+	// A site without a block (a removal stopped halfway) stays offline.
+	if err := os.Remove(f); err != nil {
+		t.Fatal(err)
+	}
+	if done, err := e.ops.SyncCaddy(ctx); !done || err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(f); !errors.Is(err, fs.ErrNotExist) {
+		t.Error("block of a site without one written back")
+	}
+}
+
+// Removing a certificate moves the blocks to the remaining one before its files go; when
+// Caddy refuses that, nothing changes, so no block ever names a deleted file.
+func TestRemoveCertWhileAnotherCovers(t *testing.T) {
+	e := newOps(t)
+	if err := e.ops.Create(ctx, specFor("enisparta"), nil, e.progress); err != nil {
+		t.Fatal(err)
+	}
+	crt, key := certPair(t, "enisparta.com", "*.enisparta.com") // also covers the site
+	if _, err := e.ops.InstallCert(ctx, crt, key); err != nil {
+		t.Fatal(err)
+	}
+	f := filepath.Join(e.root, core.CaddySitesDir, "enisparta.caddy")
+	block := readFile(t, f)
+	certs, _ := e.ops.Store.Certs()
+	var used sites.Cert
+	for _, c := range certs {
+		if strings.Contains(block, c.ID) {
+			used = c
+		}
+	}
+	if len(certs) != 2 || used.ID == "" {
+		t.Fatalf("block names no certificate:\n%s", block)
+	}
+
+	e.run.fail["caddy validate"] = errors.New("exit status 1")
+	if err := e.ops.RemoveCert(ctx, used.ID); err == nil {
+		t.Fatal("removal succeeded although Caddy refused")
+	}
+	if readFile(t, f) != block {
+		t.Errorf("block changed:\n%s", readFile(t, f))
+	}
+	if _, err := os.Stat(filepath.Join(e.root, used.HostCertPath())); err != nil {
+		t.Errorf("certificate deleted although its blocks stayed: %v", err)
+	}
+	delete(e.run.fail, "caddy validate")
+
+	if err := e.ops.RemoveCert(ctx, used.ID); err != nil {
+		t.Fatal(err)
+	}
+	if now := readFile(t, f); strings.Contains(now, used.ID) || now == block {
+		t.Errorf("block still names the removed certificate:\n%s", now)
+	}
+	if _, err := os.Stat(filepath.Join(e.root, used.HostCertPath())); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("certificate files left: %v", err)
+	}
+}
+
+func TestCaddyResyncPacing(t *testing.T) {
+	var r caddyResync
+	now := time.Now()
+	if !r.due(now) {
+		t.Fatal("not due at start")
+	}
+	r.result(false, nil, now) // Caddy not up: next tick
+	if !r.due(now) {
+		t.Error("not due while Caddy is not up")
+	}
+	fail := errors.New("refused")
+	for _, want := range []time.Duration{time.Minute, 2 * time.Minute, 4 * time.Minute} {
+		r.result(true, fail, now)
+		if r.due(now.Add(want-time.Second)) || !r.due(now.Add(want)) {
+			t.Errorf("after a failure: due again after %v, wait %v", want, r.wait)
+		}
+	}
+	for i := 0; i < 10; i++ {
+		r.result(true, fail, now)
+	}
+	if r.wait != time.Hour {
+		t.Errorf("wait grows to %v", r.wait)
+	}
+	r.result(true, nil, now)
+	if r.due(now.Add(48 * time.Hour)) {
+		t.Error("due again after success")
 	}
 }
 

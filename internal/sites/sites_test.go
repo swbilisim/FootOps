@@ -170,7 +170,8 @@ func TestCertStoreAndCaddyBlock(t *testing.T) {
 	for _, want := range []string{
 		"https://enisparta.com, https://www.enisparta.com {",
 		"tls /etc/caddy/certs/" + c.ID + ".crt /etc/caddy/certs/" + c.ID + ".key",
-		"reverse_proxy enisparta:3000",
+		"\trequest_body {\n\t\tmax_size 100MiB\n\t}\n",
+		"\treverse_proxy enisparta:3000 {\n\t\theader_up X-Real-IP {client_ip}\n\t}\n",
 	} {
 		if !strings.Contains(block, want) {
 			t.Errorf("caddy block misses %q:\n%s", want, block)

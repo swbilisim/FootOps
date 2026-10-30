@@ -166,7 +166,6 @@ New profiles: skip
 To                         Action      From
 --                         ------      ----
 22/tcp                     ALLOW IN    Anywhere
-80/tcp                     ALLOW IN    Anywhere
 443/tcp                    ALLOW IN    Anywhere
 22/tcp (v6)                ALLOW IN    Anywhere (v6)
 `
@@ -181,6 +180,77 @@ To                         Action      From
 	}
 	if ufwSatisfied(strings.Replace(status, "deny (incoming)", "allow (incoming)", 1), firewallPorts) {
 		t.Error("allow-by-default accepted")
+	}
+}
+
+// `ufw show added` lists rules as they were added, also while the firewall is off.
+const ufwAddedOld = `Added user rules (see 'ufw status' for running firewall):
+ufw allow 22/tcp
+ufw allow 80/tcp
+ufw allow 443/tcp
+`
+
+func TestUfwStale(t *testing.T) {
+	if got := ufwStale(ufwAddedOld); len(got) != 1 || got[0] != "80/tcp" {
+		t.Errorf("stale = %v", got)
+	}
+	// Only the rule as FootOps added it: a rule narrowed to a source is someone else's.
+	narrowed := strings.Replace(ufwAddedOld, "ufw allow 80/tcp", "ufw allow from 10.0.0.0/8 to any port 80 proto tcp", 1)
+	if got := ufwStale(narrowed); len(got) != 0 {
+		t.Errorf("narrowed rule taken as stale: %v", got)
+	}
+}
+
+func TestFirewallClosesWhatEarlierVersionsOpened(t *testing.T) {
+	active := "Status: active\nDefault: deny (incoming), allow (outgoing)\n\n" +
+		"22/tcp                     ALLOW IN    Anywhere\n80/tcp                     ALLOW IN    Anywhere\n" +
+		"443/tcp                    ALLOW IN    Anywhere\n80/tcp (v6)                ALLOW IN    Anywhere (v6)\n"
+	host := func(status string) (Host, *fakeRunner) {
+		return newTestHost(t, func(cmd string) (string, error) {
+			switch cmd {
+			case "ufw status verbose":
+				return status, nil
+			case "ufw show added":
+				return ufwAddedOld, nil
+			}
+			return "", nil
+		})
+	}
+	// A server set up by an earlier version: Check fails, Apply deletes that one rule and
+	// touches nothing else.
+	h, f := host(active)
+	if ok, _ := (firewallStep{h}).Check(ctx); ok {
+		t.Error("80 left open accepted")
+	}
+	if err := (firewallStep{h}).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var changes []string
+	for _, c := range f.cmds() {
+		if !strings.HasPrefix(c, "ufw status") && !strings.HasPrefix(c, "ufw show") {
+			changes = append(changes, c)
+		}
+	}
+	if strings.Join(changes, "; ") != "ufw delete allow 80/tcp" {
+		t.Errorf("changes: %v", changes)
+	}
+	// Firewall off: the stale rule goes before enabling, so it never comes back on.
+	h, f = host("Status: inactive\n")
+	if err := (firewallStep{h}).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cmds := strings.Join(f.cmds(), "\n")
+	del, enable := strings.Index(cmds, "ufw delete allow 80/tcp"), strings.Index(cmds, "ufw --force enable")
+	if del < 0 || enable < 0 || del > enable || strings.Contains(cmds, "ufw allow 80/tcp") {
+		t.Errorf("commands:\n%s", cmds)
+	}
+	// A fresh server has no such rule: nothing to delete.
+	h, f = newTestHost(t, nil)
+	if err := (firewallStep{h}).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if cmds := strings.Join(f.cmds(), "\n"); strings.Contains(cmds, "delete") {
+		t.Errorf("deleted on a fresh server:\n%s", cmds)
 	}
 }
 

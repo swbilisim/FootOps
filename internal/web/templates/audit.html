@@ -7,12 +7,12 @@
 </div>
 {{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
 <div class="table-wrap">
-<table class="responsive">
+<table class="responsive wide">
   <thead><tr><th>Olay</th><th>Hedef</th><th>Sonuç</th><th>Kim</th><th>Nereden</th><th>Ayrıntı</th></tr></thead>
   <tbody>
   {{range .Data.Entries}}
     <tr>
-      <td class="primary nowrap"><span class="cell-title mono">{{.Action}}</span><span class="cell-sub">{{ts .Time}}</span></td>
+      <td class="primary"><span class="cell-title mono">{{.Action}}</span><span class="cell-sub">{{ts .Time}}</span></td>
       <td data-label="Hedef">{{.Target}}</td>
       <td data-label="Sonuç">{{if .OK}}<span class="badge ok">başarılı</span>{{else}}<span class="badge bad">başarısız</span>{{end}}</td>
       <td data-label="Kim">{{.Actor.User}}</td>

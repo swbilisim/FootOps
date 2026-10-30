@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -472,8 +473,12 @@ func (s coreStackStep) Check(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
+// Apply starts or updates the stack. A container whose configuration changed is
+// replaced: --timeout gives the old one MongoDB's grace, which its own (older)
+// configuration may lack.
 func (s coreStackStep) Apply(ctx context.Context) error {
-	_, err := s.h.Run.Run(ctx, "docker", s.compose("up", "--detach", "--remove-orphans", "--wait", "--wait-timeout", "300")...)
+	_, err := s.h.Run.Run(ctx, "docker", s.compose("up", "--detach", "--remove-orphans", "--wait", "--wait-timeout", "300",
+		"--timeout", strconv.Itoa(int(core.MongoStopGrace.Seconds())))...)
 	if err != nil {
 		return fmt.Errorf("%w (ayrıntı: docker compose -p %s logs)", err, core.ProjectName)
 	}

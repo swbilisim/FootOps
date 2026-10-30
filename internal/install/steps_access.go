@@ -173,7 +173,12 @@ func containsField(s, want string) bool {
 
 // ---- firewall ----
 
-var firewallPorts = []string{"22/tcp", "80/tcp", "443/tcp"}
+// firewallPorts are open; firewallClosed were opened by earlier versions and are closed
+// again (80: sites are https only, nothing listens there).
+var (
+	firewallPorts  = []string{"22/tcp", "443/tcp"}
+	firewallClosed = []string{"80/tcp"}
+)
 
 type firewallStep struct{ h Host }
 
@@ -183,23 +188,36 @@ func (s firewallStep) Describe() string {
 }
 
 func (s firewallStep) Check(ctx context.Context) (bool, error) {
-	out, err := s.h.Run.Run(ctx, "ufw", "status", "verbose")
+	status, err := s.h.Run.Run(ctx, "ufw", "status", "verbose")
 	if err != nil {
 		return false, nil
 	}
-	return ufwSatisfied(out, firewallPorts), nil
+	added, err := s.h.Run.Run(ctx, "ufw", "show", "added")
+	if err != nil {
+		return false, nil
+	}
+	return ufwSatisfied(status, firewallPorts) && len(ufwStale(added)) == 0, nil
 }
 
+// Apply does only what is missing, so a server already set up (perhaps with a rule
+// narrowed by hand) only loses the rules earlier versions added.
 func (s firewallStep) Apply(ctx context.Context) error {
-	cmds := [][]string{
-		{"ufw", "default", "deny", "incoming"},
-		{"ufw", "default", "allow", "outgoing"},
+	var cmds [][]string
+	// `ufw show added` lists the rules even while the firewall is off, so enabling it
+	// below never brings a stale one back.
+	if added, err := s.h.Run.Run(ctx, "ufw", "show", "added"); err == nil {
+		for _, p := range ufwStale(added) {
+			cmds = append(cmds, []string{"ufw", "delete", "allow", p})
+		}
 	}
-	// SSH is allowed before the firewall is enabled, so the current session survives.
-	for _, p := range firewallPorts {
-		cmds = append(cmds, []string{"ufw", "allow", p})
+	if status, err := s.h.Run.Run(ctx, "ufw", "status", "verbose"); err != nil || !ufwSatisfied(status, firewallPorts) {
+		cmds = append(cmds, []string{"ufw", "default", "deny", "incoming"}, []string{"ufw", "default", "allow", "outgoing"})
+		// SSH is allowed before the firewall is enabled, so the current session survives.
+		for _, p := range firewallPorts {
+			cmds = append(cmds, []string{"ufw", "allow", p})
+		}
+		cmds = append(cmds, []string{"ufw", "--force", "enable"})
 	}
-	cmds = append(cmds, []string{"ufw", "--force", "enable"})
 	for _, c := range cmds {
 		if _, err := s.h.Run.Run(ctx, c[0], c[1:]...); err != nil {
 			return err
@@ -228,6 +246,21 @@ func ufwSatisfied(status string, ports []string) bool {
 		}
 	}
 	return true
+}
+
+// ufwStale returns the firewallClosed ports that `ufw show added` still lists exactly as
+// an earlier version added them ("ufw allow 80/tcp"); a rule narrowed to a source is
+// someone else's and stays.
+func ufwStale(added string) []string {
+	var stale []string
+	for _, l := range strings.Split(added, "\n") {
+		for _, p := range firewallClosed {
+			if strings.TrimSpace(l) == "ufw allow "+p {
+				stale = append(stale, p)
+			}
+		}
+	}
+	return stale
 }
 
 // ---- fail2ban ----

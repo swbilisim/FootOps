@@ -4,7 +4,7 @@
 <div class="page-head">
   <div>
     <h1>{{$s.Name}}</h1>
-    <p class="sub"><span class="chip">{{$s.Group}}</span> {{range $i, $d := $s.Domains}}{{if $i}} · {{end}}<a href="https://{{$d}}" rel="noreferrer" target="_blank">{{$d}}</a>{{end}}</p>
+    <p class="sub meta"><span class="chip">{{$s.Group}}</span>{{range $s.Domains}}<a href="https://{{.}}" rel="noreferrer" target="_blank">{{.}}</a>{{end}}</p>
   </div>
   <div class="page-actions">
     {{template "live"}}
@@ -101,7 +101,7 @@
 {{with .Data.SnapshotsErr}}<div class="notice bad">{{icon "alert"}}<div>Kopyalar okunamadı: {{.}}</div></div>{{end}}
 {{with .Data.Snapshots}}
 <div class="table-wrap">
-<table class="responsive">
+<table class="responsive wide">
   <thead><tr><th>Tarih</th><th>Boyut</th><th>İçerik</th><th>Ayrıntı</th><th></th></tr></thead>
   <tbody>
   {{range .}}

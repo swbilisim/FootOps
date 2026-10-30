@@ -15,7 +15,7 @@ monitoring sites.
 - **Per-server.** Each server runs its own FootOps; there is no central control plane.
 - **Never exposed to the internet.** The panel listens on `127.0.0.1` only and is reached through Cloudflare Tunnel + Cloudflare Access, then its own password + TOTP login. An SSH tunnel is the break-glass path.
 - **Privilege separation.** `footops-web` (the UI) runs unprivileged and can only ask `footops-agent` to perform a fixed set of validated actions. A bug in the UI cannot be turned into arbitrary root commands.
-- **No ports per app.** Only Caddy listens on 80/443. Apps join per-project Docker networks and are reached by container name, so there is no port table to maintain.
+- **No ports per app.** Only Caddy listens, on 443 (sites are https only behind Cloudflare). Apps join per-project Docker networks and are reached by container name, so there is no port table to maintain. Caddy passes the visitor's address in `X-Real-IP` (from Cloudflare's `CF-Connecting-IP`, never from what the visitor sends) and caps request bodies at 100 MiB, Cloudflare's own limit on the Free and Pro plans.
 - **Files on disk are the source of truth.** Each site lives in `/srv/<group>/<project>/` as a normal `docker-compose.yml` + `.env`. If FootOps is removed, everything keeps running and can be managed by hand.
 - **Pull-based deploys.** GitHub Actions builds images and pushes them to GHCR; FootOps notices new images and deploys them. CI never holds credentials to the server.
 
@@ -57,7 +57,7 @@ plain text on the server.
 | swap | Sized from RAM (≤6 GB RAM → 2 GB, more → 4 GB), `vm.swappiness=10` |
 | unattended-upgrades | Automatic security updates, optional reboot at a fixed time |
 | admin-user | Creates the admin user in `sudo`, installs your SSH keys; sudo with password (recommended) or without |
-| firewall | UFW: deny incoming, allow 22/80/443 |
+| firewall | UFW: deny incoming, allow 22/443 (removes the 80 rule earlier versions added) |
 | fail2ban | sshd jail in aggressive mode (counts failed key logins), 5 tries in 10 min → 1 h ban |
 | ssh-hardening | No root login, no passwords, only the admin user — **applied only after you confirm** key login works from a second terminal; the config is validated with `sshd -t`/`sshd -T` and rolled back if invalid or overridden |
 | docker-repo | Docker's official apt repository; the signing key is installed only if its fingerprint is Docker's |
@@ -73,8 +73,8 @@ downloads start.
 
 | Service | Image | Exposed |
 |---|---|---|
-| Caddy | `caddy:2.11.7-alpine`, all capabilities dropped except binding 80/443 | 80, 443 |
-| MongoDB | `mongo:7.0.45`, auth on, WiredTiger cache sized from RAM | `127.0.0.1:27017` only |
+| Caddy | `caddy:2.11.7-alpine`, all capabilities dropped except binding 443 | 443 |
+| MongoDB | `mongo:7.0.45`, auth on, WiredTiger cache sized from RAM, 60 s to shut down cleanly | `127.0.0.1:27017` only |
 
 Caddy never requests certificates (`auto_https off`): sites use Cloudflare Origin CA
 certificates, so the origin only needs to be trusted by Cloudflare.

@@ -34,14 +34,14 @@
 {{with .Data.EditsErr}}<div class="notice warn">{{icon "alert"}}<div>Kayıtlar okunamadı: {{.}}</div></div>{{end}}
 {{with .Data.Edits}}
 <div class="table-wrap">
-<table class="responsive">
+<table class="responsive wide">
   <thead><tr><th>Belge</th><th>İşlem</th><th>Zaman</th><th></th></tr></thead>
   <tbody>
   {{range .}}
     <tr>
       <td class="primary"><a class="cell-title mono" href="{{dbURL $s.Name "/doc" "c" .Collection "id" .DocID}}">{{idText .DocID}}</a><span class="cell-sub"><span class="mono">{{.Collection}}</span>{{with .Changes}} · {{range $i, $c := .}}{{if $i}}, {{end}}{{if eq $c.Kind "added"}}+{{else if eq $c.Kind "removed"}}−{{end}}{{$c.Field}}{{end}}{{end}}{{with .More}} +{{.}} alan daha{{end}}</span></td>
       <td data-label="İşlem"><span class="badges">{{opTR .Op}}{{if .Pending}}<span class="badge warn">sonucu belirsiz</span>{{end}}{{if .UndoneBy}}<span class="badge">geri alındı</span>{{end}}</span></td>
-      <td data-label="Zaman" class="nowrap"><span title="{{ts .Time}}">{{since .Time}}</span>{{with .Actor}} · {{.}}{{end}}</td>
+      <td data-label="Zaman"><span><span title="{{ts .Time}}">{{since .Time}}</span>{{with .Actor}} · {{.}}{{end}}</span></td>
       <td class="actions">{{if not .UndoneBy}}<a class="btn sm" href="/sites/{{$s.Name}}/db/undo/{{.ID}}">{{icon "undo"}}Geri al…</a>{{end}}</td>
     </tr>
   {{end}}

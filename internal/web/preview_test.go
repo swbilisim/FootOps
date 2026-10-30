@@ -44,6 +44,19 @@ var previewContainers = []agent.ContainerInfo{
 	{Name: "footops-mongo", Image: "mongo:7.0.45", State: "running", Health: "healthy", Project: "footops-core", CPUPercent: 2.4, MemUsage: 610 << 20, MemLimit: 4 << 30, StartedAt: time.Now().Add(-80 * time.Hour)},
 	{Name: "blog", Image: "ghcr.io/ornek/blog:main", State: "restarting", Project: "blog", RestartCount: 14, OOMKilled: true, MemLimit: 512 << 20, StartedAt: time.Now().Add(-3 * time.Minute)},
 	{Name: "kurumsal", Image: "ghcr.io/ornek/kurumsal:main", State: "running", Health: "starting", Project: "kurumsal", CPUPercent: 7.8, MemUsage: 300 << 20, MemLimit: 512 << 20, StartedAt: time.Now().Add(-20 * time.Minute)},
+	// Edge cases for the layout: four domains, the longest name and long domains.
+	{Name: "klinik", Image: "ghcr.io/ornek/klinik:main", State: "running", Project: "klinik", CPUPercent: 0.6, MemUsage: 96 << 20, MemLimit: 384 << 20, StartedAt: time.Now().Add(-30 * time.Hour)},
+	{Name: "buyuksehir-belediyesi-kultur-mrk", Image: "ghcr.io/buyuksehir-belediyesi/buyuksehir-belediyesi-kultur-merkezi:2026-10-30-main", State: "running", Health: "healthy", Project: "buyuksehir-belediyesi-kultur-mrk", CPUPercent: 3.1, MemUsage: 420 << 20, MemLimit: 1024 << 20, StartedAt: time.Now().Add(-6 * time.Hour)},
+	{Name: "randevu", Image: "ghcr.io/ornek/randevu:main", State: "running", Project: "randevu", CPUPercent: 0.2, MemUsage: 64 << 20, MemLimit: 128 << 20, StartedAt: time.Now().Add(-90 * time.Hour)},
+	{Name: "haber", Image: "ghcr.io/ornek/haber:main", State: "exited", Project: "haber", MemLimit: 256 << 20, StartedAt: time.Now().Add(-9 * time.Hour)},
+	{Name: "footops-cloudflared", Image: "cloudflare/cloudflared:2026.10.3", State: "running", Project: "footops-core", CPUPercent: 0.1, MemUsage: 22 << 20, MemLimit: 4 << 30, StartedAt: time.Now().Add(-80 * time.Hour)},
+}
+
+// previewDomains gives a site domains other than <name>.example.com and its www.
+var previewDomains = map[string][]string{
+	"klinik": {"klinik.example.com", "www.klinik.example.com", "ozel-klinik.example.org", "www.ozel-klinik.example.org"},
+	"buyuksehir-belediyesi-kultur-mrk": {"kultur.buyuksehir-belediyesi.example.com", "www.kultur.buyuksehir-belediyesi.example.com",
+		"kulturmerkezi.example.org", "www.kulturmerkezi.example.org", "rezervasyon.kulturmerkezi.example.org", "bilet.kulturmerkezi.example.org"},
 }
 
 func (p *previewAgent) Overview(context.Context) (agent.Overview, error) {
@@ -97,16 +110,23 @@ func (p *previewAgent) History(_ context.Context, rng, name string) (agent.Histo
 
 func (p *previewAgent) Sites(context.Context) ([]agent.SiteStatus, error) {
 	var out []agent.SiteStatus
-	for _, n := range []string{"magaza", "blog", "kurumsal"} {
-		var c *agent.ContainerInfo
-		for i := range previewContainers {
-			if previewContainers[i].Name == n {
-				c = &previewContainers[i]
-			}
+	for i := range previewContainers {
+		c := &previewContainers[i]
+		n := c.Name
+		if c.Project == "footops-core" {
+			continue
 		}
-		out = append(out, agent.SiteStatus{Spec: sites.Spec{Name: n, Group: "musteri", Domains: []string{n + ".example.com", "www." + n + ".example.com"},
-			Image: c.Image, Port: 3000, MemoryMB: int(c.MemLimit >> 20), Database: n != "blog", DBVar: "MONGODB_URI",
-			DataMount: "/app/uploads", DataURL: map[bool]string{true: "/uploads"}[n == "magaza"], EnvKeys: []string{"NODE_ENV", "SESSION_SECRET", "RESEND_API_KEY"},
+		domains := previewDomains[n]
+		if domains == nil {
+			domains = []string{n + ".example.com", "www." + n + ".example.com"}
+		}
+		mount := "/app/uploads"
+		if n == "randevu" {
+			mount = "" // neither a database nor a persistent folder
+		}
+		out = append(out, agent.SiteStatus{Spec: sites.Spec{Name: n, Group: "musteri", Domains: domains,
+			Image: c.Image, Port: 3000, MemoryMB: int(c.MemLimit >> 20), Database: n != "blog" && n != "randevu", DBVar: "MONGODB_URI",
+			DataMount: mount, DataURL: map[bool]string{true: "/uploads"}[n == "magaza"], EnvKeys: []string{"NODE_ENV", "SESSION_SECRET", "RESEND_API_KEY"},
 			CreatedAt: time.Now().Add(-72 * time.Hour), UpdatedAt: time.Now().Add(-2 * time.Hour)}, Container: c})
 	}
 	return out, nil

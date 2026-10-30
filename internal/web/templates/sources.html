@@ -9,15 +9,15 @@
 {{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>Kaynaklar okunamadı: {{.}}</div></div>{{end}}
 {{with .Data.Sources}}
 <div class="table-wrap">
-<table class="responsive">
+<table class="responsive wide">
   <thead><tr><th>Kaynak</th><th>Durum</th><th>Kullanan siteler</th><th></th></tr></thead>
   <tbody>
   {{range .}}
     <tr>
       <td class="primary"><strong>{{.Label}}</strong><div class="cell-sub mono">{{.User}}@{{.Host}}:{{.Port}}</div>
         {{if not .Pinned}}<details class="more"><summary>Anahtarı kaynağa ekleme komutu</summary><pre class="cmd">{{.Install}}</pre></details>{{end}}</td>
-      <td data-label="Durum">{{if .Pinned}}<span class="badge ok">bağlantı tamam</span><div class="cell-sub muted">{{since .Checked}}{{with .System}} · {{.}}{{end}}</div>{{else}}<span class="badge warn">henüz bağlanılmadı</span>{{end}}</td>
-      <td data-label="Kullanan">{{range $i, $x := .UsedBy}}{{if $i}}, {{end}}<a href="/sites/{{$x}}/migrate">{{$x}}</a>{{else}}—{{end}}</td>
+      <td data-label="Durum"><div>{{if .Pinned}}<span class="badge ok">bağlantı tamam</span><div class="cell-sub muted">{{since .Checked}}{{with .System}} · {{.}}{{end}}</div>{{else}}<span class="badge warn">henüz bağlanılmadı</span>{{end}}</div></td>
+      <td data-label="Kullanan"><span>{{range $i, $x := .UsedBy}}{{if $i}}, {{end}}<a href="/sites/{{$x}}/migrate">{{$x}}</a>{{else}}—{{end}}</span></td>
       <td class="actions">
         <form method="post" action="/sources/{{.ID}}/test" class="inline">
           <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">

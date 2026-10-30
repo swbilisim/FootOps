@@ -177,10 +177,19 @@ body.bare { display: grid; place-items: center; padding: 24px 16px; }
 body.bare main { max-width: 400px; padding: 0; }
 
 /* ===== page structure ===== */
-.page-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px 16px; margin-bottom: 22px; }
+/* Title left, buttons right. The title column takes what the buttons leave (at least
+   240px) and wraps inside itself; the buttons stay in one row beside it, or move below
+   it as a whole when they do not fit, and only then wrap. */
+.page-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px 24px; margin-bottom: 22px; }
+.page-head > :first-child { flex: 1 1 240px; min-width: 0; }
+.page-head h1 { overflow-wrap: anywhere; }
 .page-head .sub { margin: 4px 0 0; color: var(--text-3); font-size: .88rem; }
 .page-head .sub a { color: inherit; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; }
+/* a site's group and domains: whole items per line, nothing left dangling */
+.page-head .sub.meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; }
+.page-head .sub.meta a { min-width: 0; overflow-wrap: anywhere; }
 .page-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.page-head > .page-actions { flex: 0 1 auto; }
 .crumb { display: inline-flex; align-items: center; gap: 4px; margin-bottom: 10px; color: var(--text-3); font-size: .85rem; font-weight: 500; }
 .crumb .i { width: 16px; height: 16px; }
 .crumb:hover { color: var(--text); text-decoration: none; }
@@ -189,7 +198,7 @@ body.bare main { max-width: 400px; padding: 0; }
 .stack > * + * { margin-top: 12px; }
 @media (max-width: 639px) {
   h1 { font-size: 1.3rem; }
-  .page-head { align-items: flex-start; flex-direction: column; margin-bottom: 18px; }
+  .page-head { margin-bottom: 18px; }
 }
 
 /* ===== surfaces ===== */
@@ -290,12 +299,15 @@ body.bare main { max-width: 400px; padding: 0; }
   .stat .value { font-size: 1.4rem; }
 }
 
-/* key facts of one container or site */
-.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 0; }
+/* key facts of one container or site; the state (one or two badges) takes two cells, so
+   the five facts fill whole rows: 2+4, 2+1 / 3, 2 / 2 / 2 */
+.facts { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin: 0; }
+.facts > div:first-child { grid-column: span 2; }
 .facts > div { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; min-width: 0; box-shadow: var(--shadow); }
 .facts dt { color: var(--text-3); font-size: .74rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
 .facts dd { margin: 4px 0 0; font-size: 1.05rem; font-weight: 600; overflow-wrap: anywhere; }
 .facts dd .badge { font-size: .8rem; }
+@media (max-width: 1279px) { .facts { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 639px) { .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; } }
 
 /* ===== segmented control (time range) ===== */
@@ -312,37 +324,61 @@ th { padding-top: 10px; padding-bottom: 10px; background: var(--surface-2); colo
 tr:last-child td { border-bottom: 0; }
 tbody tr:hover td { background: color-mix(in srgb, var(--surface-2) 60%, transparent); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.num.wrap { white-space: normal; }
 .cell-title { font-weight: 600; color: var(--text); }
 a.cell-title:hover { color: var(--accent); text-decoration: none; }
 .cell-sub { display: block; margin-top: 2px; color: var(--text-3); font-size: .8rem; overflow-wrap: anywhere; }
-td.actions { text-align: right; white-space: nowrap; }
-td.actions .btn + .btn { margin-left: 6px; }
+/* buttons go onto a second line rather than push the table wider than its box */
+td.actions { text-align: right; }
+td.actions .btn { margin: 2px 0 2px 6px; }
 td.empty { padding: 32px 16px; text-align: center; color: var(--text-3); }
 .kv th { width: 220px; background: transparent; text-transform: none; letter-spacing: 0; font-size: .86rem; font-weight: 500; color: var(--text-3); vertical-align: top; white-space: normal; }
 .kv td { overflow-wrap: anywhere; }
 .kv tbody tr:hover td { background: transparent; }
 
-/* phones: each row becomes a card with labelled values */
-@media (max-width: 719px) {
+/* A table that no longer fits its box becomes cards: one per row, values labelled. The
+   table's own width decides (container query), whatever the screen; .wide tables, with
+   more columns, switch earlier. A cell holds one element (wrap mixed text in a span):
+   its children are flex items beside the label. */
+.table-wrap, .card:has(> table.kv) { container-type: inline-size; } /* a key-value table may sit in a card */
+@container (max-width: 671px) {
   table.responsive thead { display: none; }
   table.responsive, table.responsive tbody { display: block; }
   table.responsive tr { display: block; padding: 14px 16px; border-bottom: 1px solid var(--border); }
   table.responsive tr:last-child { border-bottom: 0; }
   table.responsive tbody tr:hover td { background: transparent; }
-  table.responsive td { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0; border: 0; text-align: right; }
+  table.responsive td { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0; border: 0; text-align: right; overflow-wrap: anywhere; }
   table.responsive td::before { content: attr(data-label); flex: none; color: var(--text-3); font-size: .78rem; text-align: left; }
   table.responsive td > * { min-width: 0; }
   table.responsive td.primary { display: block; text-align: left; padding: 0 0 8px; }
   table.responsive td.primary::before, table.responsive td.empty::before, table.responsive td.actions::before { content: none; }
   table.responsive td:empty { display: none; }
-  table.responsive td.actions { justify-content: flex-start; gap: 8px; padding-top: 10px; }
-  table.responsive td.actions .btn { flex: 1; }
-  table.responsive td.actions .btn + .btn { margin-left: 0; }
+  table.responsive td.actions { flex-wrap: wrap; justify-content: flex-start; gap: 8px; padding-top: 10px; }
+  table.responsive td.actions .btn { flex: 1 1 auto; margin: 0; }
   table.responsive td.empty { display: block; text-align: center; }
+  table.responsive td .badges { justify-content: flex-end; }
   .kv th, .kv td { display: block; width: auto; padding: 2px 16px; border: 0; }
   .kv th { padding-top: 12px; }
   .kv tr { display: block; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
   .kv tr:last-child { border-bottom: 0; }
+}
+/* the same cards for .wide tables (keep the two blocks alike) */
+@container (min-width: 672px) and (max-width: 899px) {
+  table.responsive.wide thead { display: none; }
+  table.responsive.wide, table.responsive.wide tbody { display: block; }
+  table.responsive.wide tr { display: block; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  table.responsive.wide tr:last-child { border-bottom: 0; }
+  table.responsive.wide tbody tr:hover td { background: transparent; }
+  table.responsive.wide td { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0; border: 0; text-align: right; overflow-wrap: anywhere; }
+  table.responsive.wide td::before { content: attr(data-label); flex: none; color: var(--text-3); font-size: .78rem; text-align: left; }
+  table.responsive.wide td > * { min-width: 0; }
+  table.responsive.wide td.primary { display: block; text-align: left; padding: 0 0 8px; }
+  table.responsive.wide td.primary::before, table.responsive.wide td.empty::before, table.responsive.wide td.actions::before { content: none; }
+  table.responsive.wide td:empty { display: none; }
+  table.responsive.wide td.actions { flex-wrap: wrap; justify-content: flex-start; gap: 8px; padding-top: 10px; }
+  table.responsive.wide td.actions .btn { flex: 1 1 auto; margin: 0; }
+  table.responsive.wide td.empty { display: block; text-align: center; }
+  table.responsive.wide td .badges { justify-content: flex-end; }
 }
 
 /* ===== charts ===== */
@@ -418,7 +454,8 @@ input[type="checkbox"], input[type="radio"] { display: inline-block; flex: none;
 .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 14px; }
 .row:last-child { margin-bottom: 0; }
 .row > .field { margin-bottom: 0; }
-.check { display: flex; align-items: center; gap: 9px; margin: 0 0 12px; color: var(--text); cursor: pointer; }
+.check { display: flex; align-items: center; gap: 9px; margin: 0 0 12px; color: var(--text); cursor: pointer; overflow-wrap: anywhere; }
+.check > span { min-width: 0; }
 .checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 4px 14px; margin: 4px 0 14px; }
 .checks .check { margin: 4px 0; font-family: var(--mono); font-size: .84rem; }
 .checks .check span { color: var(--text-3); font-family: var(--font); font-size: .76rem; }
@@ -462,7 +499,6 @@ pre.logs mark { background: rgba(242, 184, 75, .35); color: inherit; border-radi
 .steps { padding-left: 20px; color: var(--text-2); }
 .steps li { margin: 6px 0; }
 .steps li strong { color: var(--text); }
-@media (max-width: 719px) { table.responsive td .badges { justify-content: flex-end; } }
 @media (max-width: 639px) {
   /* page buttons share the width in tidy rows; the live dot sits on its own line */
   .page-actions { width: 100%; }
@@ -511,15 +547,11 @@ table.files th.sel, table.files td.sel { width: 40px; padding-right: 0; }
 table.files .cell-title, table.files .fname { display: inline-flex; align-items: center; gap: 9px; min-width: 0; overflow-wrap: anywhere; }
 table.files .cell-title .i, table.files .fname .i { flex: none; width: 18px; height: 18px; color: var(--text-3); }
 table.files a.cell-title .i { color: var(--accent); }
-table.files td.actions { white-space: normal; }
-table.files td.actions .btn { margin: 2px 0 2px 4px; }
-@media (max-width: 719px) {
+@container (max-width: 671px) {
   table.responsive.files tr { position: relative; padding-left: 48px; }
   table.responsive.files td.sel { position: absolute; left: 16px; top: 16px; padding: 0; }
   table.responsive.files td.sel::before { content: none; }
   table.responsive.files tr.up { padding-left: 16px; }
-  table.responsive.files td.actions { flex-wrap: wrap; }
-  table.responsive.files td.actions .btn { flex: 1 1 auto; margin: 0; }
 }
 .pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin: 16px 0 0; }
 .inline-input { display: flex; align-items: center; gap: 8px; }
@@ -551,8 +583,6 @@ details.more > summary { cursor: pointer; color: var(--accent); font-weight: 500
 details.more[open] > summary { margin-bottom: 10px; }
 .mt { margin-top: 16px; }
 td.actions form { display: contents; }
-td.actions form + .btn, td.actions .btn + form button { margin-left: 6px; }
-@media (max-width: 719px) { table.responsive td.actions form + .btn, table.responsive td.actions .btn + form button { margin-left: 0; } }
 .card > input[type="hidden"] + h3 { margin-top: 0; }
 details.more + .notice, .table-wrap + details.more + .notice { margin-top: 12px; }
 
@@ -563,7 +593,7 @@ details.more + .notice, .table-wrap + details.more + .notice { margin-top: 12px;
 .env-file[hidden] { display: none; }
 .env-file label.btn { cursor: pointer; }
 .env-file label.btn:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
-@media (max-width: 719px) { table.responsive td .env-note { text-align: left; } }
+@container (max-width: 671px) { table.responsive td .env-note { text-align: left; } }
 
 /* F5: database browser */
 pre.doc {
@@ -583,7 +613,7 @@ td.db-preview { overflow-wrap: anywhere; }
 .db-f .k { color: var(--text-3); }
 .db-f .k::after { content: ":"; }
 table.db-diff td.mono { overflow-wrap: anywhere; }
-@media (max-width: 719px) {
+@container (max-width: 671px) {
   table.responsive.db-docs td.db-preview { display: block; text-align: left; }
   table.responsive.db-docs td.db-preview::before { content: none; }
   table.responsive.db-diff td.mono { text-align: right; }

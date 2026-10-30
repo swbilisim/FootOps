@@ -309,6 +309,14 @@ func TestCoreStackCheck(t *testing.T) {
 	if done, _ := s.Check(ctx); done {
 		t.Error("missing container not detected")
 	}
+	// A replaced container gets MongoDB's grace even if its old configuration lacked it.
+	h, f := newTestHost(t, nil)
+	if err := (coreStackStep{h, core.Config{MongoCacheGB: 0.5}}).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !f.ran("docker compose --project-name footops-core --file /srv/core/compose.yaml up --detach --remove-orphans --wait --wait-timeout 300 --timeout 60") {
+		t.Errorf("commands: %v", f.cmds())
+	}
 }
 
 func TestCoreFilesReloadsCaddyOnChange(t *testing.T) {

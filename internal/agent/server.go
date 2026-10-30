@@ -490,13 +490,22 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 	go sampler.Run(ctx, 10*time.Second)
 
 	// Reconcile often: until it runs, a recreated Caddy cannot reach the sites. It only
-	// inspects one network per site.
+	// inspects one network per site. Once per start, as soon as Caddy runs, the site
+	// blocks are brought up to this version's rendering (a no-op unless FootOps changed).
 	go func() {
 		t := time.NewTicker(10 * time.Second)
 		defer t.Stop()
+		var resync caddyResync
 		for {
 			for _, err := range ops.Reconcile(ctx) {
 				logger.Printf("reconcile: %v", err)
+			}
+			if now := time.Now(); resync.due(now) {
+				ran, err := ops.SyncCaddy(ctx)
+				if err != nil {
+					logger.Printf("Caddy site blokları güncellenemedi (eski halleri yerinde, yeniden denenecek): %v", err)
+				}
+				resync.result(ran, err, now)
 			}
 			select {
 			case <-ctx.Done():

@@ -60,6 +60,32 @@ if not any(s["spec"]["name"] == SITE for s in sites):
         fail("site create: %s\n%s" % (j["error"], "\n".join(j["steps"])))
     ok("veritabanlı deneme sitesi oluşturuldu")
 
+# ---- core stack and Caddy: only 443, MongoDB's stop time, the visitor's address ----
+binds = sh("docker inspect footops-caddy --format '{{json .HostConfig.PortBindings}}'")
+if '"80/tcp"' in binds or '"443/tcp"' not in binds:
+    fail("Caddy ports: %s" % binds)
+stop_timeout = sh("docker inspect footops-mongo --format '{{.Config.StopTimeout}}'").strip()
+if stop_timeout != "60":
+    fail("MongoDB stop timeout: %s" % stop_timeout)
+fw = sh("ufw status verbose", check=False)
+if "Status: active" not in fw or re.search(r"(?m)^80/tcp\s+ALLOW", fw) or "ufw allow 80/tcp" in sh("ufw show added"):
+    fail("ufw:\n" + fw)
+ok("yalnız 443 yayında, ufw'de 80 kapalı, MongoDB'ye 60 sn kapanma süresi")
+# After an update the agent rewrites the blocks once Caddy runs (the first ticks).
+block_file = "/srv/core/caddy/etc/sites/%s.caddy" % SITE
+wait(lambda: "header_up X-Real-IP {client_ip}" in sh("cat " + block_file), "site block of this version", timeout=60)
+if "max_size 100MiB" not in sh("cat " + block_file):
+    fail("site block: " + sh("cat " + block_file))
+# whoami echoes the request it got: what a client that is not Cloudflare claims —
+# CF-Connecting-IP above all, or X-Real-IP / X-Forwarded-For — never arrives as the address.
+page = sh("curl -sk --max-time 20 --resolve %s:443:127.0.0.1 -H 'CF-Connecting-IP: 5.5.5.5' -H 'X-Real-IP: 6.6.6.6' "
+          "-H 'X-Forwarded-For: 7.7.7.7' https://%s/" % (DOMAIN, DOMAIN))
+xri = re.search(r"(?im)^X-Real-Ip: (\S+)", page)
+if not xri or xri.group(1) in ("5.5.5.5", "6.6.6.6", "7.7.7.7"):
+    fail("X-Real-IP:\n" + page)
+measure["x_real_ip"] = xri.group(1)
+ok("site bloğu güncel; uygulama X-Real-IP'de gerçek adresi görüyor (%s), uydurulanı değil" % xri.group(1))
+
 uri = re.search(r'MONGODB_URI: "([^"]+)"', sh("cat /srv/musteri/%s/compose.yaml" % SITE)).group(1)
 password = re.match(r"mongodb://[^:]+:([^@]+)@", uri).group(1)
 local = uri.replace("@mongo:27017", "@127.0.0.1:27017")
