@@ -746,7 +746,10 @@ func (d *DataOps) mongorestore(ctx context.Context, t *Task, creds dbCreds, src 
 	if src.DB != creds.DB {
 		args = append(args, "--nsFrom="+from+".*", "--nsTo="+nsEscape(creds.DB)+".*")
 	}
-	args = append(args, "--numParallelCollections=1", "--stopOnError")
+	// mongorestore inserts 1,000 documents per batch by default. With large documents
+	// (mail bodies of ~50 KB, some of several MB) that outgrew the tool's 512 MB and the
+	// kernel killed it; batches of 50 peaked at 320 MB on the same archive.
+	args = append(args, "--numParallelCollections=1", "--batchSize=50", "--stopOnError")
 	if drop {
 		args = append(args, "--drop")
 	}
