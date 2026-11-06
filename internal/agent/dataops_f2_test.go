@@ -154,7 +154,7 @@ func (m *fakeMongo) DropUser(_ context.Context, db, user string) error {
 func (m *fakeMongo) DropTemp(_ context.Context, db string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if !strings.HasPrefix(db, tmpDBPrefix) {
+	if !temporaryDB(db) {
 		return fmt.Errorf("%q is not temporary", db)
 	}
 	if m.failDrop {
@@ -396,6 +396,19 @@ func (m *fakeMongo) helper(c run.Cmd) error {
 			h.Extra = c.ExtraFiles[2]
 		}
 		return json.NewEncoder(c.Stdout).Encode(datafs.Serve(req, h))
+	case contains(c.Args, "data-gzip"), contains(c.Args, "data-repack"):
+		var st datafs.Stats
+		var err error
+		if contains(c.Args, "data-gzip") {
+			st, err = datafs.Gzip(c.Stdin, c.Stdout, nil)
+		} else {
+			st, err = datafs.Repack(c.Stdin, c.Stdout, datafs.Options{})
+		}
+		if err != nil {
+			return err
+		}
+		report("STATS", st)
+		return nil
 	case contains(c.Args, "data-pack"):
 		src, err := root(c.ExtraFiles[0])
 		if err != nil {

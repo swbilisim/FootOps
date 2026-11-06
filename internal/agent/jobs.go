@@ -82,6 +82,12 @@ var (
 		// The first night uploads everything; prune and check come on top weekly.
 		"backup.run":   3 * time.Hour,
 		"backup.setup": 15 * time.Minute, // restic retries an unreachable bucket for a while
+		// Restoring fetches from the bucket first: a large database or folder takes a while,
+		// and a restore's own rollback comes on top (like an import's).
+		"backup.open":    time.Hour,
+		"backup.restore": 2 * time.Hour,
+		"backup.export":  time.Hour,
+		"backup.list":    15 * time.Minute,
 	}
 )
 

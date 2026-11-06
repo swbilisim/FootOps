@@ -26,6 +26,11 @@ import (
 //	              the upload to place or the socket for an opened file (--extra)
 //	data-zip      fd 3: the data directory, a datafs.Request (dir, names) on stdin;
 //	              stdout: zip; a failure is reported as "FOOTOPS_ERROR <Reply json>"
+//	data-gzip     stdin: a backup's database dump      stdout: gzip (level 1)
+//	data-repack   stdin: a tar of a backup's files     stdout: tar.gz an import accepts
+//
+// The last two only turn one stream into another (a backup made into an archive); they
+// drop to a user that owns nothing (nobody).
 //
 // They report "FOOTOPS_PROGRESS <json>" lines and a final "FOOTOPS_STATS <json>" on
 // stderr (data-fs only for an unpack, and without the final line).
@@ -109,6 +114,24 @@ func runData(cmd string, args []string, stdout, stderr io.Writer) error {
 			}
 		}
 		return json.NewEncoder(stdout).Encode(datafs.Serve(req, h))
+	case "data-gzip", "data-repack":
+		in := bufio.NewReaderSize(os.Stdin, 256<<10)
+		bw := bufio.NewWriterSize(stdout, 256<<10)
+		var st datafs.Stats
+		var err error
+		if cmd == "data-gzip" {
+			st, err = datafs.Gzip(in, bw, progress)
+		} else {
+			st, err = datafs.Repack(in, bw, datafs.Options{Progress: progress})
+		}
+		if err == nil {
+			err = bw.Flush()
+		}
+		if err != nil {
+			return err
+		}
+		report("STATS", st)
+		return nil
 	case "data-pack":
 		src, err := openRoot(fdArchive)
 		if err != nil {

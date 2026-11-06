@@ -159,6 +159,35 @@ func (p *previewAgent) Job(_ context.Context, id string) (agent.Job, error) {
 				"✓ magaza · dosyalar: 1240 dosya, 356.0 MB (yeni 3, değişen 0) → depoya 2.0 MB eklendi (4.1 sn, en çok 81.0 MB bellek)",
 				"✗ kurumsal · veritabanı: mongodump başarısız, yedek alınmadı: Failed: can't create session: connection refused",
 				"✓ Saklama kuralı uygulandı: 14 eski anlık görüntü silindi", "✓ Depoda yedeklerin kapladığı: 6.7 GB"}}, nil
+	case "bopen":
+		return agent.Job{ID: id, Kind: "backup.open", Target: "magaza", Started: time.Now().Add(-8 * time.Second), Finished: time.Now(), Done: true,
+			Result: "RunGece01", Usage: run.Usage{PeakMem: 104 << 20, CPU: 1900 * time.Millisecond},
+			Steps: []string{"… Yedekteki veritabanı indiriliyor: 06.11.2026 04:00, 4.0 MB döküm", "✓ İndirildi: 4.0 MB (2.1 sn)",
+				"… Geçici veritabanına yükleniyor (site etkilenmez)", "… mongorestore çalışıyor (sınır: 512 MB bellek, %50 CPU)",
+				"✓ Deneme yüklemesi tamam: 6 koleksiyon, 1860 belge, 1 görünüm (view) (1.9 sn, en çok 104.0 MB bellek, 1.1 sn CPU)",
+				"✓ Sayımlar yedek alınırken sayılanla aynı",
+				"✓ Yedek açıldı: 6 koleksiyon, 1860 belge, 1 görünüm (view) — salt okunur incelenebilir; 05:12 kendiliğinden kapanır"}}, nil
+	case "brestore":
+		return agent.Job{ID: id, Kind: "backup.restore", Target: "magaza", Started: time.Now().Add(-31 * time.Second), Finished: time.Now(), Done: true,
+			Result: "20261106-091502 files-20261106-091504", Usage: run.Usage{PeakMem: 121 << 20, CPU: 6 * time.Second},
+			Steps: []string{"ℹ Geri yüklenecek yedek: 06.11.2026 04:00 (gece yedeği) — veritabanı (6 koleksiyon, 1860 belge), dosyalar (1240 dosya, 356.0 MB)",
+				"… Dosyalar yedekten açılıyor: 1240 dosya, 356.0 MB (site bu sırada çalışmaya devam eder)",
+				"✓ Dosyalar açıldı: 1240 dosya, 31 klasör, 356.0 MB; sahip ve izinler yedekteki gibi (14.2 sn, en çok 92.0 MB bellek)",
+				"✓ Site durduruldu (bu sırada ziyaretçiler hata sayfası görür)", "✓ Kopya hazır: 20261106-091502 (sunucuda 7 gün saklanır)",
+				"… Veritabanı: yedek 06.11.2026 04:00 yükleniyor (tamamen değiştir)", "✓ Arşivde olmayan 1 koleksiyon silindi: oturum_kayitlari_yeni_eklenen_koleksiyon",
+				"✓ Yüklendi ve sayıldı: 6 koleksiyon, 1860 belge (önce 1799 belge) — 2.0 sn, en çok 121.0 MB bellek, 1.2 sn CPU",
+				"✓ Kalıcı klasör değiştirildi (tamamen değiştir); önceki hali data.old-20261106-091504, 7 gün saklanır",
+				"✓ Site başlatıldı", "✓ Site sağlıklı cevap veriyor", "✓ Açılan yedek kapatıldı (geçici veritabanı silindi)",
+				"ℹ Veritabanını geri almak için: site sayfası → Veritabanı kopyaları → 20261106-091502 → Geri yükle",
+				"ℹ Dosyaları geri almak için: site sayfası → Dosya kopyaları → 20261106-091504 → Geri yükle"}}, nil
+	case "bexport":
+		return agent.Job{ID: id, Kind: "backup.export", Target: "magaza", Started: time.Now().Add(-19 * time.Second), Finished: time.Now(), Done: true,
+			Result: "bexport", Usage: run.Usage{PeakMem: 88 << 20, CPU: 7 * time.Second},
+			Steps: []string{"ℹ Yedek: 06.11.2026 04:00 (gece yedeği)", "… Veritabanı yedekten alınıyor: 4.0 MB döküm, sıkıştırılarak",
+				"✓ Veritabanı: 4.0 MB → 610.0 KB sıkıştırılmış", "… Dosyalar yedekten alınıyor: 1240 dosya, 356.0 MB",
+				"✓ Dosyalar: 1239 dosya, 31 klasör, 355.9 MB → 352.0 MB — 1 öğe alınmadı (bağlantı, özel dosya ya da içe aktarılamayacak ad)",
+				"✓ Ortam değişkenleri: 9 değişken (değerleri arşivde, sırlar dahil)",
+				"✓ Arşiv hazır: magaza-20261106-040000.footops.tar (352.7 MB); sunucuda 24 saat indirilebilir"}}, nil
 	case "backupsetup":
 		return agent.Job{ID: id, Kind: "backup.setup", Target: "footops-h1", Started: time.Now().Add(-6 * time.Second), Finished: time.Now(), Done: true, Result: "created",
 			Steps: []string{"✓ restic 0.19.1 hazır (özet doğrulandı)", "… yedek deposu deneniyor: footops-h1", "… depo yok, yeni depo oluşturuluyor",
@@ -686,4 +715,95 @@ func (p *previewAgent) DBEdit(_ context.Context, site, id string) (agent.DBEditV
 		}
 	}
 	return agent.DBEditView{}, &agent.Error{Status: 404, Message: "kayıt bulunamadı"}
+}
+
+// ---- restoring from backups (Y3): /sites/<site>/backups/RunGece01 (the night, its
+// database open for a look), RunSaat02 (an hourly database backup, not opened) ----
+
+func previewPoints(now time.Time) []agent.BackupPoint {
+	night := time.Date(now.Year(), now.Month(), now.Day(), 4, 0, 0, 0, time.Local)
+	if night.After(now) {
+		night = night.AddDate(0, 0, -1)
+	}
+	snap := func(n int, part string, t time.Time, files, bytes int64) agent.BackupSnapshot {
+		return agent.BackupSnapshot{ID: fmt.Sprintf("%064x", n), Time: t, Part: part, Files: files, Bytes: bytes}
+	}
+	pts := []agent.BackupPoint{{Run: "RunSaat02", Time: now.Add(-25 * time.Minute), Kind: agent.RunHourly,
+		Parts: map[string]agent.BackupSnapshot{"db": snap(9, "db", now.Add(-25*time.Minute), 1, 4<<20)}}}
+	for d := 0; d < 18; d++ {
+		t := night.AddDate(0, 0, -d)
+		run := "RunGece01"
+		if d > 0 {
+			run = fmt.Sprintf("RunGece%02d", d+10)
+		}
+		pts = append(pts, agent.BackupPoint{Run: run, Time: t, Kind: agent.RunDaily, Parts: map[string]agent.BackupSnapshot{
+			"db": snap(100+d, "db", t, 1, 4<<20), "files": snap(200+d, "files", t, 1240, 356<<20), "def": snap(300+d, "def", t, 2, 3<<10)}})
+	}
+	return pts
+}
+
+func previewView(now time.Time, pt agent.BackupPoint) *agent.BackupView {
+	return &agent.BackupView{ID: "ViewOrnek1", Run: pt.Run, Taken: pt.Time, Ready: true, DB: "magaza", Opened: now.Add(-12 * time.Minute),
+		Expires: now.Add(48 * time.Minute), Collections: map[string]int64{"contactrequests": 3, "customers": 126, "payments": 405, "products": 1238,
+			"sessions": 11, "kampanya_kayitlari_2026_ilkbahar_donemi": 77}, Views: []string{"aktif_urunler"}, Documents: 1860}
+}
+
+func (p *previewAgent) SiteBackups(_ context.Context, site string) (agent.BackupList, error) {
+	now := time.Now()
+	pts := previewPoints(now)
+	return agent.BackupList{Updated: now.Add(-25 * time.Minute), Points: pts, Views: []agent.BackupView{*previewView(now, pts[1])}}, nil
+}
+
+func (p *previewAgent) SiteBackup(_ context.Context, site, run string) (agent.BackupDetail, error) {
+	now := time.Now()
+	for _, pt := range previewPoints(now) {
+		if pt.Run != run {
+			continue
+		}
+		d := agent.BackupDetail{BackupPoint: pt, Repository: "footops-h1"}
+		if run == "RunGece01" {
+			d.View = previewView(now, pt)
+			d.Record = []agent.BackupPart{{Site: site, Part: "db", Snapshot: pt.Parts["db"].ID,
+				Collections: map[string]int64{"contactrequests": 3, "customers": 126, "payments": 405, "products": 1238, "sessions": 11, "system.js": 1}}}
+		}
+		return d, nil
+	}
+	return agent.BackupDetail{}, &agent.Error{Status: 404, Message: "bu yedek listede yok: saklama kuralıyla silinmiş olabilir (listeyi yenile)"}
+}
+
+func (p *previewAgent) BackupCompare(ctx context.Context, site, run string) (agent.BackupCompare, error) {
+	d, err := p.SiteBackup(ctx, site, run)
+	files := datafsStats(1251, 359<<20)
+	return agent.BackupCompare{Backup: d, Current: agent.BackupCurrent{DB: "magaza", Collections: map[string]int64{"contactrequests": 3,
+		"customers": 128, "payments": 412, "products": 1240, "sessions": 12, "oturum_kayitlari_yeni_eklenen_koleksiyon": 4},
+		Views: []string{"aktif_urunler"}, Documents: 1799, Files: &files, Running: true}}, err
+}
+
+func datafsStats(files int, bytes int64) datafs.Stats {
+	return datafs.Stats{Files: files, Bytes: bytes}
+}
+
+func (p *previewAgent) BackupFiles(_ context.Context, site, run, dir string) (agent.BackupFolder, error) {
+	t := time.Now().Add(-26 * time.Hour)
+	l := agent.BackupFolder{Path: dir, Took: 820 * time.Millisecond, Entries: []agent.BackupEntry{
+		{Name: "2026-kampanya-gorselleri-ilkbahar-yaz-donemi-urun-fotograflari", Type: "dir", Mode: "drwxr-xr-x", MTime: t},
+		{Name: "urunler", Type: "dir", Mode: "drwxr-xr-x", MTime: t},
+		{Name: ".htaccess", Type: "file", Size: 120, Mode: "-rw-r--r--", MTime: t},
+		{Name: "katalog-2026-sonbahar-kis-koleksiyonu-tum-urunler-fiyat-listesi.pdf", Type: "file", Size: 18 << 20, Mode: "-rw-r--r--", MTime: t},
+		{Name: "logo.png", Type: "file", Size: 42 << 10, Mode: "-rw-r--r--", MTime: t},
+		{Name: "son-katalog", Type: "symlink", Mode: "Lrwxrwxrwx", MTime: t},
+	}}
+	return l, nil
+}
+
+func (p *previewAgent) ViewCollections(ctx context.Context, site, view string) (agent.DBOverview, error) {
+	return p.DBCollections(ctx, site)
+}
+
+func (p *previewAgent) ViewFind(ctx context.Context, site, view string, q agent.DBQuery) (agent.DBPage, error) {
+	return p.DBFind(ctx, site, q)
+}
+
+func (p *previewAgent) ViewDoc(ctx context.Context, site, view, coll, id string) (agent.DBDocument, error) {
+	return p.DBDoc(ctx, site, coll, id)
 }

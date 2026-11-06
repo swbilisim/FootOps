@@ -64,6 +64,7 @@ type fakeAgent struct {
 	f6        fakeF6  // new-site flow, registries, groups, DNS (newsite_test.go)
 	db        fakeDB  // the database browser (db_test.go)
 	bk        fakeBackup
+	rs        fakeRestore
 }
 
 func (f *fakeAgent) Overview(context.Context) (agent.Overview, error) {

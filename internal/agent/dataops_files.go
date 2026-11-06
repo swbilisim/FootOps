@@ -159,6 +159,10 @@ type filesSource struct {
 	Stream    *run.Cmd
 	StreamErr func(err error, log *remote.StreamLog) error
 	Live      bool
+	// Fill, when set, puts the files into the fresh data.new itself (a restore from a
+	// backup) instead of an archive being extracted; it returns what data/ must then hold,
+	// hidden entries left out (countFiles).
+	Fill func(ctx context.Context, t *Task, sf siteFiles, dir string) (datafs.Stats, error)
 }
 
 // extract unpacks src into a fresh data.new owned by the site's user. With merge, the
@@ -264,6 +268,26 @@ func (d *DataOps) extract(ctx context.Context, t *Task, sf siteFiles, src filesS
 	}
 	t.Step(msg + " — " + usageNote(u))
 	return datafs.Stats{Files: st.Files + hs.Kept.Files, Bytes: st.Bytes + hs.Kept.Bytes}, nil
+}
+
+// fillNew makes a fresh data.new, closed to everyone until fill is done with it.
+func (d *DataOps) fillNew(ctx context.Context, t *Task, sf siteFiles, src filesSource) (datafs.Stats, error) {
+	staged := sf.path(dataNew)
+	if err := os.RemoveAll(staged); err != nil {
+		return datafs.Stats{}, err
+	}
+	if err := os.Mkdir(staged, 0o700); err != nil {
+		return datafs.Stats{}, err
+	}
+	st, err := src.Fill(ctx, t, sf, staged)
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err != nil {
+		_ = os.RemoveAll(staged)
+		return datafs.Stats{}, err
+	}
+	return st, nil
 }
 
 // swap puts data.new in place of data; the old directory becomes old (data.old-<time>).

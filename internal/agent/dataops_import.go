@@ -285,13 +285,19 @@ func sum(m map[string]int64) int64 {
 	return n
 }
 
+// temporaryDB tells the agent's temporary databases: a check's (footops_tmp_) and an
+// opened backup's (footops_view_). A site's name never starts with "footops".
+func temporaryDB(name string) bool {
+	return strings.HasPrefix(name, tmpDBPrefix) || strings.HasPrefix(name, viewDBPrefix)
+}
+
 // importable leaves out MongoDB's own databases, our temporary ones and names MongoDB
 // would not accept on Linux.
 func importable(dbs []string) []string {
 	out := []string{}
 	for _, db := range dbs {
 		switch {
-		case db == "admin", db == "config", db == "local", strings.HasPrefix(db, tmpDBPrefix),
+		case db == "admin", db == "config", db == "local", temporaryDB(db),
 			len(db) > 63, strings.ContainsAny(db, "/\\. \"$\x00"):
 			continue
 		}
@@ -454,6 +460,21 @@ func inspectFootOps(ctx context.Context, f *os.File, ic *ImportCheck, progress f
 				return p, fmt.Errorf("%s: %w", memberFiles, err)
 			}
 			ic.Files = &FilesCheck{Format: "tgz", Archive: s}
+		case memberEnv:
+			// A backup's environment (İndir): checked and counted, never applied.
+			if h.Size > maxEnvMember {
+				return p, errors.New("env çok büyük")
+			}
+			b, err := io.ReadAll(io.TeeReader(tr, mh))
+			if err != nil {
+				return p, err
+			}
+			vars, err := sites.ParseDotenv(string(b))
+			if err != nil {
+				return p, fmt.Errorf("env okunamadı: %w", err)
+			}
+			ic.Notes = append(ic.Notes, fmt.Sprintf("Arşivde sitenin ortam değişkenleri de var (%d değişken): içe aktarma onlara dokunmaz; "+
+				"gerekirse site ayarlarında elle girilir.", len(vars)))
 		default:
 			return p, fmt.Errorf("FootOps arşivinde beklenmeyen dosya: %s", name)
 		}
@@ -575,10 +596,20 @@ func (d *DataOps) trialRestore(ctx context.Context, t *Task, path string, sec db
 			_ = os.WriteFile(d.tempMarker(), nil, 0o600)
 		}
 	}()
-	if err := d.mongoOps().SetUser(ctx, tmp, tmp, pw); err != nil {
+	t.Step("… Deneme yüklemesi: " + sourceDB + " → geçici veritabanı (site etkilenmez)")
+	return d.restoreTemp(ctx, t, creds, path, sec, sourceDB)
+}
+
+// restoreTemp makes a temporary database's user (root only makes users, rule K4) and
+// restores the archive's sourceDB into it as that user, then counts: the database must
+// hold what mongorestore said it wrote. Removing them again is the caller's.
+func (d *DataOps) restoreTemp(ctx context.Context, t *Task, creds dbCreds, path string, sec dbSection, sourceDB string) (map[string]int64, []string, error) {
+	if !temporaryDB(creds.DB) || creds.User != creds.DB {
+		return nil, nil, errors.New("geçici veritabanı adı geçersiz")
+	}
+	if err := d.mongoOps().SetUser(ctx, creds.DB, creds.User, creds.Password); err != nil {
 		return nil, nil, fmt.Errorf("geçici veritabanı kullanıcısı oluşturulamadı: %w", err)
 	}
-	t.Step("… Deneme yüklemesi: " + sourceDB + " → geçici veritabanı (site etkilenmez)")
 	src := restoreSource{Path: path, Sec: sec, DB: sourceDB}
 	res, err := d.mongorestore(ctx, t, creds, src, nil, true)
 	if err != nil {
@@ -803,6 +834,10 @@ func (d *DataOps) collCounts(ctx context.Context, c dbCreds) (map[string]int64, 
 // load restores src into the site's database and checks the result. It returns the
 // counts before and after.
 func (d *DataOps) load(ctx context.Context, t *Task, creds dbCreds, src restoreSource, mode string) (before, after map[string]int64, err error) {
+	// The source is there before anything is dropped.
+	if st, err := os.Stat(src.Path); err != nil || st.Size() < src.Sec.Offset+src.Sec.Length {
+		return nil, nil, fmt.Errorf("yüklenecek döküm bulunamadı ya da eksik (%s)", src.Label)
+	}
 	before, views, err := d.collCounts(ctx, creds)
 	if err != nil {
 		return nil, nil, err

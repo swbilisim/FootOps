@@ -343,6 +343,11 @@ func (b *Backups) Run(ctx context.Context, t *Task, p runPlan, actor Actor) (rec
 			t.Step("⚠ Depo boyutu ölçülemedi: " + err.Error())
 		}
 	}
+	// The panel lists backups from the index: brought up to date whenever snapshots came
+	// or went.
+	if rec.Removed > 0 || savedAny(rec) {
+		b.updateIndex(ctx, t, env)
+	}
 	if len(failed) > 0 {
 		return rec, fmt.Errorf("%d işlem başarısız: %s", len(failed), strings.Join(failed, " · "))
 	}
@@ -352,6 +357,16 @@ func (b *Backups) Run(ctx context.Context, t *Task, p runPlan, actor Actor) (rec
 	}
 	t.SetResult(fmt.Sprintf("%d parça, depoya %s eklendi", len(rec.Parts), humanBytes(added)))
 	return rec, nil
+}
+
+// savedAny reports whether a run saved a snapshot.
+func savedAny(rec BackupRun) bool {
+	for _, p := range rec.Parts {
+		if p.Snapshot != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func partName(p string) string {

@@ -1,0 +1,36 @@
+{{template "top" .}}
+{{$s := .Data.S}}{{$d := .Data.D}}{{$dir := .Data.Dir}}
+<a class="crumb" href="/sites/{{$s.Name}}/backups/{{$d.Run}}">{{icon "back"}}Yedek {{ts $d.Time}}</a>
+<div class="page-head">
+  <div>
+    <h1>Yedekteki dosyalar</h1>
+    <p class="sub">{{$s.Name}} · {{kindText $d.Kind}}, {{ts $d.Time}}{{with .Data.L}} · {{len .Entries}}{{if .More}}+{{end}} öğe · {{took .Took}}{{end}}</p>
+  </div>
+</div>
+<nav class="path" aria-label="Klasör yolu">
+  <a href="{{filesQuery $s.Name $d.Run ""}}"{{if not $dir}} aria-current="page"{{end}}>{{icon "folder"}}data</a>
+  {{range .Data.Crumbs}}<span aria-hidden="true">/</span><a href="{{filesQuery $s.Name $d.Run .Path}}"{{if eq .Path $dir}} aria-current="page"{{end}}>{{.Name}}</a>{{end}}
+</nav>
+{{with .Data.Err}}<div class="notice bad" role="alert">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
+{{with .Data.L}}
+{{if .Entries}}
+<div class="table-wrap">
+<table class="responsive">
+  <thead><tr><th>Ad</th><th class="num">Boyut</th><th>Tarih</th><th></th></tr></thead>
+  <tbody>
+  {{range .Entries}}{{$p := joinPath $dir .Name}}
+    <tr>
+      <td class="primary">{{if eq .Type "dir"}}<a class="cell-title" href="{{filesQuery $s.Name $d.Run $p}}">{{icon "folder"}}{{.Name}}</a>{{else}}<span class="cell-title">{{icon "file"}}{{.Name}}</span>{{if ne .Type "file"}} <span class="chip">{{if eq .Type "symlink"}}bağlantı{{else}}{{.Type}}{{end}}</span>{{end}}{{end}}<span class="cell-sub muted mono small">{{.Mode}}</span></td>
+      <td data-label="Boyut" class="num nowrap">{{if eq .Type "file"}}{{bytes .Size}}{{else}}—{{end}}</td>
+      <td data-label="Tarih" class="nowrap">{{ts .MTime}}</td>
+      <td class="actions">{{if eq .Type "file"}}<a class="btn sm" href="/sites/{{$s.Name}}/backups/{{$d.Run}}/files/download?path={{$p}}" download>{{icon "download"}}İndir</a>{{end}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{if .More}}<p class="muted small">Klasörde çok öğe var; ilk {{len .Entries}} tanesi gösteriliyor.</p>{{end}}
+{{else}}<div class="card"><p class="muted">Bu klasör yedekte boş.</p></div>{{end}}
+{{end}}
+<p class="hint">Bir dosyayı geri koymak için indir, sonra sitenin Dosyalar sayfasından yükle (aynı adlı dosya varsa üzerine yazmayı seçebilirsin; eski hali çöp kutusuna gider). Bütün klasörü geri yüklemek için <a href="/sites/{{$s.Name}}/backups/{{$d.Run}}/restore?part=files">Geri yükle</a>.</p>
+{{template "bottom" .}}

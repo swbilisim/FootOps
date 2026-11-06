@@ -226,11 +226,17 @@ func (d *DataOps) apply(ctx context.Context, t *Task, site string, plan restoreP
 		return Applied{}, err
 	}
 
-	// Replacing files: unpack while the site still runs (data/ is not touched).
+	// Replacing files: unpack (or fill from a backup) while the site still runs (data/ is
+	// not touched).
 	var filesWant datafs.Stats
 	if plan.Files != nil && plan.FilesMode == ModeReplace {
-		if filesWant, err = d.extract(ctx, t, sf, *plan.Files, false); err != nil {
-			return Applied{}, err
+		if plan.Files.Fill != nil {
+			filesWant, err = d.fillNew(ctx, t, sf, *plan.Files)
+		} else {
+			filesWant, err = d.extract(ctx, t, sf, *plan.Files, false)
+		}
+		if err != nil {
+			return Applied{}, err // the site still runs: nothing to bring back
 		}
 	}
 	if running {

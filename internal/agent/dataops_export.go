@@ -62,6 +62,9 @@ type ExportManifest struct {
 	Documents   int64                   `json:"documents"`
 	Files       *ExportFiles            `json:"files,omitempty"`
 	Members     map[string]ExportMember `json:"members"`
+	// Backup is set when the archive was made from a backup (Created is then the backup's
+	// time, when the data was read).
+	Backup *ExportBackupInfo `json:"backup,omitempty"`
 }
 
 // ExportFiles summarises the files member.
@@ -83,6 +86,10 @@ type ExportInfo struct {
 	Documents   int64     `json:"documents"`
 	Files       int       `json:"files"`
 	FileBytes   int64     `json:"file_bytes"`
+	// Backup is the time of the backup the archive was made from (zero: the site as it
+	// was); Env tells it holds the site's environment.
+	Backup time.Time `json:"backup,omitempty"`
+	Env    bool      `json:"env,omitempty"`
 }
 
 // Export writes a FootOps archive of the site into the staging area, where it stays for

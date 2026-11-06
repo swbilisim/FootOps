@@ -1,14 +1,14 @@
 {{template "top" .}}
-{{$s := .Data.S}}{{$c := .Data.C}}{{$q := .Data.Q}}
-<a class="crumb" href="{{dbURL $s.Name ""}}">{{icon "back"}}Veritabanı</a>
+{{$s := .Data.S}}{{$c := .Data.C}}{{$q := .Data.Q}}{{$root := .Data.DBRoot}}
+<a class="crumb" href="{{dbURL $root ""}}">{{icon "back"}}{{if .Data.View}}Yedekteki veritabanı{{else}}Veritabanı{{end}}</a>
 <div class="page-head">
   <div>
     <h1 class="mono">{{$c}}</h1>
-    {{with .Data.P}}<p class="sub">{{collTR .Collection.Type}}{{if .Collection.ReadOnly}} · yalnız okunur{{end}} · {{if ge .Total 0}}{{.Total}} belge{{if .Filter}} filtreye uyuyor{{end}}{{else}}belge sayısı süre sınırında sayılamadı{{end}} · {{took .Took}}</p>{{end}}
+    {{with .Data.P}}<p class="sub">{{with $.Data.View}}<span class="badge info">yedek {{ts .Taken}} · salt okunur</span> {{end}}{{collTR .Collection.Type}}{{if .Collection.ReadOnly}} · yalnız okunur{{end}} · {{if ge .Total 0}}{{.Total}} belge{{if .Filter}} filtreye uyuyor{{end}}{{else}}belge sayısı süre sınırında sayılamadı{{end}} · {{took .Took}}</p>{{end}}
   </div>
 </div>
 
-<form class="card db-filter" method="get" action="/sites/{{$s.Name}}/db/coll">
+<form class="card db-filter" method="get" action="{{dbURL $root "/coll"}}">
   <input type="hidden" name="c" value="{{$c}}">
   <label class="field"><span>Filtre</span>
     <textarea name="filter" rows="2" class="mono" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder='{"ad": "Kalem"}'>{{$q.Filter}}</textarea>
@@ -27,7 +27,7 @@
   </div>
   <div class="form-actions">
     <button type="submit" class="primary">{{icon "search"}}Ara</button>
-    {{if or $q.Filter .Data.CustomSort (eq $q.Sort "_id")}}<a class="btn" href="{{dbURL $s.Name "/coll" "c" $c}}">Temizle</a>{{end}}
+    {{if or $q.Filter .Data.CustomSort (eq $q.Sort "_id")}}<a class="btn" href="{{dbURL $root "/coll" "c" $c}}">Temizle</a>{{end}}
   </div>
 </form>
 
@@ -58,7 +58,7 @@
   <tbody>
   {{range .Docs}}
     <tr>
-      <td class="primary">{{if .ID}}<a class="cell-title mono" href="{{dbURL $s.Name "/doc" "c" $c "id" .ID}}">{{idText .IDText}}</a>{{else}}<span class="mono">{{.IDText}}</span><span class="cell-sub">Bu _id panelde açılamıyor (çok uzun ya da metne tam çevrilemiyor).</span>{{end}}</td>
+      <td class="primary">{{if .ID}}<a class="cell-title mono" href="{{dbURL $root "/doc" "c" $c "id" .ID}}">{{idText .IDText}}</a>{{else}}<span class="mono">{{.IDText}}</span><span class="cell-sub">Bu _id panelde açılamıyor (çok uzun ya da metne tam çevrilemiyor).</span>{{end}}</td>
       <td data-label="Alanlar" class="db-preview">{{range .Preview}}<span class="db-f"><span class="k">{{.Key}}</span> {{.Text}}</span> {{end}}{{if .Rest}}<span class="muted small">+{{.Rest}} alan</span>{{end}}</td>
       <td data-label="Boyut" class="num nowrap">{{bytes .Size}}</td>
     </tr>
@@ -68,9 +68,9 @@
 </div>
 {{if or (gt .Page 1) .More}}
 <nav class="pager" aria-label="Sayfalar">
-  {{if gt .Page 1}}<a class="btn sm" href="{{dbURL $s.Name "/coll" "c" $c "filter" .Filter "sort" .Sort "page" (itoa (add .Page -1))}}">{{icon "back"}}Önceki</a>{{end}}
+  {{if gt .Page 1}}<a class="btn sm" href="{{dbURL $root "/coll" "c" $c "filter" .Filter "sort" .Sort "page" (itoa (add .Page -1))}}">{{icon "back"}}Önceki</a>{{end}}
   <span class="muted small">{{$.Data.First}}–{{$.Data.Last}}{{if ge .Total 0}} / {{.Total}}{{end}}</span>
-  {{if .More}}<a class="btn sm" href="{{dbURL $s.Name "/coll" "c" $c "filter" .Filter "sort" .Sort "page" (itoa (add .Page 1))}}">Sonraki</a>{{end}}
+  {{if .More}}<a class="btn sm" href="{{dbURL $root "/coll" "c" $c "filter" .Filter "sort" .Sort "page" (itoa (add .Page 1))}}">Sonraki</a>{{end}}
 </nav>
 {{end}}
 {{else}}<div class="card mt"><p class="muted">{{if .Filter}}Filtreye uyan belge yok.{{else if gt .Page 1}}Bu sayfada belge yok.{{else}}Bu koleksiyonda belge yok.{{end}}</p></div>{{end}}

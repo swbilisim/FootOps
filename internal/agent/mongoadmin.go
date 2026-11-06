@@ -144,10 +144,10 @@ func (m mongoClient) DropUser(ctx context.Context, db, user string) error {
 	})
 }
 
-// DropTemp only takes names with the temporary prefix: a site's database is never
+// DropTemp only takes names with a temporary prefix: a site's database is never
 // dropped here.
 func (m mongoClient) DropTemp(ctx context.Context, db string) error {
-	if !strings.HasPrefix(db, tmpDBPrefix) {
+	if !temporaryDB(db) {
 		return fmt.Errorf("%q geçici bir veritabanı değil", db)
 	}
 	return m.asRoot(ctx, func(ctx context.Context, c *mongo.Conn) error { return dropTempDB(ctx, c, db) })

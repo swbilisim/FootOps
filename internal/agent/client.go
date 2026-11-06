@@ -721,3 +721,111 @@ func (c *Client) BackupRuns(ctx context.Context, site string, limit int) ([]Back
 	err := c.call(ctx, http.MethodGet, "/v1/backup/runs?"+q.Encode(), nil, &list)
 	return list, err
 }
+
+// ---- restoring from backups (Faz Y3) ----
+
+func backupPath(site, run, rest string) string {
+	return "/v1/sites/" + url.PathEscape(site) + "/backups/" + url.PathEscape(run) + rest
+}
+
+// ListBackups starts reading the backup list from the repository again (site: the page
+// it was asked from).
+func (c *Client) ListBackups(ctx context.Context, site string, a Actor) (string, error) {
+	var r JobResponse
+	err := c.call(ctx, http.MethodPost, "/v1/backup/list", BackupListRequest{Site: site, Actor: a}, &r)
+	return r.JobID, err
+}
+
+// SiteBackups lists a site's backups (from the agent's index of the repository).
+func (c *Client) SiteBackups(ctx context.Context, site string) (BackupList, error) {
+	var l BackupList
+	err := c.call(ctx, http.MethodGet, "/v1/sites/"+url.PathEscape(site)+"/backups", nil, &l)
+	return l, err
+}
+
+// SiteBackup returns one of a site's backups with what its run recorded.
+func (c *Client) SiteBackup(ctx context.Context, site, run string) (BackupDetail, error) {
+	var d BackupDetail
+	err := c.call(ctx, http.MethodGet, backupPath(site, run, ""), nil, &d)
+	return d, err
+}
+
+// BackupCompare returns a backup beside the site as it is now.
+func (c *Client) BackupCompare(ctx context.Context, site, run string) (BackupCompare, error) {
+	var cmp BackupCompare
+	err := c.call(ctx, http.MethodGet, backupPath(site, run, "/compare"), nil, &cmp)
+	return cmp, err
+}
+
+// OpenBackup starts opening a backup's database for a look.
+func (c *Client) OpenBackup(ctx context.Context, site, run string, a Actor) (string, error) {
+	var r JobResponse
+	err := c.call(ctx, http.MethodPost, backupPath(site, run, "/open"), BackupOpenRequest{Actor: a}, &r)
+	return r.JobID, err
+}
+
+// CloseView closes an opened backup.
+func (c *Client) CloseView(ctx context.Context, site, id string, a Actor) error {
+	return c.call(ctx, http.MethodPost, "/v1/sites/"+url.PathEscape(site)+"/views/"+url.PathEscape(id)+"/close",
+		BackupOpenRequest{Actor: a}, nil)
+}
+
+// RestoreBackup starts restoring a backup's database, files or both.
+func (c *Client) RestoreBackup(ctx context.Context, site string, req BackupRestore, confirm string, a Actor) (string, error) {
+	var r JobResponse
+	err := c.call(ctx, http.MethodPost, backupPath(site, req.Run, "/restore"),
+		BackupRestoreRequest{BackupRestore: req, Confirm: confirm, Actor: a}, &r)
+	return r.JobID, err
+}
+
+// ExportBackup starts making a backup into a FootOps archive.
+func (c *Client) ExportBackup(ctx context.Context, site string, req BackupExport, a Actor) (string, error) {
+	var r JobResponse
+	err := c.call(ctx, http.MethodPost, backupPath(site, req.Run, "/export"), BackupExportRequest{BackupExport: req, Actor: a}, &r)
+	return r.JobID, err
+}
+
+// BackupFiles lists one folder of a backup's files. The repository is read while the
+// request waits: bounded by ctx and the agent's own limit, not the client's minute.
+func (c *Client) BackupFiles(ctx context.Context, site, run, dir string) (BackupFolder, error) {
+	var f BackupFolder
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://agent"+backupPath(site, run, "/files?"+url.Values{"path": {dir}}.Encode()), nil)
+	if err != nil {
+		return f, err
+	}
+	resp, err := c.long().Do(req)
+	if err != nil {
+		return f, fmt.Errorf("agent'a ulaşılamadı: %w", err)
+	}
+	return f, decode(resp, &f)
+}
+
+// DownloadBackupFile opens one file of a backup for streaming.
+func (c *Client) DownloadBackupFile(ctx context.Context, site, run, p string, a Actor) (*http.Response, error) {
+	return c.download(ctx, backupPath(site, run, "/files/download?"+url.Values{"path": {p}}.Encode()), a, http.Header{})
+}
+
+func viewPath(site, id, rest string) string {
+	return "/v1/sites/" + url.PathEscape(site) + "/views/" + url.PathEscape(id) + rest
+}
+
+// ViewCollections, ViewFind and ViewDoc browse an opened backup's database (read only).
+func (c *Client) ViewCollections(ctx context.Context, site, view string) (DBOverview, error) {
+	var o DBOverview
+	err := c.call(ctx, http.MethodGet, viewPath(site, view, "/db"), nil, &o)
+	return o, err
+}
+
+func (c *Client) ViewFind(ctx context.Context, site, view string, q DBQuery) (DBPage, error) {
+	v := url.Values{"c": {q.Collection}, "filter": {q.Filter}, "sort": {q.Sort},
+		"page": {strconv.Itoa(q.Page)}, "n": {strconv.Itoa(q.PerPage)}}
+	var p DBPage
+	err := c.call(ctx, http.MethodGet, viewPath(site, view, "/db/find?"+v.Encode()), nil, &p)
+	return p, err
+}
+
+func (c *Client) ViewDoc(ctx context.Context, site, view, coll, id string) (DBDocument, error) {
+	var d DBDocument
+	err := c.call(ctx, http.MethodGet, viewPath(site, view, "/db/doc?"+url.Values{"c": {coll}, "id": {id}}.Encode()), nil, &d)
+	return d, err
+}

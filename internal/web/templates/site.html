@@ -58,9 +58,9 @@
   <tbody>
   {{range .}}
     <tr>
-      <td class="primary"><span class="mono">{{.File}}</span><div class="cell-sub muted">{{since .Created}}</div></td>
+      <td class="primary"><span class="mono">{{.File}}</span><div class="cell-sub muted">{{since .Created}}{{if not .Backup.IsZero}} · yedekten ({{ts .Backup}}){{end}}{{if .Env}} · <span class="badge warn">sırlar içerir</span>{{end}}</div></td>
       <td data-label="Boyut" class="nowrap">{{bytes .Bytes}}</td>
-      <td data-label="İçerik">{{if $s.Database}}{{.Collections}} koleksiyon, {{.Documents}} belge{{end}}{{if and $s.Database .Files}} · {{end}}{{if .Files}}{{.Files}} dosya ({{bytes .FileBytes}}){{end}}</td>
+      <td data-label="İçerik">{{if and $s.Database (or .Collections .Documents)}}{{.Collections}} koleksiyon, {{.Documents}} belge{{end}}{{if and $s.Database (or .Collections .Documents) .Files}} · {{end}}{{if .Files}}{{.Files}} dosya ({{bytes .FileBytes}}){{end}}</td>
       <td class="actions"><a class="btn sm" href="/sites/{{$s.Name}}/exports/{{.ID}}/download" download>{{icon "download"}}İndir</a></td>
     </tr>
   {{end}}

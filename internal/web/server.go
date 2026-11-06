@@ -108,6 +108,19 @@ type AgentAPI interface {
 	SetBackupSettings(ctx context.Context, s agent.BackupSettings, a agent.Actor) error
 	BackupRun(ctx context.Context, site string, a agent.Actor) (string, error)
 	BackupRuns(ctx context.Context, site string, limit int) ([]agent.BackupRun, error)
+	ListBackups(ctx context.Context, site string, a agent.Actor) (string, error)
+	SiteBackups(ctx context.Context, site string) (agent.BackupList, error)
+	SiteBackup(ctx context.Context, site, run string) (agent.BackupDetail, error)
+	BackupCompare(ctx context.Context, site, run string) (agent.BackupCompare, error)
+	OpenBackup(ctx context.Context, site, run string, a agent.Actor) (string, error)
+	CloseView(ctx context.Context, site, id string, a agent.Actor) error
+	RestoreBackup(ctx context.Context, site string, req agent.BackupRestore, confirm string, a agent.Actor) (string, error)
+	ExportBackup(ctx context.Context, site string, req agent.BackupExport, a agent.Actor) (string, error)
+	BackupFiles(ctx context.Context, site, run, dir string) (agent.BackupFolder, error)
+	DownloadBackupFile(ctx context.Context, site, run, p string, a agent.Actor) (*http.Response, error)
+	ViewCollections(ctx context.Context, site, view string) (agent.DBOverview, error)
+	ViewFind(ctx context.Context, site, view string, q agent.DBQuery) (agent.DBPage, error)
+	ViewDoc(ctx context.Context, site, view, coll, id string) (agent.DBDocument, error)
 }
 
 // AccessVerifier checks Cloudflare Access tokens. *cfaccess.Verifier implements it.
@@ -272,6 +285,18 @@ func (s *Server) Handler(via string) http.Handler {
 	mux.Handle("POST /backup/run", s.requireSession(s.backupRun))
 	mux.Handle("GET /sites/{name}/backup", s.requireSession(s.siteBackupPage))
 	mux.Handle("POST /sites/{name}/backup", s.requireSession(s.siteBackupSave))
+	mux.Handle("POST /sites/{name}/backups/list", s.requireSession(s.backupListRefresh))
+	mux.Handle("GET /sites/{name}/backups/{run}", s.requireSession(s.backupPoint))
+	mux.Handle("POST /sites/{name}/backups/{run}/open", s.requireSession(s.backupOpen))
+	mux.Handle("POST /sites/{name}/backups/{run}/close", s.requireSession(s.backupClose))
+	mux.Handle("GET /sites/{name}/backups/{run}/restore", s.requireSession(s.backupRestorePage))
+	mux.Handle("POST /sites/{name}/backups/{run}/restore", s.requireSession(s.backupRestorePost))
+	mux.Handle("POST /sites/{name}/backups/{run}/export", s.requireSession(s.backupExportPost))
+	mux.Handle("GET /sites/{name}/backups/{run}/files", s.requireSession(s.backupFilesPage))
+	mux.Handle("GET /sites/{name}/backups/{run}/files/download", s.requireSession(s.backupFileDownload))
+	mux.Handle("GET /sites/{name}/backups/{run}/db", s.requireSession(s.viewDBPage))
+	mux.Handle("GET /sites/{name}/backups/{run}/db/coll", s.requireSession(s.viewDBColl))
+	mux.Handle("GET /sites/{name}/backups/{run}/db/doc", s.requireSession(s.viewDBDoc))
 	mux.Handle("POST /sites/{name}/backup/run", s.requireSession(s.backupRun))
 	mux.Handle("GET /jobs/{id}", s.requireSession(s.job))
 	mux.Handle("POST /jobs/{id}/cancel", s.requireSession(s.jobCancel))

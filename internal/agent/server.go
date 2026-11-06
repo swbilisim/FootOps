@@ -174,6 +174,19 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/backup/settings", s.setBackupSettings)
 	mux.HandleFunc("POST /v1/backup/run", s.backupRun)
 	mux.HandleFunc("GET /v1/backup/runs", s.backupRuns)
+	mux.HandleFunc("POST /v1/backup/list", s.backupList)
+	mux.HandleFunc("GET /v1/sites/{name}/backups", s.siteBackups)
+	mux.HandleFunc("GET /v1/sites/{name}/backups/{run}", s.siteBackup)
+	mux.HandleFunc("GET /v1/sites/{name}/backups/{run}/compare", s.backupCompare)
+	mux.HandleFunc("POST /v1/sites/{name}/backups/{run}/open", s.backupOpen)
+	mux.HandleFunc("POST /v1/sites/{name}/backups/{run}/restore", s.backupRestore)
+	mux.HandleFunc("POST /v1/sites/{name}/backups/{run}/export", s.backupExport)
+	mux.HandleFunc("GET /v1/sites/{name}/backups/{run}/files", s.backupFiles)
+	mux.HandleFunc("GET /v1/sites/{name}/backups/{run}/files/download", s.backupFileDownload)
+	mux.HandleFunc("POST /v1/sites/{name}/views/{id}/close", s.viewClose)
+	mux.HandleFunc("GET /v1/sites/{name}/views/{id}/db", s.inView(s.dbCollections))
+	mux.HandleFunc("GET /v1/sites/{name}/views/{id}/db/find", s.inView(s.dbFind))
+	mux.HandleFunc("GET /v1/sites/{name}/views/{id}/db/doc", s.inView(s.dbDoc))
 	mux.HandleFunc("GET /v1/jobs/{id}", s.getJob)
 	mux.HandleFunc("POST /v1/jobs/{id}/cancel", s.cancelJob)
 	mux.HandleFunc("GET /v1/certs", s.listCerts)
@@ -470,6 +483,9 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 			if err := data.Staging.Remove(job.ID); err != nil {
 				logger.Printf("geçici klasör silinemedi: %v", err)
 			}
+			if job.Kind == "site.export" || job.Kind == "backup.export" {
+				_ = data.Staging.Remove(exportPrefix + job.ID) // a half-written archive
+			}
 			if job.Kind == "migrate.copy" {
 				_ = data.Staging.Remove(migratePrefix + job.ID)
 				// Its ssh and file helper run in scopes of their own and outlive the agent:
@@ -494,6 +510,7 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 			ToolsDir: cfg.ToolsDir, CacheDir: cfg.ResticCache, Server: code, Log: logger}
 		// A site a cut-off backup froze is unpaused before anything else.
 		backups.Recover(ctx)
+		backups.StartViews(ctx)
 	}
 	startRecovery(jobs, data, audit, tempDBs || data.TempLeft(), logger)
 	go housekeeping(ctx, jobs, data, backups, logger)
@@ -685,6 +702,9 @@ func housekeeping(ctx context.Context, jobs *Jobs, data *DataOps, backups *Backu
 			if backups != nil {
 				if n := len(backups.SweepRuns()); n > 0 {
 					logger.Printf("eski yedek kayıtları silindi: %d", n)
+				}
+				for _, v := range backups.SweepViews() {
+					logger.Printf("açılan yedek kapatıldı (süresi doldu): %s", v)
 				}
 				backups.Recover(ctx)
 			}

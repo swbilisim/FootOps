@@ -36,6 +36,36 @@
 </div>
 {{end}}
 
+{{if $st.Configured}}
+<div class="section-head" id="yedekler">
+  <h2>Yedekler<span class="sub">{{with .Data.List}}{{if .Updated.IsZero}}liste henüz depodan okunmadı{{else}}{{len .Points}} yedek · liste {{since .Updated}} okundu{{end}}{{end}}</span></h2>
+  <form method="post" action="/sites/{{$s.Name}}/backups/list">
+    <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+    <button type="submit" class="btn sm">{{icon "restart"}}Listeyi yenile</button>
+  </form>
+</div>
+{{with .Data.ListErr}}<div class="notice bad">{{icon "alert"}}<div>Yedek listesi okunamadı: {{.}}</div></div>{{end}}
+{{with .Data.List}}{{range .Views}}<div class="notice info">{{icon "database"}}<div><a href="/sites/{{$s.Name}}/backups/{{.Run}}">{{ts .Taken}} yedeği</a> incelemeye açık: {{len .Collections}} koleksiyon, {{.Documents}} belge · <a href="/sites/{{$s.Name}}/backups/{{.Run}}/db">koleksiyonlara bak</a> · {{tsTime .Expires}}'te kendiliğinden kapanır</div></div>{{end}}{{end}}
+<div class="table-wrap">
+<table class="responsive wide">
+  <thead><tr><th>Yedek</th><th>Tür</th><th>İçinde</th><th></th></tr></thead>
+  <tbody>
+  {{range .Data.Points}}
+    <tr>
+      <td class="primary nowrap"><a class="cell-title" href="/sites/{{$s.Name}}/backups/{{.Run}}">{{ts .Time}}</a><div class="cell-sub muted">{{since .Time}}</div></td>
+      <td data-label="Tür">{{runKind .Kind}}</td>
+      <td data-label="İçinde"><span>{{partsText .Parts}}{{$f := index .Parts "files"}}{{if $f.ID}} · {{$f.Files}} dosya, {{bytes $f.Bytes}}{{end}}</span></td>
+      <td class="actions"><a class="btn sm" href="/sites/{{$s.Name}}/backups/{{.Run}}">Aç…</a></td>
+    </tr>
+  {{else}}
+    <tr><td colspan="4" class="empty">{{with .Data.List}}{{if .Updated.IsZero}}Liste henüz okunmadı: “Listeyi yenile” ya da bir sonraki yedek.{{else}}Depoda bu sitenin yedeği yok.{{end}}{{else}}—{{end}}</td></tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{with .Data.More}}<p><a href="/sites/{{$s.Name}}/backup?all=1#yedekler">Daha eski {{.}} yedeği de göster</a></p>{{end}}
+{{end}}
+
 <div class="section-head" id="ayarlar"><h2>Ayarlar</h2></div>
 {{template "problems" .Data.Problems}}
 <form method="post" action="/sites/{{$s.Name}}/backup" class="card stack">

@@ -1,11 +1,17 @@
 {{template "top" .}}
-{{$s := .Data.S}}
-<a class="crumb" href="/sites/{{$s.Name}}">{{icon "back"}}{{$s.Name}}</a>
+{{$s := .Data.S}}{{$root := .Data.DBRoot}}
+{{with .Data.View}}<a class="crumb" href="/sites/{{$s.Name}}/backups/{{$.Data.Run}}">{{icon "back"}}Yedek {{ts .Taken}}</a>{{else}}<a class="crumb" href="/sites/{{$s.Name}}">{{icon "back"}}{{$s.Name}}</a>{{end}}
 <div class="page-head">
   <div>
+    {{with .Data.View}}
+    <h1>Yedekteki veritabanı</h1>
+    <p class="sub"><span class="badge info">salt okunur</span> {{$s.Name}} sitesinin {{ts .Taken}} yedeği (<span class="mono">{{.DB}}</span>), geçici bir veritabanında; {{tsTime .Expires}}'te kendiliğinden silinir. Sitenin şu anki veritabanı etkilenmez.</p>
+    {{else}}
     <h1>Veritabanı</h1>
     <p class="sub">MongoDB <span class="mono">{{$s.Name}}</span>, sitenin kendi kullanıcısıyla (yalnız bu veritabanı). Belgeler sayfa sayfa okunur; panelden düzenlenen ya da silinen bir belgenin önceki hali {{.Data.KeepDays}} gün saklanır ve geri alınabilir.</p>
+    {{end}}
   </div>
+  {{with .Data.View}}<div class="page-actions"><a class="btn" href="/sites/{{$s.Name}}/backups/{{$.Data.Run}}/restore">{{icon "undo"}}Geri yükle…</a></div>{{end}}
 </div>
 
 {{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>Veritabanı okunamadı: {{.}}</div></div>{{end}}
@@ -18,7 +24,7 @@
   <tbody>
   {{range .Collections}}
     <tr>
-      <td class="primary"><a class="cell-title mono" href="{{dbURL $s.Name "/coll" "c" .Name}}">{{.Name}}</a>{{if ne .Type "collection"}} <span class="chip">{{collTR .Type}}</span>{{end}}{{if .Capped}} <span class="chip">sınırlı (capped)</span>{{end}}{{with .Err}}<span class="cell-sub">bilgi alınamadı: {{.}}</span>{{end}}</td>
+      <td class="primary"><a class="cell-title mono" href="{{dbURL $root "/coll" "c" .Name}}">{{.Name}}</a>{{if ne .Type "collection"}} <span class="chip">{{collTR .Type}}</span>{{end}}{{if .Capped}} <span class="chip">sınırlı (capped)</span>{{end}}{{with .Err}}<span class="cell-sub">bilgi alınamadı: {{.}}</span>{{end}}</td>
       <td data-label="Belge" class="num">{{if ge .Count 0}}{{.Count}}{{else}}—{{end}}</td>
       <td data-label="Veri" class="num nowrap">{{if eq .Type "collection"}}{{bytes .Size}}{{else}}—{{end}}</td>
       <td data-label="İndeks" class="num nowrap">{{if eq .Type "collection"}}{{.Indexes}} · {{bytes .IndexSize}}{{else}}—{{end}}</td>
@@ -30,6 +36,7 @@
 {{else}}<div class="card"><p class="muted">Bu veritabanında henüz koleksiyon yok.</p></div>{{end}}
 {{end}}
 
+{{if not .Data.View}}
 <div class="section-head"><h2>Son değişiklikler<span class="sub">panelden yapılan belge değişiklikleri, son {{.Data.KeepDays}} gün</span></h2></div>
 {{with .Data.EditsErr}}<div class="notice warn">{{icon "alert"}}<div>Kayıtlar okunamadı: {{.}}</div></div>{{end}}
 {{with .Data.Edits}}
@@ -49,4 +56,5 @@
 </table>
 </div>
 {{else}}{{if not .Data.EditsErr}}<div class="card"><p class="muted">Henüz panelden bir belge değiştirilmedi.</p></div>{{end}}{{end}}
+{{end}}
 {{template "bottom" .}}

@@ -1,0 +1,72 @@
+{{template "top" .}}
+{{$s := .Data.S}}{{$d := .Data.D}}
+<a class="crumb" href="/sites/{{$s.Name}}/backup#yedekler">{{icon "back"}}{{$s.Name}} yedekleri</a>
+<div class="page-head">
+  <div>
+    <h1>Yedek: {{ts $d.Time}}</h1>
+    <p class="sub">{{kindText $d.Kind}} · {{since $d.Time}}{{with $d.Repository}} · depo <span class="mono">{{.}}</span>{{end}}</p>
+  </div>
+  <div class="page-actions">
+    <a class="btn primary" href="/sites/{{$s.Name}}/backups/{{$d.Run}}/restore">{{icon "undo"}}Geri yükle…</a>
+  </div>
+</div>
+
+<div class="section-head"><h2>İçinde</h2></div>
+<div class="table-wrap">
+<table class="kv">
+  {{range .Data.Parts}}
+  <tr><th>{{partTitle .Part}}</th><td><div>
+    {{if eq .Part "db"}}{{if .Rec}}{{.Documents}} belge · {{end}}döküm {{bytes .Snap.Bytes}} <span class="muted small">— {{if .Rec}}yedek alınırken sayıldı; koleksiyon koleksiyon{{else}}sayılar (kaydı 62 günden eski ya da bu sunucuda yok){{end}} yedek açılınca görünür</span>
+    {{else if eq .Part "files"}}{{.Snap.Files}} dosya, {{bytes .Snap.Bytes}} <span class="muted small">(gizli dosyalar dahil)</span>
+    {{else}}<span class="mono">footops.json</span> + <span class="mono">compose.yaml</span> <span class="muted small">(ortam değişkenleri dahil, yalnız şifreli depoda)</span>{{end}}
+    <div class="cell-sub muted mono small">{{.Snap.ID}}</div>
+  </div></td></tr>
+  {{end}}
+</table>
+</div>
+
+{{$db := index $d.Parts "db"}}{{$files := index $d.Parts "files"}}{{$def := index $d.Parts "def"}}
+{{if and $db.ID $s.Database}}
+<div class="section-head" id="incele"><h2>Veritabanını incele</h2></div>
+{{with $d.View}}
+<div class="card stack">
+  <p><span class="badge ok">açık</span> Yedekteki veritabanı geçici bir veritabanına yüklendi: <strong>{{len .Collections}} koleksiyon, {{.Documents}} belge</strong>{{with .Views}}, {{len .}} görünüm{{end}}. Salt okunur; <strong>{{tsTime .Expires}}</strong>'te kendiliğinden silinir.</p>
+  {{with .RecordDiff}}<div class="notice warn">{{icon "alert"}}<div>Yedek alınırken sayılanla tutmuyor: {{.}}. Geri yükleme bu fark onaylanmadan yapılmaz.</div></div>{{end}}
+  <div class="form-actions">
+    <a class="btn primary" href="/sites/{{$s.Name}}/backups/{{$d.Run}}/db">{{icon "database"}}Koleksiyonlara bak</a>
+    <a class="btn" href="/sites/{{$s.Name}}/backups/{{$d.Run}}/restore">{{icon "undo"}}Bu veritabanını geri yükle…</a>
+    <form method="post" action="/sites/{{$s.Name}}/backups/{{$d.Run}}/close">
+      <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+      <button type="submit" class="btn">{{icon "stop"}}Kapat</button>
+    </form>
+  </div>
+</div>
+{{else}}
+<form method="post" action="/sites/{{$s.Name}}/backups/{{$d.Run}}/open" class="card stack">
+  <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+  <p>Yedekteki veritabanı depodan indirilip geçici bir veritabanına yüklenir; koleksiyonlar ve belgeler veritabanı tarayıcısında <strong>salt okunur</strong> gezilir, bir saat sonra kendiliğinden silinir. Site etkilenmez. Veritabanını geri yüklemeden önce de bu adım gerekir: önizlemedeki sayımlar buradan çıkar.</p>
+  <div class="form-actions"><button type="submit" class="primary">{{icon "search"}}Aç ve incele</button></div>
+</form>
+{{end}}
+{{end}}
+
+<div class="section-head" id="indir"><h2>İndir</h2></div>
+<form method="post" action="/sites/{{$s.Name}}/backups/{{$d.Run}}/export" class="card stack">
+  <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+  <p>Bu yedekten bir FootOps arşivi hazırlanır (<span class="mono">.footops.tar</span>): başka bir FootOps'ta “İçe aktar”la yüklenir ya da bilgisayarda açılır (<span class="mono">db.archive.gz</span> mongorestore ile, <span class="mono">files.tar.gz</span> tar ile). Sunucuda 24 saat indirilebilir.</p>
+  <div class="stack">
+    {{if $db.ID}}<label class="check"><input type="checkbox" name="db" checked> <span>Veritabanı</span></label>{{end}}
+    {{if $files.ID}}<label class="check"><input type="checkbox" name="files" checked> <span>Dosyalar <span class="muted small">({{$files.Files}} dosya, {{bytes $files.Bytes}})</span></span></label>{{end}}
+    {{if $def.ID}}<label class="check"><input type="checkbox" name="env"> <span>Ortam değişkenleri <span class="muted small">— sırlar dahil (şifreler, anahtarlar), <span class="mono">env</span> dosyası olarak; arşivi güvenli sakla</span></span></label>{{end}}
+  </div>
+  <div class="form-actions"><button type="submit" class="primary">{{icon "download"}}Arşivi hazırla</button></div>
+</form>
+
+{{if $files.ID}}
+<div class="section-head"><h2>Dosyalar</h2></div>
+<div class="card stack">
+  <p>Yedekteki kalıcı klasörü klasör klasör gez, tek bir dosyayı indir. Bütün klasörü geri yüklemek için “Geri yükle”.</p>
+  <div class="form-actions"><a class="btn" href="{{filesQuery $s.Name $d.Run ""}}">{{icon "folder"}}Dosyalara göz at</a></div>
+</div>
+{{end}}
+{{template "bottom" .}}

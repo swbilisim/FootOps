@@ -1,0 +1,76 @@
+{{template "top" .}}
+{{$s := .Data.S}}{{$b := .Data.B}}{{$cur := .Data.Cur}}{{$f := .Data.F}}{{$fs := .Data.FilesSnap}}
+<div class="form-page">
+<a class="crumb" href="/sites/{{$s.Name}}/backups/{{$b.Run}}">{{icon "back"}}Yedek {{ts $b.Time}}</a>
+<div class="page-head">
+  <div>
+    <h1>Yedekten geri yükle</h1>
+    <p class="sub">{{$s.Name}} · {{kindText $b.Kind}}, {{ts $b.Time}} ({{since $b.Time}})</p>
+  </div>
+</div>
+{{template "problems" .Data.Problems}}
+
+<form method="post" action="/sites/{{$s.Name}}/backups/{{$b.Run}}/restore" class="stack">
+  <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+
+  {{if .Data.CanDB}}
+  <div class="section-head"><h2>Veritabanı</h2></div>
+  {{with $cur.DBErr}}<div class="notice bad">{{icon "alert"}}<div>Sitenin şu anki veritabanı okunamadı: {{.}} — "şu an" sütunu eksik olabilir.</div></div>{{end}}
+  {{with $b.View}}
+  <label class="check"><input type="checkbox" name="db"{{if $f.DB}} checked{{end}}> <span><strong>Veritabanını geri yükle</strong> — site veritabanı yedekteki haline döner; yedekte olmayan koleksiyonlar silinir.</span></label>
+  <p class="muted small">Yedekteki sayılar açılan yedekten (geçici veritabanına yüklendi, {{tsTime .Expires}}'te silinir); sitedeki sayılar şu an, koleksiyonların kendi istatistiklerinden. {{if .RecordChecked}}{{if not .RecordDiff}}Yedek alınırken sayılanla aynı.{{end}}{{else}}Yedek alınırken sayılanla karşılaştırılamadı (çalıştırmanın kaydı 62 günden eski ya da bu sunucuda yok).{{end}}</p>
+  {{with .RecordDiff}}
+  <div class="notice warn">{{icon "alert"}}<div><strong>Açılan yedek, yedek alınırken sayılanla tutmuyor:</strong> {{.}}. Yedek bozulmuş ya da yarım kalmış olabilir; önce koleksiyonlara bak.</div></div>
+  <label class="check"><input type="checkbox" name="accept_diff"{{if $f.AcceptDiff}} checked{{end}}> <span>Farkı gördüm, yine de bu veritabanını geri yükle</span></label>
+  {{end}}
+  <div class="table-wrap">
+  <table class="responsive">
+    <thead><tr><th>Koleksiyon</th><th>Yedekte</th><th>Sitede şu an</th><th>Not</th></tr></thead>
+    <tbody>
+    {{range $.Data.Rows}}
+      <tr>
+        <td class="primary mono">{{.Name}}</td>
+        <td data-label="Yedekte">{{if .InBackup}}{{.Backup}}{{else}}—{{end}}</td>
+        <td data-label="Sitede şu an">{{if .InNow}}{{if lt .Now 0}}?{{else}}{{.Now}}{{end}}{{else}}—{{end}}</td>
+        <td data-label="Not"><span class="note-{{if not .InNow}}new{{else if not .InBackup}}gone{{else if .Warn}}diff{{else}}same{{end}}">{{.Note}}</span></td>
+      </tr>
+    {{end}}
+      <tr><td class="primary"><strong>Toplam</strong></td><td data-label="Yedekte"><strong>{{.Documents}}</strong></td><td data-label="Sitede şu an"><strong>{{$cur.Documents}}</strong></td><td></td></tr>
+    </tbody>
+  </table>
+  </div>
+  {{with .Views}}<p class="muted small">Görünümler (view) de yedekteki gibi olur: {{range $i, $v := .}}{{if $i}}, {{end}}<span class="mono">{{$v}}</span>{{end}}</p>{{end}}
+  {{else}}
+  <div class="notice info">{{icon "info"}}<div>Veritabanını geri yüklemek için önce yedeği aç: depodan indirilip geçici bir veritabanına yüklenir, sayılır (site etkilenmez). Önizleme ondan sonra burada çıkar.</div></div>
+  <div class="form-actions"><button type="submit" formaction="/sites/{{$s.Name}}/backups/{{$b.Run}}/open" formnovalidate class="btn">{{icon "search"}}Yedeği aç (önizleme)</button></div>
+  {{end}}
+  {{end}}
+
+  {{if .Data.CanFiles}}
+  <div class="section-head"><h2>Dosyalar</h2></div>
+  <label class="check"><input type="checkbox" name="files"{{if $f.Files}} checked{{end}}> <span><strong>Kalıcı klasörü geri yükle</strong> — klasör yedekteki haline döner (sahipler ve izinler yedekteki gibi); şu an olup yedekte olmayan dosyalar klasörden çıkar.</span></label>
+  <div class="table-wrap">
+  <table class="kv">
+    <tr><th>Yedekte</th><td>{{$fs.Files}} dosya, {{bytes $fs.Bytes}}</td></tr>
+    <tr><th>Sitede şu an</th><td>{{with $cur.Files}}{{.Files}} dosya, {{bytes .Bytes}}{{else}}<span class="bad">okunamadı{{with $cur.FilesErr}}: {{.}}{{end}}</span>{{end}} <span class="muted mono small">(/srv/{{$s.Group}}/{{$s.Name}}/data → {{$s.DataMount}})</span></td></tr>
+  </table>
+  </div>
+  <p class="muted small">Şu anki klasör silinmez: 7 gün “Dosya kopyaları”nda durur. Tek bir dosya mı lazım? <a href="{{filesQuery $s.Name $b.Run ""}}">Yedekteki dosyalara göz at</a>, indir, Dosyalar sayfasından yükle.</p>
+  {{end}}
+
+  {{if or .Data.CanDB .Data.CanFiles}}
+  <div class="section-head"><h2>Onay</h2></div>
+  <p class="hint">Site{{if not $cur.Running}} (şu an çalışmıyor){{end}} kısa bir süre durur. Önce değişecek olanın kopyası alınır: veritabanının güvenlik kopyası (Veritabanı kopyaları) ve kalıcı klasörün önceki hali (Dosya kopyaları) — geri yükleme de geri alınabilir. Sayımlar tutmazsa ya da site açılmazsa her şey kendiliğinden eski haline döner.</p>
+  <label class="field"><span>Onaylamak için site adını yaz: <strong>{{$s.Name}}</strong></span>
+    <input name="confirm" value="{{$f.Confirm}}" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+  </label>
+  <div class="form-actions">
+    <button type="submit" class="primary">{{icon "undo"}}Geri yükle</button>
+    <a class="btn" href="/sites/{{$s.Name}}/backups/{{$b.Run}}">Vazgeç</a>
+  </div>
+  {{else}}
+  <div class="notice warn">{{icon "alert"}}<div>Bu yedekte bu siteye geri yüklenecek veritabanı ya da dosya yok.</div></div>
+  {{end}}
+</form>
+</div>
+{{template "bottom" .}}

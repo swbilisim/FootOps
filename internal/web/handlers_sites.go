@@ -257,7 +257,7 @@ func (s *Server) job(w http.ResponseWriter, r *http.Request) {
 	// (other targets — "gece yedeği", a bucket — are no site names).
 	if strings.HasPrefix(j.Kind, "backup.") {
 		data["Back"], data["BackLabel"], data["Nav"] = "/backup", "Yedekleme", "backup"
-		if j.Kind == "backup.run" && docker.ValidName(j.Target) {
+		if j.Kind != "backup.setup" && docker.ValidName(j.Target) {
 			data["Back"], data["BackLabel"], data["Nav"] = "/sites/"+j.Target+"/backup", j.Target+" yedekleri", "sites"
 		}
 	}

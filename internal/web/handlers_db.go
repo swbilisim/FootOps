@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
@@ -89,40 +90,76 @@ func unknown(err error) bool {
 }
 
 // docGone sends a link to a missing document back to its collection with a message,
-// rather than to a bare error page.
-func (s *Server) docGone(w http.ResponseWriter, r *http.Request, site, coll string, err error) bool {
+// rather than to a bare error page. root is dbURL's first argument.
+func (s *Server) docGone(w http.ResponseWriter, r *http.Request, root, coll string, err error) bool {
 	if agentStatus(err) != http.StatusNotFound {
 		return false
 	}
-	s.dbBack(w, r, dbURL(site, "/coll", "c", coll), "Belge bulunamadı (silinmiş olabilir).")
+	s.dbBack(w, r, dbURL(root, "/coll", "c", coll), "Belge bulunamadı (silinmiş olabilir).")
 	return true
 }
 
+// dbSource is what the browser's pages read: the site's own database, or a backup's
+// opened for a look (View set: read only, no edits and no history).
+type dbSource struct {
+	Root        string // dbURL's first argument: "<site>", or "<site>/backups/<run>"
+	View        *agent.BackupView
+	Run         string
+	collections func(context.Context) (agent.DBOverview, error)
+	find        func(context.Context, agent.DBQuery) (agent.DBPage, error)
+	doc         func(ctx context.Context, coll, id string) (agent.DBDocument, error)
+}
+
+func (s *Server) siteSource(name string) dbSource {
+	return dbSource{Root: name,
+		collections: func(ctx context.Context) (agent.DBOverview, error) { return s.agent.DBCollections(ctx, name) },
+		find:        func(ctx context.Context, q agent.DBQuery) (agent.DBPage, error) { return s.agent.DBFind(ctx, name, q) },
+		doc: func(ctx context.Context, coll, id string) (agent.DBDocument, error) {
+			return s.agent.DBDoc(ctx, name, coll, id)
+		}}
+}
+
+// with adds what every browser page needs to know about its source.
+func (src dbSource) with(data map[string]any) map[string]any {
+	data["DBRoot"], data["View"], data["Run"] = src.Root, src.View, src.Run
+	return data
+}
+
 func (s *Server) dbPage(w http.ResponseWriter, r *http.Request) {
-	st, ok := s.dbSiteOr404(w, r)
-	if !ok {
-		return
+	if st, ok := s.dbSiteOr404(w, r); ok {
+		s.dbPageOf(w, r, st, s.siteSource(st.Spec.Name))
 	}
-	data := map[string]any{"Title": st.Spec.Name + " veritabanı", "S": st.Spec, "KeepDays": int(agent.DBEditKeep.Hours() / 24)}
+}
+
+func (s *Server) dbPageOf(w http.ResponseWriter, r *http.Request, st agent.SiteStatus, src dbSource) {
+	title := st.Spec.Name + " veritabanı"
+	if src.View != nil {
+		title = st.Spec.Name + " yedeğindeki veritabanı"
+	}
+	data := src.with(map[string]any{"Title": title, "S": st.Spec, "KeepDays": int(agent.DBEditKeep.Hours() / 24)})
 	status := http.StatusOK
-	if ov, err := s.agent.DBCollections(r.Context(), st.Spec.Name); err != nil {
+	if ov, err := src.collections(r.Context()); err != nil {
 		data["Err"], status = err.Error(), agentStatus(err)
 	} else {
 		data["O"] = ov
 	}
-	if edits, err := s.agent.DBEdits(r.Context(), st.Spec.Name); err != nil {
-		data["EditsErr"] = err.Error()
-	} else {
-		data["Edits"] = edits
+	if src.View == nil {
+		if edits, err := s.agent.DBEdits(r.Context(), st.Spec.Name); err != nil {
+			data["EditsErr"] = err.Error()
+		} else {
+			data["Edits"] = edits
+		}
 	}
 	s.renderStatus(w, r, status, "db", data)
 }
 
 func (s *Server) dbColl(w http.ResponseWriter, r *http.Request) {
-	st, ok := s.dbSiteOr404(w, r)
-	if !ok {
-		return
+	if st, ok := s.dbSiteOr404(w, r); ok {
+		s.dbCollOf(w, r, st, s.siteSource(st.Spec.Name))
 	}
+}
+
+func (s *Server) dbCollOf(w http.ResponseWriter, r *http.Request, st agent.SiteStatus, src dbSource) {
 	q := r.URL.Query()
 	coll, ok := dbParam(q.Get("c"), 255)
 	if !ok {
@@ -136,10 +173,10 @@ func (s *Server) dbColl(w http.ResponseWriter, r *http.Request) {
 		sort = o
 	}
 	query := agent.DBQuery{Collection: coll, Filter: q.Get("filter"), Sort: sort, Page: max(pg, 1), PerPage: per}
-	data := map[string]any{"Title": coll + " · " + st.Spec.Name, "S": st.Spec, "C": coll, "Q": query,
-		"CustomSort": query.Sort != "" && query.Sort != "-_id" && query.Sort != "_id"}
+	data := src.with(map[string]any{"Title": coll + " · " + st.Spec.Name, "S": st.Spec, "C": coll, "Q": query,
+		"CustomSort": query.Sort != "" && query.Sort != "-_id" && query.Sort != "_id"})
 	status := http.StatusOK
-	p, err := s.agent.DBFind(r.Context(), st.Spec.Name, query)
+	p, err := src.find(r.Context(), query)
 	if err != nil {
 		data["Err"], status = err.Error(), agentStatus(err)
 		if status == http.StatusUnprocessableEntity {
@@ -154,10 +191,12 @@ func (s *Server) dbColl(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) dbDocPage(w http.ResponseWriter, r *http.Request) {
-	st, ok := s.dbSiteOr404(w, r)
-	if !ok {
-		return
+	if st, ok := s.dbSiteOr404(w, r); ok {
+		s.dbDocOf(w, r, st, s.siteSource(st.Spec.Name))
 	}
+}
+
+func (s *Server) dbDocOf(w http.ResponseWriter, r *http.Request, st agent.SiteStatus, src dbSource) {
 	q := r.URL.Query()
 	coll, ok1 := dbParam(q.Get("c"), 255)
 	id, ok2 := dbParam(q.Get("id"), 1024)
@@ -165,14 +204,17 @@ func (s *Server) dbDocPage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	d, err := s.agent.DBDoc(r.Context(), st.Spec.Name, coll, id)
+	d, err := src.doc(r.Context(), coll, id)
 	if err != nil {
-		if !s.docGone(w, r, st.Spec.Name, coll, err) {
+		if !s.docGone(w, r, src.Root, coll, err) {
 			http.Error(w, err.Error(), agentStatus(err))
 		}
 		return
 	}
-	s.render(w, r, "db_doc", map[string]any{"Title": coll + " · " + st.Spec.Name, "S": st.Spec, "C": coll, "D": d})
+	if src.View != nil {
+		d.Editable, d.Deletable = false, false // a backup is looked at, never changed
+	}
+	s.render(w, r, "db_doc", src.with(map[string]any{"Title": coll + " · " + st.Spec.Name, "S": st.Spec, "C": coll, "D": d}))
 }
 
 // dbEditForm shows a document in an editor. With from=<record>, the editor starts from

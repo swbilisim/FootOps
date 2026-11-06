@@ -3,6 +3,7 @@ package sites
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -155,6 +156,44 @@ func quoted(v string, lines []string, i int, escaped *bool) (string, string, int
 		b.WriteByte('\n')
 		s = lines[i]
 	}
+}
+
+// FormatDotenv writes env as a .env text that ParseDotenv reads back to the same values
+// (a backup's environment, downloaded): sorted keys, every value in double quotes with
+// \n, \r, \t, \" and \\ escaped. head, if given, is written first as comment lines.
+func FormatDotenv(env map[string]string, head ...string) string {
+	var b strings.Builder
+	for _, h := range head {
+		for _, line := range strings.Split(h, "\n") {
+			b.WriteString("# " + line + "\n")
+		}
+	}
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		b.WriteString(k + `="`)
+		v := env[k]
+		for i := 0; i < len(v); i++ {
+			switch c := v[i]; c {
+			case '\\', '"':
+				b.WriteByte('\\')
+				b.WriteByte(c)
+			case '\n':
+				b.WriteString(`\n`)
+			case '\r':
+				b.WriteString(`\r`)
+			case '\t':
+				b.WriteString(`\t`)
+			default:
+				b.WriteByte(c)
+			}
+		}
+		b.WriteString("\"\n")
+	}
+	return b.String()
 }
 
 // EnvMap turns entries into the map a site takes.

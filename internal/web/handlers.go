@@ -279,6 +279,7 @@ var navOf = map[string]string{
 	"db": "sites", "db_coll": "sites", "db_doc": "sites", "db_edit": "sites", "db_delete": "sites", "db_undo": "sites",
 	"certs": "certs", "cert_remove": "certs",
 	"backup": "backup", "backup_repo": "backup", "site_backup": "sites",
+	"backup_point": "sites", "backup_restore": "sites", "backup_files": "sites",
 	"audit": "audit",
 }
 
@@ -470,12 +471,16 @@ var funcs = template.FuncMap{
 		return out
 	},
 	// Backups: plans, kinds of runs and parts in words.
-	"dbPlan":    func(v string) string { return dbPlans[v] },
-	"filesPlan": func(v string) string { return filesPlans[v] },
-	"runKind":   func(v string) string { return runKinds[v] },
-	"partTR":    func(v string) string { return partNames[v] },
-	"partTitle": func(v string) string { return partTitles[v] },
-	"when":      func(t time.Time) string { return t.Local().Format("02.01 15:04") },
+	"dbPlan":     func(v string) string { return dbPlans[v] },
+	"filesPlan":  func(v string) string { return filesPlans[v] },
+	"runKind":    func(v string) string { return runKinds[v] },
+	"partsText":  partsText,
+	"kindText":   kindText,
+	"filesQuery": filesQuery,
+	"tsTime":     func(t time.Time) string { return t.Local().Format("15:04") },
+	"partTR":     func(v string) string { return partNames[v] },
+	"partTitle":  func(v string) string { return partTitles[v] },
+	"when":       func(t time.Time) string { return t.Local().Format("02.01 15:04") },
 	// day turns the agent's YYYY-MM-DD into the panel's DD.MM.YYYY.
 	"day": func(d string) string {
 		if t, err := time.Parse("2006-01-02", d); err == nil {
@@ -552,6 +557,8 @@ var (
 		"migrate.scan": "Taşıma — uygulama klasörü inceleniyor", "migrate.copy": "Taşıma — ön kopya",
 		"image.check": "İmaj kontrolü", "site.move": "Grup değiştiriliyor",
 		"backup.setup": "Yedek deposu bağlanıyor", "backup.run": "Yedekleme",
+		"backup.list": "Yedek listesi okunuyor", "backup.open": "Yedek incelemeye açılıyor",
+		"backup.restore": "Yedekten geri yükleme", "backup.export": "Yedekten arşiv",
 	}
 	reasonNames = map[string]string{"manual": "elle", "before-import": "içe aktarmadan önce", "before-restore": "geri yüklemeden önce",
 		"before-migrate": "taşımadan önce"}

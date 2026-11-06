@@ -430,6 +430,15 @@ func (s *Server) renderSiteBackup(w http.ResponseWriter, r *http.Request, status
 		runs, rerr := s.agent.BackupRuns(r.Context(), name, backupRunsShown)
 		data["Runs"], data["RunsErr"] = runViews(runs, name), errString(rerr)
 		data["Live"] = backupLive(r, st)
+		if st.Configured {
+			list, lerr := s.agent.SiteBackups(r.Context(), name)
+			points := list.Points
+			if r.URL.Query().Get("all") != "1" && len(points) > backupPointsShown {
+				data["More"] = len(points) - backupPointsShown
+				points = points[:backupPointsShown]
+			}
+			data["List"], data["Points"], data["ListErr"] = list, points, errString(lerr)
+		}
 	}
 	s.renderStatus(w, r, status, "site_backup", data)
 }

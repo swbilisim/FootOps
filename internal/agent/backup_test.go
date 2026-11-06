@@ -598,7 +598,7 @@ func TestBackupRunNight(t *testing.T) {
 		order = append(order, c[0]+" "+c[len(c)-1])
 	}
 	want := "cat-binary cat-binary,unlock --remove-all,backup --numParallelCollections=1,backup /footops/magaza/files,backup /footops/magaza/def," +
-		"backup /footops/statik/def,backup /footops/_server,snapshots 1,forget 6m,prune 10%,check 5%,stats raw-data"
+		"backup /footops/statik/def,backup /footops/_server,snapshots 1,forget 6m,prune 10%,check 5%,stats raw-data,snapshots T1"
 	if strings.Join(order, ",") != want {
 		t.Errorf("order:\n%s\nwant\n%s", strings.Join(order, ","), want)
 	}

@@ -327,6 +327,19 @@ type Backups struct {
 	unlocked bool
 	// lastAlerts are the alerts last worked out, kept while a file cannot be read.
 	lastAlerts []Alert
+
+	// viewMu guards viewUse (opened backups in use: opening, or a restore reads them —
+	// no sweep or close takes them), viewClosing (being closed: no restore takes them),
+	// viewTimer (closes the next one when its time is up) and viewWait (the timer's
+	// floor, longer while closes fail).
+	viewMu      sync.Mutex
+	viewUse     map[string]int
+	viewClosing map[string]bool
+	viewTimer   *time.Timer
+	viewWait    time.Duration
+	// reads lets one listing of a backup's files run at a time, fetches one single-file
+	// download: a slow download does not hold the listings up.
+	reads, fetches chan struct{}
 }
 
 func (b *Backups) init() {
@@ -335,6 +348,7 @@ func (b *Backups) init() {
 			b.now = time.Now
 		}
 		b.wake = make(chan struct{}, 1)
+		b.reads, b.fetches = make(chan struct{}, 1), make(chan struct{}, 1)
 		b.started = b.now()
 		b.Data.init()
 	})
@@ -586,7 +600,7 @@ func (b *Backups) resticBinary(ctx context.Context, t *Task) (string, error) {
 	if err := os.MkdirAll(b.ToolsDir, 0o755); err != nil {
 		return "", err
 	}
-	tmp := path + ".part"
+	tmp := path + ".part-" + t.ID() // a job and a read may both take it out at once
 	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o700)
 	if err != nil {
 		return "", err
@@ -657,6 +671,12 @@ type resticEnv struct {
 // prepare readies a job to run restic: binary, cache, credentials. done removes the
 // credentials again.
 func (b *Backups) prepare(ctx context.Context, t *Task, sec backupSecret) (env *resticEnv, done func(), err error) {
+	return b.prepareIn(ctx, t, sec, t.ID())
+}
+
+// prepareIn is prepare with the credentials in the staging directory name: a job that
+// also runs the MongoDB tools keeps them apart from the directory those tools see.
+func (b *Backups) prepareIn(ctx context.Context, t *Task, sec backupSecret, name string) (env *resticEnv, done func(), err error) {
 	bin, err := b.resticBinary(ctx, t)
 	if err != nil {
 		return nil, nil, err
@@ -664,11 +684,11 @@ func (b *Backups) prepare(ctx context.Context, t *Task, sec backupSecret) (env *
 	if err := os.MkdirAll(b.CacheDir, 0o700); err != nil {
 		return nil, nil, err
 	}
-	dir, err := b.Data.Staging.Dir(t.ID())
+	dir, err := b.Data.Staging.Dir(name)
 	if err != nil {
 		return nil, nil, err
 	}
-	done = func() { _ = b.Data.Staging.Remove(t.ID()) }
+	done = func() { _ = b.Data.Staging.Remove(name) }
 	env = &resticEnv{bin: bin, cfgDir: filepath.Join(dir, "cfg"), tmpDir: filepath.Join(dir, "tmp"), repo: sec.Repository}
 	for _, d := range []string{env.cfgDir, env.tmpDir} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
@@ -698,6 +718,10 @@ type resticOpts struct {
 	mongo  bool
 	caps   []string
 	mounts []bindMount
+	// rw are mounted writable: a restore's target.
+	rw []bindMount
+	// limits replace the data tools' limits (reads outside the jobs take less).
+	limits *run.Limits
 	// out receives restic's stdout (default: JSON lines, parsed into the result).
 	out io.Writer
 }
@@ -717,7 +741,11 @@ func (b *Backups) resticCmd(ctx context.Context, t *Task, env *resticEnv, o rest
 		full = append(full, "--cap-add", c)
 	}
 	full = append(full, "--security-opt", "no-new-privileges")
-	full = append(full, b.Data.Limits.DockerFlags()...)
+	limits := b.Data.Limits
+	if o.limits != nil {
+		limits = *o.limits
+	}
+	full = append(full, limits.DockerFlags()...)
 	for _, e := range []string{"RESTIC_REPOSITORY_FILE=/run/footops/repository", "RESTIC_PASSWORD_FILE=/run/footops/password",
 		"AWS_SHARED_CREDENTIALS_FILE=/run/footops/s3", "RESTIC_CACHE_DIR=/cache", "TMPDIR=/tmp",
 		// Progress lines every five seconds instead of 60 a second (--json's default).
@@ -739,6 +767,9 @@ func (b *Backups) resticCmd(ctx context.Context, t *Task, env *resticEnv, o rest
 	mount(env.bin, "/usr/local/bin/restic", true)
 	for _, m := range o.mounts {
 		mount(m.host, m.ctr, true)
+	}
+	for _, m := range o.rw {
+		mount(m.host, m.ctr, false)
 	}
 	full = append(full, "--entrypoint", "ionice", core.MongoImage, "-c", "3", "nice", "-n", "10", "restic")
 	full = append(full, args...)
@@ -900,9 +931,10 @@ func (b *Backups) restic(ctx context.Context, t *Task, env *resticEnv, o resticO
 	lines.flush()
 	res.Usage, res.Tail = u, last
 	t.AddUsage(u)
-	if rctx.Err() != nil || exitCode(err) == 137 {
+	if (rctx.Err() != nil || exitCode(err) == 137) && !contains(args, "--no-lock") {
 		// Stopped or killed, restic left its lock in the repository: the next job removes
-		// it first (an exclusive command — forget, prune — would fail on it).
+		// it first (an exclusive command — forget, prune — would fail on it). Reads outside
+		// the jobs take no lock and leave this alone.
 		b.unlocked = false
 	}
 	if cause := context.Cause(rctx); errors.Is(cause, errRefused) {
@@ -1180,10 +1212,23 @@ func (b *Backups) Setup(ctx context.Context, t *Task, req BackupSetup, root bool
 	default:
 		return "", err
 	}
+	if err := b.saveSetup(prev, sec, fresh); err != nil {
+		return "", err
+	}
+	if outcome == "connected" {
+		// Its backups are listed at once (a server rebuilt from them needs them first).
+		b.updateIndex(ctx, t, env)
+	}
+	return outcome, nil
+}
+
+// saveSetup keeps a repository that was checked: its settings, whether its password is
+// confirmed, and the state, which belongs to the repository.
+func (b *Backups) saveSetup(prev, sec backupSecret, fresh bool) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if err := saveBackupSecret(b.SecretPath, sec); err != nil {
-		return "", fmt.Errorf("depo ayarları kaydedilemedi: %w", err)
+		return fmt.Errorf("depo ayarları kaydedilemedi: %w", err)
 	}
 	s, err := b.settingsLocked()
 	if err != nil {
@@ -1200,7 +1245,7 @@ func (b *Backups) Setup(ctx context.Context, t *Task, req BackupSetup, root bool
 		s.Confirmed = b.now().UTC() // typed: already known
 	}
 	if err := b.saveSettingsLocked(s); err != nil {
-		return "", err
+		return err
 	}
 	// The state belongs to the repository: another one starts afresh (its first night
 	// run is owed at once, no old part counts as backed up there), the same one at a
@@ -1214,7 +1259,7 @@ func (b *Backups) Setup(ctx context.Context, t *Task, req BackupSetup, root bool
 	b.unlocked = false
 	b.nightNotBefore = time.Time{} // a retry delay was the old repository's
 	b.poke()
-	return outcome, nil
+	return nil
 }
 
 // errReplace refuses replacing a repository without its password.
@@ -1300,7 +1345,8 @@ func (b *Backups) Status() BackupStatus {
 	st.ForgetFailed, st.PruneFailed = state.ForgetFailed, state.PruneFailed
 	st.RepoSize, st.RepoSized = state.RepoSize, state.RepoSized
 	if b.Jobs != nil {
-		if j, ok := b.Jobs.Running(); ok && strings.HasPrefix(j.Kind, "backup.") {
+		// A backup or a setup; restoring, exporting and listing are not "backing up".
+		if j, ok := b.Jobs.Running(); ok && (j.Kind == "backup.run" || j.Kind == "backup.setup") {
 			j.Steps = nil
 			st.Running = &j
 		}

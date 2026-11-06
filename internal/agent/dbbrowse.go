@@ -311,12 +311,17 @@ func (d *DataOps) mongoAddr() string {
 	return defaultMongoAddr
 }
 
-// dbOpen logs in as the site's own user. Close releases the connection and the slot.
+// dbOpen logs in as the site's own user — or with the credentials ctx carries, an
+// opened backup's temporary database (withDBCreds). Close releases the connection and
+// the slot.
 func (d *DataOps) dbOpen(ctx context.Context, site string) (*dbSession, func(), error) {
 	d.init()
-	_, creds, err := d.siteDB(site)
-	if err != nil {
-		return nil, nil, err
+	creds, ok := dbCredsFrom(ctx)
+	if !ok {
+		var err error
+		if _, creds, err = d.siteDB(site); err != nil {
+			return nil, nil, err
+		}
 	}
 	select {
 	case d.browse <- struct{}{}:

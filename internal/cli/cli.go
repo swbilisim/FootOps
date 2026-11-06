@@ -62,7 +62,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprint(stdout, usage)
 	case "doctor":
 		err = runDoctor(stdout)
-	case "data-pack", "data-extract", "data-fs", "data-zip": // hidden: run by the agent only
+	case "data-pack", "data-extract", "data-fs", "data-zip", "data-gzip", "data-repack": // hidden: run by the agent only
 		err = runData(args[0], args[1:], stdout, stderr)
 	case "backup": // hidden until the panel's backup pages (Faz Y2)
 		err = runBackup(args[1:], os.Stdin, stdout, stderr)
