@@ -47,6 +47,7 @@ var iconPaths = map[string]string{
 	"move":     `<path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 13h6M13 10.5l2.5 2.5-2.5 2.5"/>`,
 	"key":      `<circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5L20 3M15.5 7.5l3 3M13 10l2 2"/>`,
 	"link":     `<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>`,
+	"backup":   `<path d="M7.5 18.5H7a4.5 4.5 0 0 1-.9-8.9 6 6 0 0 1 11.6-1.4A4.6 4.6 0 0 1 17 18.5h-.5"/><path d="M12 20.5v-8M9 15.5l3-3 3 3"/>`,
 }
 
 // icon refers to a symbol of the sprite, so a table with many rows repeats a short

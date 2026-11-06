@@ -136,6 +136,10 @@ func (s *Server) site(w http.ResponseWriter, r *http.Request) {
 	if !lightRefresh(r) {
 		certs, _ := s.agent.Certs(r.Context())
 		data["DNS"] = dnsRecords(st.Spec.Domains, certs, firstOf(srv.IPv4))
+		if bst, err := s.agent.BackupStatus(r.Context()); err == nil {
+			data["Backup"] = siteBackupSummary{Configured: bst.Configured, Ready: bst.Configured && !bst.Settings.Confirmed.IsZero(),
+				Row: backupRowOf(bst, st)}
+		}
 	}
 	s.render(w, r, "site", data)
 }
@@ -248,6 +252,14 @@ func (s *Server) job(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{"Title": "İşlem", "J": j, "Err": errString(err), "Tpl": templateByID(r.URL.Query().Get("tpl")).ID}
 	if err == nil && !j.Done {
 		data["Refresh"], data["Live"] = 2, 2
+	}
+	// Backup jobs belong to the backup pages: the server's, or a site's for its own run
+	// (other targets — "gece yedeği", a bucket — are no site names).
+	if strings.HasPrefix(j.Kind, "backup.") {
+		data["Back"], data["BackLabel"], data["Nav"] = "/backup", "Yedekleme", "backup"
+		if j.Kind == "backup.run" && docker.ValidName(j.Target) {
+			data["Back"], data["BackLabel"], data["Nav"] = "/sites/"+j.Target+"/backup", j.Target+" yedekleri", "sites"
+		}
 	}
 	s.render(w, r, "job", data)
 }

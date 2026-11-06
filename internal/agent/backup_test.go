@@ -1095,24 +1095,41 @@ func TestBackupReplaceNeedsPassword(t *testing.T) {
 	e := newBackups(t)
 	ctx := context.Background()
 	req := BackupSetup{Repository: "s3:https://evil.example.com/bucket", KeyID: "KEYID12345", SecretKey: "SeCrEt/Key+123=", Password: "TheirOwnPassword-1"}
-	// Nothing set up yet: anyone allowed may set it up.
-	if err := e.b.MayReplace("", false); err != nil {
+	// Nothing set up yet: anyone allowed may set it up; keeping a repository needs one.
+	if err := e.b.MayReplace(BackupSetup{}, false); err != nil {
 		t.Fatal(err)
+	}
+	if err := e.b.MayReplace(BackupSetup{Keep: true}, false); err == nil {
+		t.Error("kept a repository that is not there")
 	}
 	e.configure(t)
 	// Set up: the panel needs the current password, root does not.
-	if err := e.b.MayReplace("", false); !errors.Is(err, errReplace) {
+	if err := e.b.MayReplace(BackupSetup{}, false); !errors.Is(err, errReplace) {
 		t.Errorf("panel without the password: %v", err)
 	}
-	if err := e.b.MayReplace("wrong", false); !errors.Is(err, errReplace) {
+	if err := e.b.MayReplace(BackupSetup{Current: "wrong"}, false); !errors.Is(err, errReplace) {
 		t.Errorf("panel with a wrong password: %v", err)
 	}
-	if err := e.b.MayReplace("RepoPassword0123456789abcdefghijklmnop", false); err != nil {
+	if err := e.b.MayReplace(BackupSetup{Current: "RepoPassword0123456789abcdefghijklmnop"}, false); err != nil {
 		t.Errorf("panel with the password: %v", err)
 	}
-	if err := e.b.MayReplace("", true); err != nil {
+	if err := e.b.MayReplace(BackupSetup{}, true); err != nil {
 		t.Errorf("root: %v", err)
 	}
+	// The same repository (its own password, the server's) needs none.
+	if err := e.b.MayReplace(BackupSetup{Keep: true}, false); err != nil {
+		t.Errorf("keep: %v", err)
+	}
+	// Not confirmed: the panel may read the password anyway, so it is not asked for.
+	s, _ := e.b.Settings()
+	s.Confirmed = time.Time{}
+	e.b.mu.Lock()
+	e.b.saveSettingsLocked(s)
+	e.b.mu.Unlock()
+	if err := e.b.MayReplace(BackupSetup{}, false); err != nil {
+		t.Errorf("unconfirmed: %v", err)
+	}
+	e.b.Confirm()
 	if _, err := e.b.Setup(ctx, e.task("job1"), req, false); !errors.Is(err, errReplace) || len(e.restic.calls) != 0 {
 		t.Errorf("setup without the password: %v %v", err, e.restic.calls)
 	}
@@ -1343,4 +1360,443 @@ func ids(list []BackupRun) []string {
 		out = append(out, r.ID)
 	}
 	return out
+}
+
+func alertKeys(list []Alert) string {
+	var k []string
+	for _, a := range list {
+		k = append(k, a.Key+"="+a.Level)
+	}
+	return strings.Join(k, " ")
+}
+
+func TestBackupAlerts(t *testing.T) {
+	ctx := context.Background()
+	e := newBackups(t)
+	if got := e.b.Alerts(e.now); alertKeys(got) != "backup:setup=warn" || !strings.Contains(got[0].Title, "kurulmadı") {
+		t.Fatalf("not set up: %+v", got)
+	}
+	if err := saveBackupSecret(e.b.SecretPath, backupSecret{Repository: "s3:https://acc123.r2.cloudflarestorage.com/footops-t1", Password: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.b.Alerts(e.now); alertKeys(got) != "backup:setup=warn" || !strings.Contains(got[0].Title, "onaylanmadı") {
+		t.Fatalf("not confirmed: %+v", got)
+	}
+	// Confirmed after the site was made: nothing is owed for a day.
+	specs, _ := e.data.Store.List()
+	e.now = specs[0].CreatedAt.Add(time.Hour)
+	e.configure(t)
+	if got := e.b.Alerts(e.now.Add(25 * time.Hour)); len(got) != 0 {
+		t.Fatalf("a day after setup: %s", alertKeys(got))
+	}
+	got := e.b.Alerts(e.now.Add(27 * time.Hour))
+	if alertKeys(got) != "backup:stale=bad" || got[0].Title != "Yedek gecikti: magaza (veritabanı), magaza (dosyalar), magaza (site tanımı) ve 1 tane daha" ||
+		!got[0].Since.Equal(e.now.Add(26*time.Hour)) {
+		t.Fatalf("overdue: %+v", got)
+	}
+
+	backup := func(kind string, reply func(context.Context, []string, run.Cmd) error) error {
+		t.Helper()
+		e.restic.reply = reply
+		p, err := e.b.Plan(kind, "", e.now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = e.b.Run(ctx, e.task("job1"), p, Actor{})
+		return err
+	}
+	e.now = e.now.Add(27 * time.Hour)
+	if err := backup(RunManual, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.b.Alerts(e.now); len(got) != 0 {
+		t.Fatalf("after a backup: %s", alertKeys(got))
+	}
+
+	// A failed database part: an alert of its own, not "overdue" too; the next clean
+	// backup clears it.
+	failDB := func(_ context.Context, ra []string, c run.Cmd) error {
+		if indexOf(ra, "--stdin-from-command") > 0 {
+			dumpLog(c, ra, "2026-11-06T04:00:00.000+0000\tFailed: connection refused")
+			return exitErr{1}
+		}
+		return e.restic.ok(ra, c)
+	}
+	backup(RunManual, failDB)
+	e.now = e.now.Add(30 * time.Hour)
+	got = e.b.Alerts(e.now)
+	if alertKeys(got) != "backup:failed=bad backup:stale=bad" || got[0].Title != "Yedek alınamadı: magaza (veritabanı)" ||
+		!strings.Contains(got[0].Detail, "connection refused") || strings.Contains(got[1].Title, "veritabanı") {
+		t.Fatalf("failed part: %+v", got)
+	}
+	// A cancelled run is no failure, and leaves what it cut short as it was.
+	cctx, cancel := context.WithCancel(ctx)
+	cancel()
+	p, _ := e.b.Plan(RunManual, "", e.now)
+	e.b.Run(cctx, e.task("job2"), p, Actor{})
+	if st := e.b.state(); st.Failed["magaza/db"].Err == "" || st.RunFailed != nil {
+		t.Errorf("cancel changed the failures: %+v %+v", st.Failed, st.RunFailed)
+	}
+	if err := backup(RunManual, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.b.Alerts(e.now); len(got) != 0 {
+		t.Fatalf("after a clean backup: %s", alertKeys(got))
+	}
+
+	// Unreadable files: saved with a warning.
+	backup(RunManual, func(_ context.Context, ra []string, c run.Cmd) error {
+		if ra[len(ra)-1] == "/footops/magaza/files" {
+			c.Stderr(`{"message_type":"error","error":{"message":"open /footops/magaza/files/x: permission denied"},"during":"archival","item":"/footops/magaza/files/x"}`)
+			e.restic.ok(ra, c)
+			return exitErr{3}
+		}
+		return e.restic.ok(ra, c)
+	})
+	if got := e.b.Alerts(e.now); alertKeys(got) != "backup:partial=warn" || !strings.Contains(got[0].Detail, "permission denied") {
+		t.Fatalf("warning: %+v", got)
+	}
+	backup(RunManual, nil)
+
+	// Nothing saved at all for a reason of the run's own; any saved part clears it.
+	e.data.checkFree = func(string, int64) error { return errors.New("diskte yer yok") }
+	backup(RunManual, nil)
+	if got := e.b.Alerts(e.now); alertKeys(got) != "backup:failed=bad" || got[0].Title != "Yedek alınamadı" || got[0].Detail != "diskte yer yok" {
+		t.Fatalf("run failure: %+v", got)
+	}
+	e.data.checkFree = func(string, int64) error { return nil }
+	backup(RunManual, nil)
+	if got := e.b.Alerts(e.now); len(got) != 0 {
+		t.Fatalf("after the disk was freed: %s", alertKeys(got))
+	}
+
+	// Retention failed: an alert until a night whose retention runs clean.
+	e.now = time.Date(e.now.Year(), e.now.Month(), e.now.Day(), 4, 0, 0, 0, time.UTC).Add(24 * time.Hour)
+	backup(RunDaily, func(_ context.Context, ra []string, c run.Cmd) error {
+		if ra[0] == "forget" {
+			c.Stderr("Fatal: unable to remove snapshot")
+			return exitErr{1}
+		}
+		return e.restic.ok(ra, c)
+	})
+	if got := e.b.Alerts(e.now); alertKeys(got) != "backup:maint=warn" || !strings.Contains(got[0].Detail, "saklama kuralı") {
+		t.Fatalf("retention: %+v", got)
+	}
+	e.now = e.now.Add(24 * time.Hour)
+	backup(RunDaily, nil)
+	if got := e.b.Alerts(e.now); len(got) != 0 {
+		t.Fatalf("after a clean night: %s", alertKeys(got))
+	}
+
+	// The repository past its threshold, a failed weekly check.
+	e.b.updateState(func(st *backupState) {
+		st.RepoSize, st.RepoSized = 9<<30, e.now
+		st.CheckFailed, st.LastCheck = "pack abc: data corrupted", e.now
+	})
+	got = e.b.Alerts(e.now)
+	if alertKeys(got) != "backup:check=bad backup:size=warn" || got[1].Title != "Yedek deposu 9.0 GB (uyarı eşiği 8.0 GB)" {
+		t.Fatalf("size and check: %+v", got)
+	}
+	s, _ := e.b.Settings()
+	s.WarnGB = 10
+	if err := e.b.SetSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.b.Alerts(e.now); alertKeys(got) != "backup:check=bad" {
+		t.Errorf("threshold raised: %s", alertKeys(got))
+	}
+	e.b.updateState(func(st *backupState) { st.CheckFailed = "" })
+
+	// Paused: one alert, no "overdue" for the time it is paused.
+	s.Paused = true
+	e.b.SetSettings(s)
+	if got := e.b.Alerts(e.now.Add(72 * time.Hour)); alertKeys(got) != "backup:paused=warn" {
+		t.Errorf("paused: %s", alertKeys(got))
+	}
+	// A site left out owes nothing; failures of a site that is gone do not count.
+	s.Paused = false
+	s.Sites = map[string]BackupPolicy{"magaza": {Off: true}}
+	e.b.SetSettings(s)
+	e.b.updateState(func(st *backupState) {
+		st.Failed["eski/db"] = BackupFailure{Time: e.now, Err: "x"}
+		st.Last["_server/server"] = BackupLast{Time: e.now.Add(72 * time.Hour)}
+	})
+	if got := e.b.Alerts(e.now.Add(72 * time.Hour)); len(got) != 0 {
+		t.Errorf("site left out, site gone: %s", alertKeys(got))
+	}
+}
+
+func TestBackupAlertsInAlerter(t *testing.T) {
+	a := NewAlerter()
+	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	calls := 0
+	a.Backups = func(t time.Time) []Alert {
+		calls++
+		return []Alert{{Key: "backup:setup", Level: "warn", Title: "Uzak yedekleme kurulmadı", Link: "/backup", Since: t}}
+	}
+	var opened []Alert
+	a.OnChange = func(o, _ []Alert) { opened = append(opened, o...) }
+	a.Evaluate(Overview{}, now)
+	if got := a.Active(); len(got) != 1 || got[0].Key != "backup:setup" || len(opened) != 1 || calls != 1 {
+		t.Fatalf("active %+v, opened %+v", got, opened)
+	}
+	a.Backups = func(time.Time) []Alert { return nil }
+	a.Evaluate(Overview{}, now.Add(10*time.Second))
+	if got := a.Active(); len(got) != 0 {
+		t.Errorf("resolved alert still active: %+v", got)
+	}
+}
+
+// A new repository's first night run is not held back by the old one's retry delay.
+func TestBackupConfirmClearsRetryDelay(t *testing.T) {
+	e := newBackups(t)
+	e.configure(t)
+	e.b.mu.Lock()
+	e.b.nightNotBefore = e.now.Add(time.Hour)
+	e.b.mu.Unlock()
+	if err := e.b.Confirm(); err != nil {
+		t.Fatal(err)
+	}
+	if !e.b.nightNotBefore.IsZero() {
+		t.Errorf("retry delay kept: %v", e.b.nightNotBefore)
+	}
+}
+
+// The same repository with a new key: no password typed, the confirmation (or its
+// absence) and the state kept; another repository starts with a fresh state.
+func TestBackupKeepAndNewRepository(t *testing.T) {
+	ctx := context.Background()
+	e := newBackups(t)
+	e.configure(t)
+	confirmed := e.b.mustSettings(t).Confirmed
+	e.b.updateState(func(st *backupState) {
+		st.Last["magaza/db"] = BackupLast{Time: e.now, Snapshot: "abc"}
+		st.Failed["magaza/files"] = BackupFailure{Time: e.now, Err: "x"}
+		st.NightDone, st.CheckFailed, st.RepoSize = "2026-10-27", "corrupt", 9<<30
+	})
+	e.now = e.now.Add(time.Hour)
+	keep := BackupSetup{Repository: "s3:https://acc123.r2.cloudflarestorage.com/footops-t1", KeyID: "NEWKEY12345", SecretKey: "NewSecret/123=", Keep: true}
+	if err := keep.Check(); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := e.b.Setup(ctx, e.task("job1"), keep, false); err != nil || out != "connected" {
+		t.Fatalf("%s %v", out, err)
+	}
+	sec, _ := e.b.secret()
+	if sec.KeyID != "NEWKEY12345" || sec.Password != "RepoPassword0123456789abcdefghijklmnop" {
+		t.Errorf("secret %+v", sec)
+	}
+	if got := e.b.mustSettings(t).Confirmed; !got.Equal(confirmed) {
+		t.Errorf("confirmation changed: %v → %v", confirmed, got)
+	}
+	if st := e.b.state(); st.Last["magaza/db"].Snapshot != "abc" || st.NightDone == "" {
+		t.Errorf("state of the same repository lost: %+v", st)
+	}
+
+	// Unconfirmed, the same password passed back (by anyone) confirms nothing.
+	s := e.b.mustSettings(t)
+	s.Confirmed = time.Time{}
+	e.b.mu.Lock()
+	e.b.saveSettingsLocked(s)
+	e.b.mu.Unlock()
+	if _, err := e.b.Setup(ctx, e.task("job2"), keep, false); err != nil {
+		t.Fatal(err)
+	}
+	typed := keep
+	typed.Keep, typed.Password = false, sec.Password
+	if _, err := e.b.Setup(ctx, e.task("job3"), typed, false); err != nil {
+		t.Fatal(err)
+	}
+	if !e.b.mustSettings(t).Confirmed.IsZero() {
+		t.Error("a password nobody saw got confirmed")
+	}
+
+	// Keep where this server's repository is not: refused, nothing saved.
+	e.restic.reply = func(_ context.Context, ra []string, c run.Cmd) error {
+		c.Stderr(`{"message_type":"exit_error","code":10,"message":"Fatal: repository does not exist: unable to open config file"}`)
+		return exitErr{10}
+	}
+	other := keep
+	other.Repository = "s3:https://acc123.r2.cloudflarestorage.com/footops-yeni"
+	if _, err := e.b.Setup(ctx, e.task("job4"), other, false); err == nil || !strings.Contains(err.Error(), "bu sunucunun deposu yok") {
+		t.Errorf("keep at another address: %v", err)
+	}
+	if sec, _ := e.b.secret(); sec.Repository != keep.Repository {
+		t.Errorf("repository replaced: %s", sec.Repository)
+	}
+
+	// A new repository: the old one's state is not this one's.
+	e.restic.reply = func(_ context.Context, ra []string, c run.Cmd) error {
+		if ra[len(ra)-1] == "config" {
+			c.Stderr(`{"message_type":"exit_error","code":10,"message":"Fatal: repository does not exist: unable to open config file"}`)
+			return exitErr{10}
+		}
+		return nil
+	}
+	fresh := other
+	fresh.Keep = false
+	if out, err := e.b.Setup(ctx, e.task("job5"), fresh, false); err != nil || out != "created" {
+		t.Fatalf("new repository: %s %v", out, err)
+	}
+	st := e.b.state()
+	if len(st.Last) != 0 || len(st.Failed) != 0 || st.NightDone != "" || st.CheckFailed != "" || st.RepoSize != 0 || st.Repository != fresh.Repository {
+		t.Errorf("old state kept for a new repository: %+v", st)
+	}
+	bad := BackupSetup{Repository: keep.Repository, KeyID: "NEWKEY12345", SecretKey: "NewSecret/123=", Keep: true, Password: "x-password"}
+	if err := bad.Check(); err == nil {
+		t.Error("keep with a password")
+	}
+}
+
+func (b *Backups) mustSettings(t *testing.T) BackupSettings {
+	t.Helper()
+	s, err := b.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// What the review of Y2 found in the bookkeeping: a check cut short, a cancel after a
+// real failure, a failed prune, a site's own run that never reached a part.
+func TestBackupBookkeepingEdges(t *testing.T) {
+	ctx := context.Background()
+	t.Run("a check cut short keeps the earlier finding", func(t *testing.T) {
+		e := newBackups(t)
+		e.configure(t)
+		e.b.updateState(func(st *backupState) {
+			st.Repository = "s3:https://acc123.r2.cloudflarestorage.com/footops-t1"
+			st.CheckFailed, st.LastCheck = "pack x: data corrupted", e.now.Add(-7*24*time.Hour)
+		})
+		e.now = time.Date(2026, 11, 8, 4, 0, 0, 0, time.UTC) // a Sunday: prune and check
+		cctx, cancel := context.WithCancel(ctx)
+		e.restic.reply = func(ctx context.Context, ra []string, c run.Cmd) error {
+			if ra[0] == "check" {
+				cancel()
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			return e.restic.ok(ra, c)
+		}
+		p, _ := e.b.Plan(RunDaily, "", e.now)
+		if _, err := e.b.Run(cctx, e.task("job1"), p, schedActor); !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+		if st := e.b.state(); st.CheckFailed == "" || st.LastCheck.Equal(e.now) {
+			t.Errorf("finding cleared by a check that never finished: %+v", st)
+		}
+		// The next night checks again (not a week later).
+		if p, _ := e.b.Plan(RunDaily, "", e.now.Add(24*time.Hour)); !p.Maintain {
+			t.Error("no check the next night")
+		}
+	})
+	t.Run("a cancel keeps an earlier real failure", func(t *testing.T) {
+		e := newBackups(t)
+		e.configure(t)
+		cctx, cancel := context.WithCancel(ctx)
+		e.restic.reply = func(ctx context.Context, ra []string, c run.Cmd) error {
+			if indexOf(ra, "--stdin-from-command") > 0 {
+				dumpLog(c, ra, "2026-11-06T04:00:00.000+0000\tFailed: connection refused")
+				return exitErr{1}
+			}
+			if ra[len(ra)-1] == "/footops/magaza/files" {
+				cancel()
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			return e.restic.ok(ra, c)
+		}
+		p, _ := e.b.Plan(RunManual, "magaza", e.now)
+		e.b.Run(cctx, e.task("job1"), p, Actor{})
+		st := e.b.state()
+		if !strings.Contains(st.Failed["magaza/db"].Err, "connection refused") {
+			t.Errorf("real failure dropped: %+v", st.Failed)
+		}
+		if _, ok := st.Failed["magaza/files"]; ok {
+			t.Error("the part the cancel cut counts as failed")
+		}
+	})
+	t.Run("a failed prune stays until a prune succeeds", func(t *testing.T) {
+		e := newBackups(t)
+		e.configure(t)
+		e.now = time.Date(2026, 11, 8, 4, 0, 0, 0, time.UTC)
+		e.restic.reply = func(_ context.Context, ra []string, c run.Cmd) error {
+			if ra[0] == "prune" {
+				c.Stderr("Fatal: pack not found")
+				return exitErr{1}
+			}
+			return e.restic.ok(ra, c)
+		}
+		p, _ := e.b.Plan(RunDaily, "", e.now)
+		e.b.Run(ctx, e.task("job1"), p, schedActor)
+		if st := e.b.state(); st.PruneFailed == nil || st.ForgetFailed != nil {
+			t.Fatalf("prune failure: %+v %+v", st.PruneFailed, st.ForgetFailed)
+		}
+		e.now = e.now.Add(24 * time.Hour) // Monday: not the weekly night
+		e.restic.reply = nil
+		p, _ = e.b.Plan(RunDaily, "", e.now)
+		if !p.Maintain {
+			t.Fatal("failed prune not tried again")
+		}
+		e.b.Run(ctx, e.task("job2"), p, schedActor)
+		if st := e.b.state(); st.PruneFailed != nil {
+			t.Errorf("still failed after a good prune: %+v", st.PruneFailed)
+		}
+	})
+	t.Run("a site's run that reached no part is in its history", func(t *testing.T) {
+		e := newBackups(t)
+		e.configure(t)
+		e.data.checkFree = func(string, int64) error { return errors.New("diskte yer yok") }
+		p, _ := e.b.Plan(RunManual, "magaza", e.now)
+		e.b.Run(ctx, e.task("job1"), p, Actor{})
+		if runs, _ := e.b.Runs("magaza", 10); len(runs) != 1 || runs[0].Err == "" {
+			t.Errorf("site history: %+v", runs)
+		}
+	})
+	t.Run("a deadline is said in words", func(t *testing.T) {
+		e := newBackups(t)
+		bp := BackupPart{}
+		e.b.failPart(e.task("job1"), &bp, context.DeadlineExceeded)
+		if !strings.HasPrefix(bp.Err, "süre doldu") {
+			t.Errorf("%q", bp.Err)
+		}
+	})
+}
+
+// A read error keeps the last alerts; a site made again does not inherit a failure;
+// the Alerter keeps a condition's own, earlier Since.
+func TestBackupAlertsSteady(t *testing.T) {
+	e := newBackups(t)
+	specs, _ := e.data.Store.List()
+	e.now = specs[0].CreatedAt.Add(time.Hour)
+	e.configure(t)
+	e.b.updateState(func(st *backupState) {
+		st.Failed["magaza/db"] = BackupFailure{Time: e.now, Err: "x"}
+	})
+	if got := alertKeys(e.b.Alerts(e.now)); got != "backup:failed=bad" {
+		t.Fatalf("%s", got)
+	}
+	os.WriteFile(e.b.settingsPath(), []byte("{bozuk"), 0o600)
+	got := e.b.Alerts(e.now)
+	if alertKeys(got) != "backup:failed=bad backup:settings=warn" || !got[1].Since.IsZero() {
+		t.Errorf("read error: %+v", got)
+	}
+	os.Remove(e.b.settingsPath())
+	e.b.Confirm()
+	e.b.updateState(func(st *backupState) {
+		st.Failed["magaza/db"] = BackupFailure{Time: specs[0].CreatedAt.Add(-time.Hour), Err: "the old site's"}
+	})
+	if got := alertKeys(e.b.Alerts(e.now)); strings.Contains(got, "failed") {
+		t.Errorf("a new site inherited a failure: %s", got)
+	}
+
+	a := NewAlerter()
+	past := e.now.Add(-48 * time.Hour)
+	a.Backups = func(time.Time) []Alert {
+		return []Alert{{Key: "backup:stale", Level: "bad", Title: "Yedek gecikti", Link: "/backup", Since: past}}
+	}
+	a.Evaluate(Overview{}, e.now)
+	if got := a.Active(); len(got) != 1 || !got[0].Since.Equal(past) {
+		t.Errorf("since: %+v", got)
+	}
 }

@@ -506,6 +506,9 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 	sampler.Alerts = NewAlerter()
 	sampler.Alerts.Certs = ops.Store.Certs
 	sampler.Alerts.Registries = regs.List
+	if backups != nil {
+		sampler.Alerts.Backups = backups.Alerts
+	}
 	if cfg.HistoryPath != "" {
 		h, err := history.Load(cfg.HistoryPath, time.Now())
 		if err != nil {

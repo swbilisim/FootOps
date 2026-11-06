@@ -278,6 +278,7 @@ var navOf = map[string]string{
 	"trash": "sites", "trash_empty": "sites", "migrate": "sites", "sources": "sites", "source_confirm": "sites",
 	"db": "sites", "db_coll": "sites", "db_doc": "sites", "db_edit": "sites", "db_delete": "sites", "db_undo": "sites",
 	"certs": "certs", "cert_remove": "certs",
+	"backup": "backup", "backup_repo": "backup", "site_backup": "sites",
 	"audit": "audit",
 }
 
@@ -290,6 +291,9 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 func (s *Server) renderStatus(w http.ResponseWriter, r *http.Request, status int, name string, data map[string]any) {
 	sess := current(r)
 	p := page{Session: sess, Server: s.cfg.ServerCode, Nav: navOf[name], Data: data}
+	if nav, ok := data["Nav"].(string); ok {
+		p.Nav = nav // a page shared by several menus (a job's)
+	}
 	p.Title, _ = data["Title"].(string)
 	if sess.ID != "" {
 		p.Alerts = s.alerts(r)
@@ -465,6 +469,30 @@ var funcs = template.FuncMap{
 		}
 		return out
 	},
+	// Backups: plans, kinds of runs and parts in words.
+	"dbPlan":    func(v string) string { return dbPlans[v] },
+	"filesPlan": func(v string) string { return filesPlans[v] },
+	"runKind":   func(v string) string { return runKinds[v] },
+	"partTR":    func(v string) string { return partNames[v] },
+	"partTitle": func(v string) string { return partTitles[v] },
+	"when":      func(t time.Time) string { return t.Local().Format("02.01 15:04") },
+	// day turns the agent's YYYY-MM-DD into the panel's DD.MM.YYYY.
+	"day": func(d string) string {
+		if t, err := time.Parse("2006-01-02", d); err == nil {
+			return t.Format("02.01.2006")
+		}
+		return d
+	},
+	// backupAlerts are the alerts the backup page repeats from the dashboard.
+	"backupAlerts": func(list []agent.Alert) []agent.Alert {
+		var out []agent.Alert
+		for _, a := range list {
+			if strings.HasPrefix(a.Key, "backup:") {
+				out = append(out, a)
+			}
+		}
+		return out
+	},
 	"jobTitle": func(kind string) string {
 		if t, ok := jobTitles[kind]; ok {
 			return t
@@ -523,6 +551,7 @@ var (
 		"files.unpack": "Arşiv açılıyor", "migrate.discover": "Taşıma — kaynak taranıyor",
 		"migrate.scan": "Taşıma — uygulama klasörü inceleniyor", "migrate.copy": "Taşıma — ön kopya",
 		"image.check": "İmaj kontrolü", "site.move": "Grup değiştiriliyor",
+		"backup.setup": "Yedek deposu bağlanıyor", "backup.run": "Yedekleme",
 	}
 	reasonNames = map[string]string{"manual": "elle", "before-import": "içe aktarmadan önce", "before-restore": "geri yüklemeden önce",
 		"before-migrate": "taşımadan önce"}

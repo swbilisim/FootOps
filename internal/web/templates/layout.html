@@ -22,6 +22,7 @@
   <nav class="nav" aria-label="Ana menü">
     <a href="/"{{if eq .Nav "server"}} aria-current="page"{{end}}>{{icon "server"}}<span>Sunucu</span><span data-live-id="alert-count">{{with .Alerts.List}}<span class="count{{if not $.Alerts.Bad}} warn{{end}}" title="{{len .}} uyarı">{{len .}}</span>{{end}}</span></a>
     <a href="/sites"{{if eq .Nav "sites"}} aria-current="page"{{end}}>{{icon "globe"}}<span>Siteler</span></a>
+    <a href="/backup"{{if eq .Nav "backup"}} aria-current="page"{{end}}>{{icon "backup"}}<span>Yedekleme</span></a>
     <a href="/certs"{{if eq .Nav "certs"}} aria-current="page"{{end}}>{{icon "shield"}}<span>Sertifikalar</span></a>
     <a href="/audit"{{if eq .Nav "audit"}} aria-current="page"{{end}}>{{icon "list"}}<span>Denetim</span></a>
   </nav>

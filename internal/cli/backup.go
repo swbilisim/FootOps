@@ -20,9 +20,11 @@ import (
 	"github.com/swbilisim/FootOps/internal/install"
 )
 
-// Hidden `footops backup …` commands, until the panel's backup pages (Faz Y2). They ask
-// the agent over its socket (as root, through sudo), so a backup is a job like any
-// other: one at a time, in the panel's job list and in the audit log.
+// Hidden `footops backup …` commands: what the panel's Yedekleme page does, from the
+// server — and what only root may (the password after it was confirmed, replacing the
+// repository without it). They ask the agent over its socket (as root, through sudo), so
+// a backup is a job like any other: one at a time, in the panel's job list and in the
+// audit log.
 const backupUsage = `Kullanım: sudo footops backup <komut>
 
   status                     depo, ayarlar, son yedekler
@@ -31,7 +33,7 @@ const backupUsage = `Kullanım: sudo footops backup <komut>
   confirm                    şifre başka yere kaydedildi: zamanlanmış yedekler başlar
   run [site]                 şimdi yedekle (bütün siteler + sunucu ayarları ya da tek site)
   runs [site]                son yedek çalıştırmaları
-  set night=SS:DD | paused=on|off
+  set night=SS:DD | paused=on|off | warn=GB
   set defaults|<site> db=daily|6h|hourly files=daily|weekly|off keep=48h,30d,6m
                       [freeze=on|off] [off=on|off] | <site> reset
   show-key                   depo şifresini göster (denetim kaydına yazılır)
@@ -303,7 +305,28 @@ func backupStatus(ctx context.Context, c *agent.Client, out io.Writer) error {
 		}
 	}
 	if st.RepoSize > 0 {
-		fmt.Fprintf(out, "Depoda: %s (%s ölçüldü)\n", human(st.RepoSize), st.RepoSized.Local().Format("02.01 15:04"))
+		fmt.Fprintf(out, "Depoda: %s (%s ölçüldü; uyarı eşiği %s)\n", human(st.RepoSize), st.RepoSized.Local().Format("02.01 15:04"), human(s.Warn()))
+	}
+	keys := make([]string, 0, len(st.Failed))
+	for k := range st.Failed {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		f := st.Failed[k]
+		mark := "✗"
+		if f.Warning {
+			mark = "⚠"
+		}
+		fmt.Fprintf(out, "%s %s (%s): %s\n", mark, k, f.Time.Local().Format("02.01 15:04"), f.Err)
+	}
+	for _, f := range []*agent.BackupFailure{st.RunFailed, st.ForgetFailed, st.PruneFailed} {
+		if f != nil {
+			fmt.Fprintf(out, "✗ %s: %s\n", f.Time.Local().Format("02.01 15:04"), f.Err)
+		}
+	}
+	if st.CheckFailed != "" {
+		fmt.Fprintln(out, "✗ depo denetimi: "+st.CheckFailed)
 	}
 	if !st.LastPrune.IsZero() || !st.LastCheck.IsZero() {
 		fmt.Fprintf(out, "Son temizlik: %s · son denetim: %s\n", dateOr(st.LastPrune), dateOr(st.LastCheck))
@@ -398,8 +421,12 @@ func backupSet(ctx context.Context, c *agent.Client, actor agent.Actor, args []s
 				if s.Paused, err = onOff(v); err != nil {
 					return err
 				}
+			case "warn":
+				if s.WarnGB, err = strconv.Atoi(v); err != nil {
+					return fmt.Errorf("warn=%s: GB olarak sayı", v)
+				}
 			default:
-				return fmt.Errorf("bilinmeyen ayar %q (night, paused)", k)
+				return fmt.Errorf("bilinmeyen ayar %q (night, paused, warn)", k)
 			}
 		}
 	} else {

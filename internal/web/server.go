@@ -100,6 +100,14 @@ type AgentAPI interface {
 	SetMigration(ctx context.Context, site string, ch agent.MigrationChoice, a agent.Actor) (agent.Migration, error)
 	ForgetMigration(ctx context.Context, site string, a agent.Actor) error
 	MigrationJob(ctx context.Context, site, verb, confirm string, a agent.Actor) (string, error)
+	BackupStatus(ctx context.Context) (agent.BackupStatus, error)
+	BackupSetup(ctx context.Context, req agent.BackupSetupRequest) (string, error)
+	BackupKey(ctx context.Context, a agent.Actor) (string, error)
+	BackupConfirm(ctx context.Context, a agent.Actor) error
+	BackupSettings(ctx context.Context) (agent.BackupSettings, error)
+	SetBackupSettings(ctx context.Context, s agent.BackupSettings, a agent.Actor) error
+	BackupRun(ctx context.Context, site string, a agent.Actor) (string, error)
+	BackupRuns(ctx context.Context, site string, limit int) ([]agent.BackupRun, error)
 }
 
 // AccessVerifier checks Cloudflare Access tokens. *cfaccess.Verifier implements it.
@@ -254,6 +262,17 @@ func (s *Server) Handler(via string) http.Handler {
 	mux.Handle("POST /sources/{id}/remove", s.requireSession(s.sourceRemove))
 	mux.Handle("GET /sources/{id}/reset", s.requireSession(s.sourceConfirm("reset")))
 	mux.Handle("POST /sources/{id}/reset", s.requireSession(s.sourceReset))
+	mux.Handle("GET /backup", s.requireSession(s.backupPage))
+	mux.Handle("POST /backup/setup", s.requireSession(s.backupSetup))
+	mux.Handle("GET /backup/repo", s.requireSession(s.backupRepoPage))
+	mux.Handle("POST /backup/key", s.requireSession(s.backupKey))
+	mux.Handle("POST /backup/confirm", s.requireSession(s.backupConfirm))
+	mux.Handle("POST /backup/settings", s.requireSession(s.backupSettings))
+	mux.Handle("POST /backup/pause", s.requireSession(s.backupPause))
+	mux.Handle("POST /backup/run", s.requireSession(s.backupRun))
+	mux.Handle("GET /sites/{name}/backup", s.requireSession(s.siteBackupPage))
+	mux.Handle("POST /sites/{name}/backup", s.requireSession(s.siteBackupSave))
+	mux.Handle("POST /sites/{name}/backup/run", s.requireSession(s.backupRun))
 	mux.Handle("GET /jobs/{id}", s.requireSession(s.job))
 	mux.Handle("POST /jobs/{id}/cancel", s.requireSession(s.jobCancel))
 	mux.Handle("GET /certs", s.requireSession(s.certs))

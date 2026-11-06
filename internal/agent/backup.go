@@ -113,12 +113,28 @@ type BackupSettings struct {
 	Night    string                  `json:"night"`
 	Defaults BackupPolicy            `json:"defaults"`
 	Sites    map[string]BackupPolicy `json:"sites,omitempty"`
+	// WarnGB is the repository size (GB) that raises an alert: free tiers end somewhere
+	// (Cloudflare R2: 10 GB an account) and nothing stops a bucket growing past them.
+	// Zero means DefaultWarnGB.
+	WarnGB int `json:"warn_gb,omitempty"`
 }
+
+// DefaultWarnGB leaves room below R2's free 10 GB for the account's other buckets.
+const DefaultWarnGB = 8
 
 // DefaultBackupSettings are the operator's choices of 2026-11-06 (§27.3).
 func DefaultBackupSettings() BackupSettings {
 	return BackupSettings{Night: "04:00", Defaults: BackupPolicy{DB: DBDaily, Files: FilesDaily,
-		KeepHours: 48, KeepDays: 30, KeepMonths: 6}}
+		KeepHours: 48, KeepDays: 30, KeepMonths: 6}, WarnGB: DefaultWarnGB}
+}
+
+// Warn is the repository size that raises an alert, in bytes.
+func (s BackupSettings) Warn() int64 {
+	gb := s.WarnGB
+	if gb <= 0 {
+		gb = DefaultWarnGB
+	}
+	return int64(gb) << 30
 }
 
 var reNight = regexp.MustCompile(`^([01][0-9]|2[0-3]):([0-5][0-9])$`)
@@ -171,6 +187,9 @@ func (s BackupSettings) Validate() error {
 	}
 	if len(s.Sites) > 500 {
 		p = append(p, "en fazla 500 site ayarı")
+	}
+	if s.WarnGB < 0 || s.WarnGB > 10000 {
+		p = append(p, "depo boyutu uyarısı 1-10000 GB arasında olmalı")
 	}
 	if len(p) > 0 {
 		return &validationError{p}
@@ -232,11 +251,22 @@ type backupSecret struct {
 	Created  time.Time `json:"created"`
 }
 
-// partLast is a part's last successful backup.
-type partLast struct {
+// BackupLast is a part's last successful backup.
+type BackupLast struct {
 	Time     time.Time `json:"time"`
 	Snapshot string    `json:"snapshot"`
 	Run      string    `json:"run"`
+}
+
+// BackupFailure is something that went wrong and has not been put right since: a part
+// whose last try failed (or saved with a warning), a run that saved nothing, a night
+// that ended with an error.
+type BackupFailure struct {
+	Time time.Time `json:"time"`
+	Err  string    `json:"error"`
+	// Warning: the part was saved, but not everything could be read.
+	Warning bool   `json:"warning,omitempty"`
+	Run     string `json:"run,omitempty"`
 }
 
 // backupState is what the timetable and the panel need between runs.
@@ -250,7 +280,17 @@ type backupState struct {
 	LastCheck   time.Time `json:"last_check,omitempty"`
 	CheckFailed string    `json:"check_failed,omitempty"`
 	// Last is every part's last successful backup, keyed "site/part".
-	Last map[string]partLast `json:"last,omitempty"`
+	Last map[string]BackupLast `json:"last,omitempty"`
+	// Failed is every part whose last try failed or saved with a warning ("site/part"):
+	// its next clean backup strikes it off, the night's tidying the parts of sites that
+	// are gone. RunFailed is the last run that saved nothing for a reason of its own (the
+	// repository unreachable, the disk full), cleared by a run that saves something.
+	// ForgetFailed and PruneFailed are a failed retention or prune, each cleared when it
+	// next runs clean (a failed prune is tried again the next night).
+	Failed       map[string]BackupFailure `json:"failed,omitempty"`
+	RunFailed    *BackupFailure           `json:"run_failed,omitempty"`
+	ForgetFailed *BackupFailure           `json:"forget_failed,omitempty"`
+	PruneFailed  *BackupFailure           `json:"prune_failed,omitempty"`
 	// RepoSize is what the snapshots take in the repository (packed), measured nightly.
 	RepoSize  int64     `json:"repo_size,omitempty"`
 	RepoSized time.Time `json:"repo_sized,omitempty"`
@@ -285,6 +325,8 @@ type Backups struct {
 	// unlocked: stale repository locks were removed since the agent started (a cut-off
 	// run leaves its lock behind). Only jobs touch it, one at a time.
 	unlocked bool
+	// lastAlerts are the alerts last worked out, kept while a file cannot be read.
+	lastAlerts []Alert
 }
 
 func (b *Backups) init() {
@@ -363,7 +405,8 @@ func (b *Backups) SetSettings(s BackupSettings) error {
 }
 
 // Confirm records that the operator keeps the repository password elsewhere: the
-// timetable starts.
+// timetable starts — with an owed night run at once, whatever held back the nights of
+// a repository before.
 func (b *Backups) Confirm() error {
 	b.init()
 	if _, err := b.secret(); err != nil {
@@ -375,6 +418,7 @@ func (b *Backups) Confirm() error {
 		s.Confirmed = b.now().UTC()
 		err = b.saveSettingsLocked(s)
 	}
+	b.nightNotBefore = time.Time{}
 	b.mu.Unlock()
 	b.poke()
 	return err
@@ -394,7 +438,10 @@ func (b *Backups) stateLocked() backupState {
 		_ = json.Unmarshal(data, &st)
 	}
 	if st.Last == nil {
-		st.Last = map[string]partLast{}
+		st.Last = map[string]BackupLast{}
+	}
+	if st.Failed == nil {
+		st.Failed = map[string]BackupFailure{}
 	}
 	return st
 }
@@ -412,6 +459,10 @@ func (b *Backups) updateState(fn func(*backupState)) {
 	defer b.mu.Unlock()
 	st := b.stateLocked()
 	fn(&st)
+	b.saveStateLocked(st)
+}
+
+func (b *Backups) saveStateLocked(st backupState) {
 	data, err := json.MarshalIndent(st, "", "  ")
 	if err == nil {
 		if err = os.MkdirAll(b.Dir, 0o700); err == nil {
@@ -1012,11 +1063,16 @@ type BackupSetup struct {
 	KeyID      string `json:"key_id"`
 	SecretKey  string `json:"secret_key"`
 	Password   string `json:"password,omitempty"`
-	// Current is the password of the repository already set up: replacing it (another
-	// address, another key) takes it, unless root asks (sudo footops backup setup). So a
-	// web process taken over cannot send the backups — the server's secrets among them —
-	// to a bucket of its own.
+	// Current is the password of the repository already set up: replacing it with
+	// another repository takes it, unless root asks (sudo footops backup setup) or it was
+	// never confirmed (the panel may read it until then anyway). So a web process taken
+	// over cannot send the backups — the server's secrets among them — to a bucket of its
+	// own.
 	Current string `json:"current,omitempty"`
+	// Keep connects with the password the server already has: a new key, or a new
+	// address, for the same repository. It needs no Current: the repository there has to
+	// open with that password, which whoever does not know it cannot arrange elsewhere.
+	Keep bool `json:"keep,omitempty"`
 }
 
 // Check validates the request (no network).
@@ -1038,6 +1094,9 @@ func (s *BackupSetup) Check() error {
 		strings.ContainsAny(s.Password, "\r\n\x00")) {
 		p = append(p, "depo şifresi 8-256 karakter olmalı, boşlukla başlayıp bitemez")
 	}
+	if s.Keep && s.Password != "" {
+		p = append(p, "aynı depoya bağlanırken şifre verilmez (sunucudaki kullanılır)")
+	}
 	if len(p) > 0 {
 		return &validationError{p}
 	}
@@ -1055,8 +1114,12 @@ var setupProbe = 3 * time.Minute
 // The password never reaches a step, a log or the job's result.
 func (b *Backups) Setup(ctx context.Context, t *Task, req BackupSetup, root bool) (string, error) {
 	b.init()
-	if err := b.MayReplace(req.Current, root); err != nil {
+	if err := b.MayReplace(req, root); err != nil {
 		return "", err
+	}
+	prev, _ := b.secret()
+	if req.Keep {
+		req.Password = prev.Password
 	}
 	sec := backupSecret{Repository: req.Repository, KeyID: req.KeyID, SecretKey: req.SecretKey,
 		Password: req.Password, Created: b.now().UTC()}
@@ -1094,6 +1157,9 @@ func (b *Backups) Setup(ctx context.Context, t *Task, req BackupSetup, root bool
 		}
 		t.Step("✓ Var olan depo bu şifreyle açıldı")
 	case errors.As(err, &re) && re.Code == 10:
+		if req.Keep {
+			return "", errors.New("bu adreste bu sunucunun deposu yok: adresi kontrol et (başka bir depoya geçmek için: yeni, boş bir depo)")
+		}
 		if !fresh {
 			return "", errors.New("bu adreste yedek deposu yok; yeni bir depo için şifreyi boş bırak")
 		}
@@ -1106,6 +1172,9 @@ func (b *Backups) Setup(ctx context.Context, t *Task, req BackupSetup, root bool
 	case errors.As(err, &re) && re.Code == 12:
 		if fresh {
 			return "", errors.New("bu adreste başka bir şifreyle açılmış bir yedek deposu var; ona bağlanmak için şifresini gir, yeni depo için başka bir kova ya da klasör seç")
+		}
+		if req.Keep {
+			return "", errors.New("bu adresteki depo bu sunucunun şifresiyle açılmıyor: başka bir depo (ona bağlanmak için sunucuda: sudo footops backup setup --existing)")
 		}
 		return "", errors.New("depo şifresi yanlış")
 	default:
@@ -1120,15 +1189,30 @@ func (b *Backups) Setup(ctx context.Context, t *Task, req BackupSetup, root bool
 	if err != nil {
 		s = DefaultBackupSettings()
 	}
-	// A new password has to be seen and saved first; a typed one is already known.
-	s.Confirmed = time.Time{}
-	if !fresh {
-		s.Confirmed = b.now().UTC()
+	same := prev.Password != "" && prev.Password == sec.Password
+	switch {
+	case fresh:
+		s.Confirmed = time.Time{} // a new password has to be seen and saved first
+	case same:
+		// The repository's own password again (a new key or address): known no better than
+		// before — an unconfirmed one was never seen, whoever passed it back.
+	default:
+		s.Confirmed = b.now().UTC() // typed: already known
 	}
 	if err := b.saveSettingsLocked(s); err != nil {
 		return "", err
 	}
+	// The state belongs to the repository: another one starts afresh (its first night
+	// run is owed at once, no old part counts as backed up there), the same one at a
+	// new address keeps it.
+	st := b.stateLocked()
+	if !same {
+		st = backupState{Last: map[string]BackupLast{}, Failed: map[string]BackupFailure{}}
+	}
+	st.Repository = sec.Repository
+	b.saveStateLocked(st)
 	b.unlocked = false
+	b.nightNotBefore = time.Time{} // a retry delay was the old repository's
 	b.poke()
 	return outcome, nil
 }
@@ -1136,17 +1220,25 @@ func (b *Backups) Setup(ctx context.Context, t *Task, req BackupSetup, root bool
 // errReplace refuses replacing a repository without its password.
 var errReplace = errors.New("bu sunucuda kurulu bir yedek deposu var: değiştirmek için şu anki deponun şifresi gerekir (ya da sunucuda: sudo footops backup setup)")
 
-// MayReplace reports whether a setup may go ahead: nothing is set up yet, root asks, or
-// the current repository's password is given.
-func (b *Backups) MayReplace(current string, root bool) error {
+// MayReplace reports whether a setup may go ahead: nothing is set up yet, root asks, the
+// password was never confirmed, the same repository is kept, or the current
+// repository's password is given.
+func (b *Backups) MayReplace(req BackupSetup, root bool) error {
 	sec, err := b.secret()
-	if errors.Is(err, errNoBackup) || root {
+	switch {
+	case req.Keep && errors.Is(err, errNoBackup):
+		return errors.New("bu sunucuda kurulu bir yedek deposu yok: önce depoyu bağla")
+	case req.Keep:
+		return err
+	case errors.Is(err, errNoBackup) || root:
 		return nil
-	}
-	if err != nil {
+	case err != nil:
 		return err
 	}
-	if subtle.ConstantTimeCompare([]byte(current), []byte(sec.Password)) != 1 {
+	if s, err := b.Settings(); err == nil && s.Confirmed.IsZero() {
+		return nil // until it is confirmed the panel may read the password anyway
+	}
+	if subtle.ConstantTimeCompare([]byte(req.Current), []byte(sec.Password)) != 1 {
 		return errReplace
 	}
 	return nil
@@ -1168,14 +1260,24 @@ type BackupStatus struct {
 	Repository string         `json:"repository,omitempty"` // bucket and folder only
 	Settings   BackupSettings `json:"settings"`
 	// Last is every part's last successful backup ("site/part").
-	Last      map[string]partLast `json:"last,omitempty"`
-	NightDone string              `json:"night_done,omitempty"`
-	NextNight time.Time           `json:"next_night,omitempty"`
-	LastPrune time.Time           `json:"last_prune,omitempty"`
-	LastCheck time.Time           `json:"last_check,omitempty"`
-	RepoSize  int64               `json:"repo_size,omitempty"`
-	RepoSized time.Time           `json:"repo_sized,omitempty"`
-	Error     string              `json:"error,omitempty"`
+	Last      map[string]BackupLast `json:"last,omitempty"`
+	NightDone string                `json:"night_done,omitempty"`
+	NextNight time.Time             `json:"next_night,omitempty"`
+	LastPrune time.Time             `json:"last_prune,omitempty"`
+	LastCheck time.Time             `json:"last_check,omitempty"`
+	// CheckFailed is the last weekly check's finding, if it found something.
+	CheckFailed string `json:"check_failed,omitempty"`
+	// Failed, RunFailed, ForgetFailed and PruneFailed are what has not been put right yet
+	// (backupState).
+	Failed       map[string]BackupFailure `json:"failed,omitempty"`
+	RunFailed    *BackupFailure           `json:"run_failed,omitempty"`
+	ForgetFailed *BackupFailure           `json:"forget_failed,omitempty"`
+	PruneFailed  *BackupFailure           `json:"prune_failed,omitempty"`
+	RepoSize     int64                    `json:"repo_size,omitempty"`
+	RepoSized    time.Time                `json:"repo_sized,omitempty"`
+	// Running is the backup job under way, if one is (without its steps).
+	Running *Job   `json:"running,omitempty"`
+	Error   string `json:"error,omitempty"`
 }
 
 // Status summarises the backups.
@@ -1194,7 +1296,15 @@ func (b *Backups) Status() BackupStatus {
 	}
 	state := b.state()
 	st.Last, st.NightDone, st.LastPrune, st.LastCheck = state.Last, state.NightDone, state.LastPrune, state.LastCheck
+	st.CheckFailed, st.Failed, st.RunFailed = state.CheckFailed, state.Failed, state.RunFailed
+	st.ForgetFailed, st.PruneFailed = state.ForgetFailed, state.PruneFailed
 	st.RepoSize, st.RepoSized = state.RepoSize, state.RepoSized
+	if b.Jobs != nil {
+		if j, ok := b.Jobs.Running(); ok && strings.HasPrefix(j.Kind, "backup.") {
+			j.Steps = nil
+			st.Running = &j
+		}
+	}
 	if st.Configured && !s.Confirmed.IsZero() && !s.Paused {
 		now := b.now().In(b.location())
 		next := s.nightAt(now)
@@ -1207,7 +1317,7 @@ func (b *Backups) Status() BackupStatus {
 }
 
 // sortedSites returns the sites in the keys of the "site/part" map's sites, in order.
-func sortedSites(last map[string]partLast) []string {
+func sortedSites(last map[string]BackupLast) []string {
 	seen := map[string]bool{}
 	for k := range last {
 		if site, _, ok := strings.Cut(k, "/"); ok {

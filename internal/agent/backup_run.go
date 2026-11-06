@@ -77,15 +77,19 @@ type BackupRun struct {
 	Started  time.Time    `json:"started"`
 	Finished time.Time    `json:"finished"`
 	Parts    []BackupPart `json:"parts"`
-	// Removed is how many snapshots retention removed; Pruned / Checked tell the
-	// weekly maintenance ran (Checked holds a failed check's message).
-	Removed  int       `json:"removed,omitempty"`
-	Pruned   bool      `json:"pruned,omitempty"`
-	Checked  bool      `json:"checked,omitempty"`
-	CheckErr string    `json:"check_error,omitempty"`
-	RepoSize int64     `json:"repo_size,omitempty"`
-	Err      string    `json:"error,omitempty"`
-	Usage    run.Usage `json:"usage"`
+	// Removed is how many snapshots retention removed (Forgot: it ran clean, ForgetErr:
+	// it failed); Pruned / Checked tell the weekly maintenance ran to its end (PruneErr,
+	// CheckErr: what went wrong).
+	Removed   int       `json:"removed,omitempty"`
+	Forgot    bool      `json:"forgot,omitempty"`
+	ForgetErr string    `json:"forget_error,omitempty"`
+	Pruned    bool      `json:"pruned,omitempty"`
+	PruneErr  string    `json:"prune_error,omitempty"`
+	Checked   bool      `json:"checked,omitempty"`
+	CheckErr  string    `json:"check_error,omitempty"`
+	RepoSize  int64     `json:"repo_size,omitempty"`
+	Err       string    `json:"error,omitempty"`
+	Usage     run.Usage `json:"usage"`
 }
 
 // runPlan is what one run does.
@@ -185,8 +189,9 @@ func (b *Backups) Plan(kind, site string, now time.Time) (runPlan, error) {
 	case RunDaily:
 		p.Night = local
 		p.Server, p.Forget, p.Stats = true, true, true
+		// Weekly; a failed prune or a check that never finished is tried again the next night.
 		st := b.state()
-		p.Maintain = weekly || now.Sub(st.LastPrune) >= pruneEvery
+		p.Maintain = weekly || now.Sub(st.LastPrune) >= pruneEvery || now.Sub(st.LastCheck) >= pruneEvery || st.PruneFailed != nil
 	case RunManual:
 		p.Server = site == ""
 	}
@@ -308,11 +313,15 @@ func (b *Backups) Run(ctx context.Context, t *Task, p runPlan, actor Actor) (rec
 		case errors.Is(err, errFuture):
 			t.Step("⚠ " + err.Error())
 			failed = append(failed, err.Error())
+			rec.ForgetErr = err.Error()
 		case err != nil:
 			if ctx.Err() != nil || isFatal(err) {
 				return rec, err
 			}
 			failed = append(failed, "saklama kuralı: "+err.Error())
+			rec.ForgetErr = clipMsg("saklama kuralı: "+err.Error(), 1000)
+		default:
+			rec.Forgot = true
 		}
 		rec.Removed = n
 	}
@@ -359,20 +368,65 @@ func partName(p string) string {
 	return p
 }
 
-// recordState keeps each part's last success, and which night ran. A night run that
-// backed up nothing, or stopped because the repository could not be used, is tried
-// again in an hour; one that was cancelled or ran out of time is not (the operator
-// stopped it, or the next try would end the same way).
+// recordState keeps each part's last success, what failed (for the alerts), and which
+// night ran. A night run that backed up nothing, or stopped because the repository could
+// not be used, is tried again in an hour; one that was cancelled or ran out of time is
+// not (the operator stopped it, or the next try would end the same way). A cancel is
+// no failure: what it cut short keeps its earlier state.
 func (b *Backups) recordState(p runPlan, rec BackupRun, repo string, runErr error) {
+	cancelled := errors.Is(runErr, context.Canceled)
+	var current map[string]bool // the sites there are, for the night's tidying
+	if p.Kind == RunDaily {
+		if all, err := b.Data.Store.List(); err == nil {
+			current = map[string]bool{serverPart: true}
+			for _, sp := range all {
+				current[sp.Name] = true
+			}
+		}
+	}
 	b.updateState(func(st *backupState) {
 		if repo != "" && st.Repository != repo {
-			*st = backupState{Repository: repo, Last: map[string]partLast{}}
+			*st = backupState{Repository: repo, Last: map[string]BackupLast{}, Failed: map[string]BackupFailure{}}
 		}
 		saved := false
 		for _, bp := range rec.Parts {
-			if bp.Snapshot != "" {
-				st.Last[bp.Site+"/"+bp.Part] = partLast{Time: rec.Started, Snapshot: bp.Snapshot, Run: rec.ID}
+			key := bp.Site + "/" + bp.Part
+			switch {
+			case bp.Snapshot != "":
+				st.Last[key] = BackupLast{Time: rec.Started, Snapshot: bp.Snapshot, Run: rec.ID}
 				saved = true
+				if bp.Warning != "" {
+					st.Failed[key] = BackupFailure{Time: rec.Started, Err: bp.Warning, Warning: true, Run: rec.ID}
+				} else {
+					delete(st.Failed, key)
+				}
+			case bp.Err != "" && !(cancelled && strings.Contains(bp.Err, context.Canceled.Error())):
+				// Only the part the cancel cut short is no failure.
+				st.Failed[key] = BackupFailure{Time: rec.Finished, Err: bp.Err, Run: rec.ID}
+			}
+		}
+		switch {
+		case saved:
+			st.RunFailed = nil
+		case runErr != nil && !cancelled && (len(rec.Parts) == 0 || isFatal(runErr)):
+			st.RunFailed = &BackupFailure{Time: rec.Finished, Err: clipMsg(runErr.Error(), 1000), Run: rec.ID}
+		}
+		switch {
+		case rec.ForgetErr != "":
+			st.ForgetFailed = &BackupFailure{Time: rec.Finished, Err: rec.ForgetErr, Run: rec.ID}
+		case rec.Forgot:
+			st.ForgetFailed = nil
+		}
+		switch {
+		case rec.PruneErr != "":
+			st.PruneFailed = &BackupFailure{Time: rec.Finished, Err: rec.PruneErr, Run: rec.ID}
+		case rec.Pruned:
+			st.PruneFailed = nil
+		}
+		// Failures of sites that are gone are forgotten (their last backups stay).
+		for key := range st.Failed {
+			if site, _, _ := strings.Cut(key, "/"); current != nil && !current[site] {
+				delete(st.Failed, key)
 			}
 		}
 		if p.Kind == RunDaily {
@@ -440,6 +494,9 @@ func warnText(w string) string {
 
 func (b *Backups) failPart(t *Task, bp *BackupPart, err error) error {
 	bp.Err = clipMsg(err.Error(), 1000)
+	if errors.Is(err, context.DeadlineExceeded) {
+		bp.Err = "süre doldu: yedek işi zaman sınırını aştı"
+	}
 	t.Step(fmt.Sprintf("✗ %s · %s: %s", bp.Site, partName(bp.Part), bp.Err))
 	return err
 }
@@ -879,20 +936,25 @@ func (b *Backups) futureSnapshot(ctx context.Context, t *Task, env *resticEnv) (
 func (b *Backups) maintain(ctx context.Context, t *Task, env *resticEnv, rec *BackupRun) error {
 	start := b.now()
 	if _, err := b.restic(ctx, t, env, resticOpts{out: io.Discard}, "prune", "--max-unused", "10%"); err != nil {
+		if ctx.Err() == nil && !isFatal(err) {
+			rec.PruneErr = clipMsg("depo temizliği (prune): "+err.Error(), 1000)
+		}
 		return fmt.Errorf("depo temizliği (prune): %w", err)
 	}
 	rec.Pruned = true
 	t.Step("✓ Depo temizlendi (prune, " + took(b.now().Sub(start)) + ")")
 	start = b.now()
+	// Only a check that ran to its end counts, clean or not: one cut short (cancel, the
+	// job's deadline, the repository gone) must not clear an earlier finding.
 	_, err := b.restic(ctx, t, env, resticOpts{out: io.Discard}, "check", "--read-data-subset", "5%")
-	rec.Checked = true
 	if err != nil {
 		if ctx.Err() != nil || isFatal(err) {
 			return err
 		}
-		rec.CheckErr = clipMsg(err.Error(), 1000)
+		rec.Checked, rec.CheckErr = true, clipMsg(err.Error(), 1000)
 		return fmt.Errorf("depo denetimi (check) sorun buldu: %w", err)
 	}
+	rec.Checked = true
 	t.Step("✓ Depo denetlendi (check, verinin %5'i okundu, " + took(b.now().Sub(start)) + ")")
 	return nil
 }
@@ -985,7 +1047,7 @@ func (b *Backups) Runs(site string, limit int) ([]BackupRun, error) {
 			continue
 		}
 		if site != "" {
-			keep := false
+			keep := r.Site == site // its own run, even one that never reached a part
 			for _, p := range r.Parts {
 				keep = keep || p.Site == site
 			}

@@ -1,0 +1,33 @@
+{{template "top" .}}
+{{$f := .Data.F}}{{$st := .Data.St}}
+<a class="crumb" href="/backup">{{icon "back"}}Yedekleme</a>
+<div class="page-head">
+  <div>
+    <h1>Yedek deposunu değiştir</h1>
+    <p class="sub">Şu an: <span class="mono">{{$st.Repository}}</span>. Anahtarı yenilediysen ya da yeni, boş bir depoya geçeceksen.</p>
+  </div>
+</div>
+{{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>Yedek durumu alınamadı: {{.}}</div></div>{{end}}
+{{template "problems" .Data.Problems}}
+<form method="post" action="/backup/setup" class="card stack">
+  <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+  <div class="choices" role="radiogroup" aria-label="Ne değişiyor">
+    <label class="choice"><input type="radio" name="mode" value="same"{{if ne $f.Mode "new"}} checked{{end}}>
+      <span><strong>Aynı depo, yeni anahtar ya da adres</strong><br><span class="muted small">R2 anahtarını yenilediysen. Yedekler ve şifre aynı kalır; depo sunucudaki şifreyle açılmalı (şifre yazılmaz).</span></span></label>
+    <label class="choice"><input type="radio" name="mode" value="new"{{if eq $f.Mode "new"}} checked{{end}}>
+      <span><strong>Yeni, boş bir depo</strong><br><span class="muted small">Başka bir kova ya da klasör. Yeni şifre üretilir ve onaylanana kadar yedek alınmaz; yedekler baştan başlar. Eski depo ve içindeki yedekler silinmez.</span></span></label>
+  </div>
+  {{template "repoFields" .Data}}
+  {{if not $st.Settings.Confirmed.IsZero}}
+  <label class="field"><span>Şu anki deponun şifresi (yalnız yeni depoya geçerken)</span>
+    <input type="password" name="current" class="mono" autocomplete="off" spellcheck="false">
+    <span class="hint">Yedeklerin (sunucunun sırları dahil) başka bir yere yönlendirilmesine karşı. Kaydettiğin yerde yoksa sunucuda: <span class="mono">sudo footops backup show-key</span></span>
+  </label>
+  {{end}}
+  <p class="hint">Kendi şifresi olan başka bir var olan depoya geçmek için sunucuda: <span class="mono">sudo footops backup setup --existing</span></p>
+  <div class="form-actions">
+    <button type="submit" class="primary">{{icon "link"}}Bağlan ve dene</button>
+    <a class="btn" href="/backup">Vazgeç</a>
+  </div>
+</form>
+{{template "bottom" .}}

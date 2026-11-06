@@ -59,7 +59,7 @@ func (s *Server) backupSetup(w http.ResponseWriter, r *http.Request) {
 	label := repoLabel(setup.Repository)
 	uid, _ := r.Context().Value(keyUID).(uint32)
 	root := uid == 0
-	if err := s.Backups.MayReplace(setup.Current, root); err != nil {
+	if err := s.Backups.MayReplace(setup, root); err != nil {
 		s.record(AuditEntry{Actor: req.Actor, Action: "backup.setup", Target: label}, err)
 		writeErr(w, http.StatusForbidden, err.Error())
 		return

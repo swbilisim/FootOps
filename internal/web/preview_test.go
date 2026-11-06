@@ -146,8 +146,24 @@ func (p *previewAgent) Snapshots(_ context.Context, site string) ([]agent.Snapsh
 	return out, nil
 }
 
-// Job shows a database copy: /jobs/running (with progress and cancel) or /jobs/done.
+// Job shows a database copy: /jobs/running (with progress and cancel) or /jobs/done;
+// /jobs/backup a night run, /jobs/backupsetup a new repository.
 func (p *previewAgent) Job(_ context.Context, id string) (agent.Job, error) {
+	switch id {
+	case "backup":
+		return agent.Job{ID: id, Kind: "backup.run", Target: "gece yedeği", Started: time.Now().Add(-74 * time.Second), Finished: time.Now(), Done: true,
+			Err:   "1 işlem başarısız: kurumsal (veritabanı): mongodump başarısız, yedek alınmadı: Failed: can't create session: connection refused",
+			Usage: run.Usage{PeakMem: 174 << 20, CPU: 21 * time.Second},
+			Steps: []string{"… yedek deposu: footops-h1 · sınır: 512 MB bellek, %50 CPU",
+				"✓ magaza · veritabanı: 3 koleksiyon, 3401 belge (4.0 MB döküm) → depoya 310.0 KB eklendi (3.2 sn, en çok 81.0 MB bellek)",
+				"✓ magaza · dosyalar: 1240 dosya, 356.0 MB (yeni 3, değişen 0) → depoya 2.0 MB eklendi (4.1 sn, en çok 81.0 MB bellek)",
+				"✗ kurumsal · veritabanı: mongodump başarısız, yedek alınmadı: Failed: can't create session: connection refused",
+				"✓ Saklama kuralı uygulandı: 14 eski anlık görüntü silindi", "✓ Depoda yedeklerin kapladığı: 6.7 GB"}}, nil
+	case "backupsetup":
+		return agent.Job{ID: id, Kind: "backup.setup", Target: "footops-h1", Started: time.Now().Add(-6 * time.Second), Finished: time.Now(), Done: true, Result: "created",
+			Steps: []string{"✓ restic 0.19.1 hazır (özet doğrulandı)", "… yedek deposu deneniyor: footops-h1", "… depo yok, yeni depo oluşturuluyor",
+				"✓ Yeni depo oluşturuldu (şifreli; şifre panelde bir kez gösterilir)"}}, nil
+	}
 	j := agent.Job{ID: id, Kind: "db.snapshot", Target: "magaza", Cancellable: true, Started: time.Now().Add(-4 * time.Second),
 		Steps: []string{"✓ Veritabanı magaza: 10 koleksiyon, 89 belge, 41.2 KB veri", "… mongodump çalışıyor (sınır: 512 MB bellek, %50 CPU)"}, Bytes: 3 << 20}
 	if id == "import" {
@@ -350,7 +366,100 @@ func (p *previewAgent) Alerts(context.Context) ([]agent.Alert, error) {
 		{Key: "down:blog", Level: "bad", Title: "blog sürekli yeniden başlıyor", Detail: "Uygulama açılırken çöküyor; loglara bak.", Link: "/containers/blog/logs", Since: time.Now().Add(-4 * time.Minute)},
 		{Key: "disk", Level: "warn", Title: "Disk %82 dolu", Detail: "Eski imajlar, loglar ve yedekler yer kaplıyor olabilir.", Link: "/", Since: time.Now().Add(-3 * time.Hour)},
 		{Key: "cert:fedcba9876543210", Level: "warn", Title: "blog.example.org sertifikasının bitmesine 12 gün var", Link: "/certs", Since: time.Now().Add(-26 * time.Hour)},
+		{Key: "backup:failed", Level: "bad", Title: "Yedek alınamadı: kurumsal (veritabanı)", Detail: "mongodump başarısız, yedek alınmadı: Failed: can't create session: connection refused", Link: "/backup", Since: time.Now().Add(-8 * time.Hour)},
+		{Key: "backup:partial", Level: "warn", Title: "Bazı dosyalar yedeklenemedi: blog (dosyalar)", Detail: "bazı dosyalar okunamadı: open /footops/blog/files/cache/oturum-1: permission denied", Link: "/backup", Since: time.Now().Add(-8 * time.Hour)},
 	}, nil
+}
+
+// previewBackup is the backup page's state: setup, key (the password shown), ready or
+// running; /dev-backup?s=… switches it.
+var previewBackup = "ready"
+
+const previewKey = "Xq7pV2mK9tR4wZ8nB3cH6jL1sD5fG0yA2eU7iO4k"
+
+func (p *previewAgent) BackupStatus(context.Context) (agent.BackupStatus, error) {
+	s := agent.DefaultBackupSettings()
+	s.Sites = map[string]agent.BackupPolicy{"magaza": {DB: agent.DBHourly}, "kurumsal": {Freeze: true, KeepDays: 90},
+		"haber": {Off: true}, "buyuksehir-belediyesi-kultur-mrk": {DB: agent.DB6h, Files: agent.FilesWeekly}}
+	switch previewBackup {
+	case "setup":
+		return agent.BackupStatus{Settings: s}, nil
+	case "key":
+		return agent.BackupStatus{Configured: true, Repository: "footops-h1", Settings: s}, nil
+	}
+	now := time.Now()
+	s.Confirmed = now.Add(-9 * 24 * time.Hour)
+	night := time.Date(now.Year(), now.Month(), now.Day(), 4, 0, 0, 0, time.Local)
+	if night.After(now) {
+		night = night.AddDate(0, 0, -1)
+	}
+	st := agent.BackupStatus{Configured: true, Repository: "footops-h1", Settings: s, NightDone: night.Format("2006-01-02"),
+		NextNight: night.AddDate(0, 0, 1), LastPrune: night.AddDate(0, 0, -3), LastCheck: night.AddDate(0, 0, -3),
+		RepoSize: 6900 << 20, RepoSized: night.Add(3 * time.Minute), Last: map[string]agent.BackupLast{}}
+	sites, _ := p.Sites(context.Background())
+	for _, ss := range sites {
+		if ss.Spec.Name == "haber" {
+			for _, part := range []string{"db", "files", "def"} {
+				st.Last["haber/"+part] = agent.BackupLast{Time: night.AddDate(0, 0, -12)}
+			}
+			continue
+		}
+		st.Last[ss.Spec.Name+"/def"] = agent.BackupLast{Time: night}
+		if ss.Spec.Database && ss.Spec.Name != "kurumsal" {
+			st.Last[ss.Spec.Name+"/db"] = agent.BackupLast{Time: night}
+		}
+		if ss.Spec.DataMount != "" {
+			st.Last[ss.Spec.Name+"/files"] = agent.BackupLast{Time: night}
+		}
+	}
+	st.Last["magaza/db"] = agent.BackupLast{Time: now.Add(-25 * time.Minute)}
+	st.Last["_server/server"] = agent.BackupLast{Time: night}
+	st.Failed = map[string]agent.BackupFailure{
+		"kurumsal/db": {Time: night, Err: "mongodump başarısız, yedek alınmadı: Failed: can't create session: connection refused"},
+		"blog/files":  {Time: night, Err: "bazı dosyalar okunamadı: open /footops/blog/files/cache/oturum-1: permission denied", Warning: true},
+	}
+	if previewBackup == "running" {
+		st.Running = &agent.Job{ID: "running", Kind: "backup.run", Target: "saatlik yedek: magaza", Started: now.Add(-6 * time.Second)}
+	}
+	return st, nil
+}
+
+func (p *previewAgent) BackupRuns(_ context.Context, site string, limit int) ([]agent.BackupRun, error) {
+	now := time.Now()
+	night := time.Date(now.Year(), now.Month(), now.Day(), 4, 0, 0, 0, time.Local)
+	if night.After(now) {
+		night = night.AddDate(0, 0, -1)
+	}
+	use := run.Usage{PeakMem: 81 << 20}
+	nightParts := []agent.BackupPart{
+		{Site: "magaza", Part: "db", Snapshot: "a1", Collections: map[string]int64{"orders": 1, "products": 2, "users": 3}, Documents: 3401, Bytes: 4 << 20, AddedPacked: 310 << 10, Took: 3200 * time.Millisecond, Usage: use},
+		{Site: "magaza", Part: "files", Snapshot: "a2", Files: 1240, Bytes: 356 << 20, AddedPacked: 2 << 20, Took: 4100 * time.Millisecond, Usage: use},
+		{Site: "magaza", Part: "def", Snapshot: "a3", Files: 2, Bytes: 3 << 10, AddedPacked: 900, Took: 800 * time.Millisecond, Usage: use},
+		{Site: "blog", Part: "files", Snapshot: "a4", Files: 88, Bytes: 12 << 20, Warning: "bazı dosyalar okunamadı: open /footops/blog/files/cache/oturum-1: permission denied", Took: 1200 * time.Millisecond, Usage: use},
+		{Site: "kurumsal", Part: "db", Err: "mongodump başarısız, yedek alınmadı: Failed: can't create session: connection refused", Took: 900 * time.Millisecond},
+		{Site: "_server", Part: "server", Snapshot: "a5", Files: 41, Bytes: 180 << 10, AddedPacked: 2 << 10, Took: 900 * time.Millisecond, Usage: use},
+	}
+	all := []agent.BackupRun{
+		{ID: "h3", Kind: agent.RunHourly, Started: now.Add(-25 * time.Minute), Finished: now.Add(-25*time.Minute + 4*time.Second),
+			Parts: []agent.BackupPart{{Site: "magaza", Part: "db", Snapshot: "b1", Collections: map[string]int64{"orders": 1}, Documents: 3402, Bytes: 4 << 20, AddedPacked: 120 << 10, Took: 3 * time.Second, Usage: use}}},
+		{ID: "m1", Kind: agent.RunManual, Actor: "admin", Started: now.Add(-3 * time.Hour), Finished: now.Add(-3*time.Hour + 9*time.Second),
+			Parts: []agent.BackupPart{{Site: "magaza", Part: "db", Snapshot: "c1", Collections: map[string]int64{"orders": 1}, Documents: 3399, Bytes: 4 << 20, AddedPacked: 98 << 10, Took: 3 * time.Second, Usage: use}}},
+		{ID: "n1", Kind: agent.RunDaily, Started: night, Finished: night.Add(74 * time.Second), Parts: nightParts, Removed: 14, RepoSize: 6900 << 20,
+			Err: "2 işlem başarısız: kurumsal (veritabanı): mongodump başarısız, yedek alınmadı: Failed: can't create session: connection refused"},
+		{ID: "x1", Kind: agent.RunManual, Actor: "admin", Started: night.Add(-5 * time.Hour), Finished: night.Add(-5*time.Hour + 40*time.Second), Err: "context canceled",
+			Parts: []agent.BackupPart{{Site: "magaza", Part: "db", Snapshot: "d1", Documents: 3390, Bytes: 4 << 20, Took: 3 * time.Second, Usage: use}}},
+		{ID: "n0", Kind: agent.RunDaily, Started: night.AddDate(0, 0, -1), Finished: night.AddDate(0, 0, -1).Add(66 * time.Second), Parts: nightParts[:3], Pruned: true, Checked: true, RepoSize: 6800 << 20},
+	}
+	var out []agent.BackupRun
+	for _, r := range all {
+		for _, part := range r.Parts {
+			if site == "" || part.Site == site {
+				out = append(out, r)
+				break
+			}
+		}
+	}
+	return out, nil
 }
 
 // previewSource is a connected source server; /sources also lists one not connected yet.
@@ -470,6 +579,18 @@ func TestPreview(t *testing.T) {
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.ServeHTTP(frameable{w}, r)
 	}))
+	// /dev-backup?s=setup|key|ready|running switches the backup page's state.
+	mux.HandleFunc("/dev-backup", func(w http.ResponseWriter, r *http.Request) {
+		previewBackup = r.URL.Query().Get("s")
+		if previewBackup == "key" {
+			http.Redirect(w, r, "/dev-backup-key", http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, "/backup", http.StatusSeeOther)
+	})
+	mux.Handle("/dev-backup-key", s.localGate(s.requireSession(func(w http.ResponseWriter, r *http.Request) {
+		s.renderBackup(frameable{w}, r, http.StatusOK, map[string]any{"Key": previewKey})
+	})))
 	t.Log("http://localhost:7799/dev-login")
 	t.Fatal(http.ListenAndServe("127.0.0.1:7799", mux))
 }

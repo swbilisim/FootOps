@@ -1,0 +1,269 @@
+{{template "top" .}}
+{{$st := .Data.St}}{{$set := $st.Settings}}
+<div class="page-head">
+  <div>
+    <h1>Yedekleme</h1>
+    <p class="sub">Siteler (veritabanı, kalıcı klasör, tanım) ve sunucunun ayarları bir S3 deposuna, sunucudan çıkmadan şifrelenerek yedeklenir; her seferinde yalnız değişen eklenir.</p>
+  </div>
+  {{if .Data.Ready}}
+  <div class="page-actions">
+    {{template "live"}}
+    <form method="post" action="/backup/run">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <button type="submit" class="btn primary">{{icon "backup"}}Şimdi yedekle</button>
+    </form>
+  </div>
+  {{end}}
+</div>
+{{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>Yedek durumu alınamadı: {{.}}</div></div>{{end}}
+
+{{if not .Data.Err}}
+<div data-live-id="backup-alerts">
+{{with backupAlerts .Alerts.List}}
+<ul class="alerts">
+  {{range .}}
+  <li class="{{.Level}}">{{icon "alert"}}<div><strong>{{.Title}}</strong>{{with .Detail}}<span class="detail">{{.}}</span>{{end}}</div><span class="when">{{since .Since}}</span></li>
+  {{end}}
+</ul>
+{{end}}
+</div>
+{{with $st.Error}}<div class="notice bad">{{icon "alert"}}<div>Yedek ayarlarında sorun var: {{.}}<br>Sunucuda düzeltmek için: <span class="mono">sudo footops backup setup</span> (depoyu yeniden bağlar).</div></div>{{end}}
+{{template "backupRunning" $st.Running}}
+
+{{if not $st.Configured}}
+{{/* ---- 1. no repository yet ---- */}}
+<div class="card">
+  <h2>Nasıl çalışır</h2>
+  <ul>
+    <li>Her gece (saat {{$set.Night}}) her sitenin <strong>veritabanı, kalıcı klasörü ve tanımı</strong> (ortam değişkenleri dahil) ve sunucunun kendi ayarları (sertifikalar, panel girişi) yedeklenir. Sık değişen veritabanları saatlik de yedeklenebilir.</li>
+    <li>Yedekler <strong>restic</strong> ile sunucudan çıkmadan şifrelenir; şifreyi yalnız sen bilirsin. Panelin yanında restic'le bilgisayarında da açılabilir.</li>
+    <li>Saklama: son {{$set.Defaults.KeepHours}} saatin saatlik, {{$set.Defaults.KeepDays}} günün günlük, {{$set.Defaults.KeepMonths}} ayın aylık yedekleri. Hepsi site bazında değiştirilebilir.</li>
+    <li>Gereken: yalnız bu sunucuya ayrılmış boş bir kova (ör. Cloudflare R2) ve yalnız o kovaya okuma-yazma izni olan bir anahtar.</li>
+  </ul>
+</div>
+<div class="section-head" id="kur"><h2>Depoyu bağla</h2></div>
+{{template "problems" .Data.Problems}}
+<form method="post" action="/backup/setup" class="card stack">
+  <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+  {{template "repoFields" .Data}}
+  <details class="more"{{if .Data.Problems}} open{{end}}>
+    <summary>Var olan bir depoya bağlan (sunucuyu yeniden kurduysan)</summary>
+    <label class="field"><span>Deponun şifresi</span>
+      <input type="password" name="password" class="mono" autocomplete="off" spellcheck="false">
+      <span class="hint">Boş bırakırsan bu kovada yeni bir depo oluşturulur ve şifresi üretilir (önerilen). Bu sunucunun eski yedeklerine yeniden bağlanıyorsan o deponun şifresini yaz.</span>
+    </label>
+  </details>
+  <div class="form-actions">
+    <button type="submit" class="primary">{{icon "link"}}Bağlan ve dene</button>
+  </div>
+</form>
+<p class="muted small mt">Site ayarlarını (saatlik veritabanı, dondurarak yedekleme) kurulumdan önce de yapabilirsin: aşağıdaki listeden.</p>
+{{template "backupSites" .}}
+
+{{else if $set.Confirmed.IsZero}}
+{{/* ---- 2. repository connected, password not confirmed ---- */}}
+<div class="section-head" id="sifre"><h2>Depo şifresini kaydet</h2></div>
+{{template "problems" .Data.Problems}}
+<div class="card stack">
+  <p>Depo <span class="mono">{{$st.Repository}}</span> bağlandı. Yedekler bu şifreyle şifrelenir: <strong>şifre olmadan yedekler açılamaz</strong>, sunucu kaybolursa siteler yalnız bu şifreyle geri gelir. Onaylayana kadar burada görünür ve <strong>yedek alınmaz</strong>; onaydan sonra panel bir daha göstermez (sunucuda: <span class="mono">sudo footops backup show-key</span>).</p>
+  {{with .Data.Key}}
+  <pre class="cmd secret" aria-label="Depo şifresi">{{.}}</pre>
+  <ol class="steps">
+    <li>Şifreye bir kez tıkla (hepsi seçilir) ve kopyala.</li>
+    <li>Parola yöneticine kaydet. Parola yöneticin <strong>bu sunucuda</strong> çalışıyorsa yetmez: sunucu giderse o da gider.</li>
+    <li>İkinci bir yere de kaydet (ör. bilgisayarının anahtar zinciri ya da kağıt).</li>
+  </ol>
+  <form method="post" action="/backup/confirm" class="stack">
+    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+    <label class="check"><input type="checkbox" name="saved" required> <span>Şifreyi iki ayrı yere kaydettim.</span></label>
+    <div class="form-actions"><button type="submit" class="primary">{{icon "check"}}Onayla, yedeklemeyi başlat</button></div>
+  </form>
+  {{else}}
+  <form method="post" action="/backup/key">
+    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+    <div class="form-actions"><button type="submit" class="primary">{{icon "key"}}Şifreyi göster</button></div>
+  </form>
+  {{end}}
+</div>
+<p class="muted small mt">Onaylamadan önce sitelerin ayarlarına bak: onayladığında, gece saati geçmişse ilk yedek birkaç dakika içinde başlar. Veritabanını dosyada tutan uygulamalar (SQLite) için “dondurarak yedekle”yi aç. Yanlış kova mı? <a href="/backup/repo">Depoyu değiştir…</a></p>
+{{template "backupSites" .}}
+
+{{else}}
+{{/* ---- 3. backing up ---- */}}
+{{if $set.Paused}}
+<div class="notice warn">{{icon "pause"}}<div><strong>Zamanlanmış yedekleme duraklatıldı.</strong> Gece ve saatlik yedekler alınmıyor; “Şimdi yedekle” çalışır.
+  <form method="post" action="/backup/pause" class="mt">
+    <input type="hidden" name="csrf" value="{{.Session.CSRF}}"><input type="hidden" name="paused" value="off">
+    <button type="submit" class="btn sm">{{icon "play"}}Sürdür</button>
+  </form></div></div>
+{{end}}
+
+<section class="stats three" aria-label="Yedek durumu" data-live-id="backup-cards">
+  <div class="card stat">
+    <div class="label">{{icon "backup"}}Depoda</div>
+    <div class="value">{{if $st.RepoSize}}{{bytes $st.RepoSize}}{{else}}—{{end}}</div>
+    {{meter .Data.UsePct}}
+    <div class="foot">uyarı eşiği {{.Data.WarnGB}} GB{{if $st.RepoSize}} · ölçüm {{since $st.RepoSized}}{{else}} · ilk gece yedeğinde ölçülür{{end}}</div>
+  </div>
+  <div class="card stat">
+    <div class="label">{{icon "clock"}}Gece yedeği</div>
+    <div class="value">{{$set.Night}}</div>
+    <div class="foot">{{if $set.Paused}}duraklatıldı{{else if not $st.NextNight.IsZero}}sonraki {{when $st.NextNight}}{{end}}{{with $st.NightDone}} · son {{day .}}{{end}}</div>
+  </div>
+  <div class="card stat">
+    <div class="label">{{icon "shield"}}Depo denetimi</div>
+    <div class="value">{{if $st.LastCheck.IsZero}}—{{else if $st.CheckFailed}}sorun var{{else}}temiz{{end}}</div>
+    <div class="foot">{{if $st.LastCheck.IsZero}}haftada bir, pazar gecesi{{else}}{{since $st.LastCheck}}{{end}}{{if not $st.LastPrune.IsZero}} · temizlik {{since $st.LastPrune}}{{end}}</div>
+  </div>
+</section>
+
+{{template "backupSites" .}}
+
+<div class="section-head"><h2>Son yedekler</h2></div>
+{{template "backupRuns" .Data}}
+
+<div class="section-head" id="ayarlar"><h2>Genel ayarlar</h2></div>
+{{template "problems" .Data.SettingsProblems}}
+{{$g := .Data.G}}
+<form method="post" action="/backup/settings" class="card stack">
+  <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+  <div class="row">
+    <label class="field"><span>Gece yedeği saati</span>
+      <input type="time" name="night" value="{{$g.Night}}" required>
+      <span class="hint">Sunucunun saatiyle. Saatlik yedekler her saatin aynı dakikasında.</span>
+    </label>
+    <label class="field"><span>Veritabanı</span>
+      <select name="db">
+        <option value="daily"{{if eq $g.DB "daily"}} selected{{end}}>günlük</option>
+        <option value="6h"{{if eq $g.DB "6h"}} selected{{end}}>6 saatte bir</option>
+        <option value="hourly"{{if eq $g.DB "hourly"}} selected{{end}}>saatlik</option>
+      </select>
+      <span class="hint">Kendi ayarı olmayan siteler için.</span>
+    </label>
+    <label class="field"><span>Dosyalar (kalıcı klasör)</span>
+      <select name="files">
+        <option value="daily"{{if eq $g.Files "daily"}} selected{{end}}>günlük</option>
+        <option value="weekly"{{if eq $g.Files "weekly"}} selected{{end}}>haftalık (pazar gecesi)</option>
+        <option value="off"{{if eq $g.Files "off"}} selected{{end}}>kapalı</option>
+      </select>
+    </label>
+  </div>
+  <fieldset>
+    <legend>Saklama</legend>
+    <div class="row">
+      <label class="field"><span>Saatlik yedekler (saat)</span><input type="number" name="keep_hours" min="1" max="744" value="{{$g.KeepHours}}" required></label>
+      <label class="field"><span>Günlük yedekler (gün)</span><input type="number" name="keep_days" min="1" max="732" value="{{$g.KeepDays}}" required></label>
+      <label class="field"><span>Aylık yedekler (ay)</span><input type="number" name="keep_months" min="1" max="120" value="{{$g.KeepMonths}}" required></label>
+    </div>
+    <p class="hint">Her parçanın en yeni yedeğinden geriye sayılır: kapatılan ya da durdurulan bir sitenin son yedekleri zamanla silinmez.</p>
+  </fieldset>
+  <div class="row">
+    <label class="field"><span>Depo boyutu uyarısı (GB)</span>
+      <input type="number" name="warn_gb" min="1" max="10000" value="{{$g.WarnGB}}" required>
+      <span class="hint">Aşınca uyarı verilir. Cloudflare R2'nin ücretsiz katmanı hesap başına 10 GB: aynı hesaptaki sunucular onu paylaşır.</span>
+    </label>
+  </div>
+  <label class="check"><input type="checkbox" name="paused"{{if $g.Paused}} checked{{end}}> <span>Zamanlanmış yedeklemeyi duraklat</span></label>
+  <div class="form-actions"><button type="submit" class="primary">{{icon "check"}}Kaydet</button></div>
+</form>
+
+<div class="section-head"><h2>Depo</h2><a class="btn sm" href="/backup/repo">{{icon "edit"}}Değiştir…</a></div>
+<div class="table-wrap">
+<table class="kv">
+  <tr><th>Depo</th><td><span class="mono">{{$st.Repository}}</span></td></tr>
+  <tr><th>Şifre</th><td>{{datefmt $set.Confirmed}} tarihinde kaydedildiği onaylandı · yeniden görmek için sunucuda <span class="mono">sudo footops backup show-key</span></td></tr>
+  <tr><th>Sunucu ayarları</th><td>her gece{{if not .Data.ServerLast.IsZero}} · son {{since .Data.ServerLast}}{{end}} <span class="muted small">(/etc/footops, sertifikalar, panel girişi, imaj girişleri)</span></td></tr>
+</table>
+</div>
+{{end}}
+{{end}}
+{{template "bottom" .}}
+
+{{/* The backup job under way, if any (a *Job). */}}
+{{define "backupRunning"}}{{with .}}<div class="notice info" data-live-id="backup-running">{{icon "clock"}}<div>{{if eq .Kind "backup.setup"}}Yedek deposu bağlanıyor{{else}}Şu an yedek alınıyor{{end}}: <strong>{{.Target}}</strong>, {{since .Started}} başladı · <a href="/jobs/{{.ID}}">izle</a></div></div>{{else}}<div data-live-id="backup-running"></div>{{end}}{{end}}
+
+{{/* The repository fields of a setup form (.Data). */}}
+{{define "repoFields"}}
+<div class="row">
+  <label class="field"><span>Uç nokta (S3 adresi)</span>
+    <input name="endpoint" value="{{.F.Endpoint}}" required class="mono" placeholder="https://&lt;hesap-kimliği&gt;.r2.cloudflarestorage.com" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <span class="hint">Cloudflare → R2 → Overview → Account Details → S3 API; kova adı olmadan.</span>
+  </label>
+  <label class="field"><span>Kova</span>
+    <input name="bucket" value="{{.F.Bucket}}" required class="mono" placeholder="{{.BucketHint}}" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <span class="hint">Yalnız bu sunucunun yedeklerine ayrılmış bir kova; istersen altında klasör: <span class="mono">kova/klasör</span>.</span>
+  </label>
+</div>
+<div class="row">
+  <label class="field"><span>Erişim anahtarı kimliği (Access Key ID)</span>
+    <input name="key_id" value="{{.F.KeyID}}" required class="mono" autocomplete="off" autocapitalize="off" spellcheck="false">
+  </label>
+  <label class="field"><span>Gizli erişim anahtarı (Secret Access Key)</span>
+    <input type="password" name="secret_key" required class="mono" autocomplete="new-password" spellcheck="false">
+  </label>
+</div>
+<p class="hint">R2 → Manage API Tokens → Create Account API token: <strong>Object Read &amp; Write</strong>, yalnız bu kova. Anahtar sunucuda yalnız root'un okuyabildiği bir dosyada durur, panelde bir daha gösterilmez.</p>
+{{end}}
+
+{{/* Sites with their plan and last backups (the backup page's .). */}}
+{{define "backupSites"}}
+<div class="section-head"><h2>Siteler <span class="sub">{{len .Data.Rows}}</span></h2></div>
+{{with .Data.SitesErr}}<div class="notice bad">{{icon "alert"}}<div>Siteler okunamadı: {{.}}</div></div>{{end}}
+<div class="table-wrap" data-live-id="backup-sites">
+<table class="responsive wide">
+  <thead><tr><th>Site</th><th>Veritabanı</th><th>Dosyalar</th><th>Tanım</th><th>Saklama</th><th></th></tr></thead>
+  <tbody>
+  {{range .Data.Rows}}
+    <tr>
+      <td class="primary"><a class="cell-title" href="/sites/{{.Name}}/backup">{{.Name}}</a>{{if .Off}}<span class="cell-sub"><span class="badge warn">yedeklenmiyor</span></span>{{else if .Own}}<span class="cell-sub muted">kendi ayarı{{if .Pol.Freeze}} · dondurarak{{end}}</span>{{end}}</td>
+      <td data-label="Veritabanı">{{template "backupCell" index .Cells 0}}</td>
+      <td data-label="Dosyalar">{{template "backupCell" index .Cells 1}}</td>
+      <td data-label="Tanım">{{template "backupCell" index .Cells 2}}</td>
+      <td data-label="Saklama" class="nowrap">{{.Pol.KeepHours}} sa · {{.Pol.KeepDays}} gün · {{.Pol.KeepMonths}} ay</td>
+      <td class="actions"><a class="btn sm" href="/sites/{{.Name}}/backup">{{icon "edit"}}Ayarlar</a></td>
+    </tr>
+  {{else}}
+    <tr><td colspan="6" class="empty">Henüz site yok.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{end}}
+
+{{/* One part of a site: its plan and its last backup (a backupCell). */}}
+{{define "backupCell"}}{{if .Plan}}<div>{{.Plan}}{{if ne .Plan "kapalı"}}<div class="cell-sub {{if .Failed}}{{if .Failed.Warning}}warn{{else}}bad{{end}}{{else}}muted{{end}}"{{with .Failed}} title="{{.Err}}"{{end}}>{{with .Failed}}{{if .Warning}}⚠ eksik · {{else}}✗ başarısız · {{end}}{{end}}{{if .Last.IsZero}}henüz yok{{else}}{{since .Last}}{{end}}</div>{{end}}</div>{{else}}<span class="muted">—</span>{{end}}{{end}}
+
+{{/* The latest runs (.Runs, .RunsErr of a page's data). */}}
+{{define "backupRuns"}}
+{{with .RunsErr}}<div class="notice bad">{{icon "alert"}}<div>Yedek kayıtları okunamadı: {{.}}</div></div>{{end}}
+<div class="table-wrap" data-live-id="backup-runs">
+<table class="responsive wide">
+  <thead><tr><th>Başlama</th><th>Tür</th><th>Sonuç</th><th class="num">Depoya eklenen</th><th class="num">Süre</th></tr></thead>
+  <tbody>
+  {{range .Runs}}
+    <tr>
+      <td class="primary nowrap">{{ts .Started}}<div class="cell-sub muted">{{since .Started}}</div></td>
+      <td data-label="Tür">{{runKind .Kind}}{{if and (eq .Kind "manual") .Actor}} · {{.Actor}}{{end}}</td>
+      <td data-label="Sonuç"><div>
+        <span class="badge {{.Status}}">{{if eq .Status "ok"}}tamam{{else if eq .Note "iptal edildi"}}iptal edildi{{else if eq .Status "warn"}}uyarılı{{else}}başarısız{{end}}</span> {{len .Parts}} parça
+        {{with .Note}}{{if ne . "iptal edildi"}}<div class="cell-sub">{{.}}</div>{{end}}{{end}}
+        {{if .Parts}}<details class="more"><summary>Ayrıntı</summary>
+          <ul class="small">
+          {{range .Parts}}
+            <li><strong>{{if eq .Site "_server"}}sunucu ayarları{{else}}{{.Site}} · {{partTR .Part}}{{end}}</strong>:
+              {{if .Err}}<span class="bad">✗ {{.Err}}</span>{{else}}{{if eq .Part "db"}}{{len .Collections}} koleksiyon, {{.Documents}} belge, döküm {{bytes .Bytes}}{{else}}{{.Files}} dosya, {{bytes .Bytes}}{{end}} → depoya +{{bytes .AddedPacked}} · {{took .Took}}{{if .Usage.PeakMem}} · en çok {{bytes .Usage.PeakMem}} bellek{{end}}{{with .Warning}} <span class="warn">⚠ {{.}}</span>{{end}}{{end}}</li>
+          {{end}}
+          </ul>
+          {{if or .Removed .Pruned .Checked .RepoSize}}<p class="muted small">{{if .Removed}}saklama kuralı {{.Removed}} eski yedeği sildi{{end}}{{if .Pruned}} · depo temizlendi{{end}}{{if .Checked}} · depo denetlendi{{end}}{{if .RepoSize}} · depoda {{bytes .RepoSize}}{{end}}</p>{{end}}
+        </details>{{end}}
+      </div></td>
+      <td data-label="Eklenen" class="num">{{bytes .Added}}</td>
+      <td data-label="Süre" class="num">{{took .Took}}</td>
+    </tr>
+  {{else}}
+    <tr><td colspan="5" class="empty">Henüz yedek alınmadı.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{end}}

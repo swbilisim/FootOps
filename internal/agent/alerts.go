@@ -48,6 +48,8 @@ type Alerter struct {
 	Certs func() ([]sites.Cert, error)
 	// Registries lists saved registry logins (their token expiry); nil skips them.
 	Registries func() ([]RegistryLogin, error)
+	// Backups lists the backup alerts (Backups.Alerts); nil skips them.
+	Backups func(now time.Time) []Alert
 	// OnChange, if set, is called (outside the lock) with alerts that opened or resolved.
 	OnChange func(opened, resolved []Alert)
 
@@ -119,8 +121,14 @@ func (a *Alerter) Evaluate(o Overview, now time.Time) {
 		a.mu.Unlock()
 	}
 
+	var backups []Alert
+	if a.Backups != nil {
+		backups = a.Backups(now)
+	}
+
 	a.mu.Lock()
 	found := append(a.conditions(o, a.certs, a.certErr, now), tokenAlerts(a.regs, now)...)
+	found = append(found, backups...)
 	var opened, resolved []Alert
 	seen := map[string]bool{}
 	for _, c := range found {
@@ -138,7 +146,11 @@ func (a *Alerter) Evaluate(o Overview, now time.Time) {
 		if c.Since.IsZero() && now.Sub(first) < alertHold {
 			continue
 		}
-		c.Since = first
+		// Since is when the condition was first seen, or earlier when the condition knows
+		// (a backup overdue for two days is not "just now" after an agent restart).
+		if c.Since.IsZero() || first.Before(c.Since) {
+			c.Since = first
+		}
 		a.active[c.Key] = c
 		opened = append(opened, c)
 	}

@@ -1,0 +1,90 @@
+{{template "top" .}}
+{{$s := .Data.S.Spec}}{{$st := .Data.St}}{{$f := .Data.F}}{{$d := $st.Settings.Defaults}}
+<a class="crumb" href="/sites/{{$s.Name}}">{{icon "back"}}{{$s.Name}}</a>
+<div class="page-head">
+  <div>
+    <h1>{{$s.Name}} yedekleri</h1>
+    <p class="sub">Uzak yedek: bu sitenin {{if $s.Database}}veritabanı, {{end}}{{if $s.DataMount}}kalıcı klasörü, {{end}}tanımı ve ortam değişkenleri, şifreli olarak <a href="/backup">yedek deposuna</a>.</p>
+  </div>
+  {{if .Data.Ready}}
+  <div class="page-actions">
+    {{template "live"}}
+    <form method="post" action="/sites/{{$s.Name}}/backup/run">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <button type="submit" class="btn primary">{{icon "backup"}}Şimdi yedekle</button>
+    </form>
+  </div>
+  {{end}}
+</div>
+{{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>Yedek durumu alınamadı: {{.}}</div></div>{{end}}
+
+{{if not .Data.Err}}
+{{if not .Data.Ready}}<div class="notice warn">{{icon "alert"}}<div>{{if $st.Configured}}Yedek deposunun şifresi henüz onaylanmadı{{else}}Uzak yedekleme henüz kurulmadı{{end}}: ayarları şimdiden yapabilirsin; yedekler <a href="/backup">Yedekleme</a> sayfasında kurulum bitince başlar.</div></div>{{end}}
+{{template "backupRunning" $st.Running}}
+
+{{with .Data.Row}}
+<div class="section-head"><h2>Son yedekler</h2></div>
+<div class="table-wrap" data-live-id="backup-last">
+<table class="kv">
+  {{if .Off}}<tr><th>Durum</th><td><span class="badge warn">yedeklenmiyor</span> <span class="muted small">eski yedekleri saklama kuralına göre durur</span></td></tr>{{end}}
+  {{range .Cells}}{{if .Plan}}
+  <tr><th>{{partTitle .Part}}</th><td><div>{{.Plan}}{{if ne .Plan "kapalı"}} · {{if .Last.IsZero}}<span class="muted">henüz yedeklenmedi</span>{{else}}son {{since .Last}} <span class="muted small">({{ts .Last}})</span>{{end}}{{end}}
+    {{with .Failed}}<div class="cell-sub {{if .Warning}}warn{{else}}bad{{end}}">{{if .Warning}}⚠ son yedekte bazı dosyalar okunamadı{{else}}✗ son deneme başarısız ({{since .Time}}){{end}}: {{.Err}}</div>{{end}}</div></td></tr>
+  {{end}}{{end}}
+  <tr><th>Saklama</th><td>son {{.Pol.KeepHours}} saatin saatlik, {{.Pol.KeepDays}} günün günlük, {{.Pol.KeepMonths}} ayın aylık yedekleri</td></tr>
+</table>
+</div>
+{{end}}
+
+<div class="section-head" id="ayarlar"><h2>Ayarlar</h2></div>
+{{template "problems" .Data.Problems}}
+<form method="post" action="/sites/{{$s.Name}}/backup" class="card stack">
+  <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+  <label class="check"><input type="checkbox" name="on"{{if $f.On}} checked{{end}}> <span>Bu siteyi yedekle</span></label>
+  {{if or $s.Database $s.DataMount}}
+  <div class="row">
+    {{if $s.Database}}
+    <label class="field"><span>Veritabanı</span>
+      <select name="db">
+        <option value=""{{if eq $f.DB ""}} selected{{end}}>genel ayar ({{dbPlan $d.DB}})</option>
+        <option value="daily"{{if eq $f.DB "daily"}} selected{{end}}>günlük</option>
+        <option value="6h"{{if eq $f.DB "6h"}} selected{{end}}>6 saatte bir</option>
+        <option value="hourly"{{if eq $f.DB "hourly"}} selected{{end}}>saatlik</option>
+      </select>
+      <span class="hint">Saatlik: küçük ve sık değişen veritabanları için (siparişler, satışlar). Gece yedeği her zaman alınır.</span>
+    </label>
+    {{end}}
+    {{if $s.DataMount}}
+    <label class="field"><span>Dosyalar (kalıcı klasör)</span>
+      <select name="files">
+        <option value=""{{if eq $f.Files ""}} selected{{end}}>genel ayar ({{filesPlan $d.Files}})</option>
+        <option value="daily"{{if eq $f.Files "daily"}} selected{{end}}>günlük</option>
+        <option value="weekly"{{if eq $f.Files "weekly"}} selected{{end}}>haftalık (pazar gecesi)</option>
+        <option value="off"{{if eq $f.Files "off"}} selected{{end}}>kapalı</option>
+      </select>
+    </label>
+    {{end}}
+  </div>
+  {{end}}
+  {{if $s.DataMount}}
+  <label class="check"><input type="checkbox" name="freeze"{{if $f.Freeze}} checked{{end}}> <span>Dondurarak yedekle <span class="muted small">— veritabanını dosyada tutan uygulamalar (SQLite) için: site, kalıcı klasörü kopyalanırken birkaç saniye duraklatılır (yeniden başlamaz), böylece kopya tutarlı olur.</span></span></label>
+  {{end}}
+  <fieldset>
+    <legend>Saklama</legend>
+    <div class="row">
+      <label class="field"><span>Saatlik yedekler (saat)</span><input type="number" name="keep_hours" min="1" max="744" value="{{$f.KeepHours}}" placeholder="{{$d.KeepHours}} (genel)"></label>
+      <label class="field"><span>Günlük yedekler (gün)</span><input type="number" name="keep_days" min="1" max="732" value="{{$f.KeepDays}}" placeholder="{{$d.KeepDays}} (genel)"></label>
+      <label class="field"><span>Aylık yedekler (ay)</span><input type="number" name="keep_months" min="1" max="120" value="{{$f.KeepMonths}}" placeholder="{{$d.KeepMonths}} (genel)"></label>
+    </div>
+    <p class="hint">Boş bırakılan genel ayarı alır.</p>
+  </fieldset>
+  <div class="form-actions">
+    <button type="submit" class="primary">{{icon "check"}}Kaydet</button>
+    {{with .Data.Row}}{{if .Own}}<button type="submit" name="reset" value="1" formnovalidate>Genel ayarlara döndür</button>{{end}}{{end}}
+  </div>
+</form>
+
+<div class="section-head"><h2>Geçmiş</h2></div>
+{{template "backupRuns" .Data}}
+{{end}}
+{{template "bottom" .}}
