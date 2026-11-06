@@ -505,3 +505,21 @@ func TestRepoAddress(t *testing.T) {
 		}
 	}
 }
+
+// A job that failed says why on its page, whatever its steps say (a setup refused by the
+// bucket writes no step of its own).
+func TestJobPageShowsError(t *testing.T) {
+	e := newEnv(t)
+	c := e.client(t, true)
+	e.login(t, c)
+	e.agent.job = &agent.Job{ID: "j1", Kind: "backup.setup", Target: "footops-a", Done: true,
+		Steps: []string{"… yedek deposu deneniyor: footops-a"}, Err: "Yedek deposu (footops-a) erişimi reddetti: anahtar yanlış"}
+	_, body := c.do("GET", "/jobs/j1", nil)
+	if !strings.Contains(body, "Neden:</strong> Yedek deposu (footops-a) erişimi reddetti") {
+		t.Errorf("no reason on the page:\n%s", body)
+	}
+	e.agent.job = &agent.Job{ID: "j1", Kind: "backup.run", Target: "gece yedeği", Done: true, Cancelled: true, Err: "iptal edildi"}
+	if _, body := c.do("GET", "/jobs/j1", nil); strings.Contains(body, "Neden:") {
+		t.Error("a cancel is shown as a failure")
+	}
+}

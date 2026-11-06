@@ -24,6 +24,7 @@
 {{end}}</pre>
 <div data-live-id="job-links">
 {{if .Done}}
+{{if and .Err (not .Cancelled)}}<div class="notice bad" role="alert">{{icon "alert"}}<div><strong>Neden:</strong> {{.Err}}</div></div>{{end}}
 {{if or .Usage.PeakMem .Usage.CPU}}<p class="hint">Kaynak kullanımı: en çok {{bytes .Usage.PeakMem}} bellek, {{took .Usage.CPU}} CPU{{if .Bytes}}, {{bytes .Bytes}} yazıldı{{end}}.</p>{{end}}
 <div class="form-actions">
   {{$linked := and (not .Err) .Result (eq .Kind "db.snapshot" "import.check" "import.apply" "db.restore" "files.restore" "site.export" "migrate.copy")}}
