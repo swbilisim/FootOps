@@ -64,6 +64,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		err = runDoctor(stdout)
 	case "data-pack", "data-extract", "data-fs", "data-zip": // hidden: run by the agent only
 		err = runData(args[0], args[1:], stdout, stderr)
+	case "backup": // hidden until the panel's backup pages (Faz Y2)
+		err = runBackup(args[1:], os.Stdin, stdout, stderr)
 	case "install":
 		err = runInstall(args[1:], stdout, stderr)
 		switch {
@@ -82,12 +84,14 @@ func Run(args []string, stdout, stderr io.Writer) int {
 				HistoryPath: agent.DefaultHistory, JobsDir: agent.DefaultJobsDir, SnapshotDir: agent.DefaultSnapshotDir,
 				StagingDir: staging.DefaultRoot, RecoveryDir: agent.DefaultRecoveryDir, PanelUser: agent.PanelUser,
 				SourcesDir: remote.DefaultDir, MigrationsDir: agent.DefaultMigrationsDir, DBEditsDir: agent.DefaultDBEditsDir,
-				DockerConfig: os.Getenv("DOCKER_CONFIG"), RegistriesPath: agent.DefaultRegistriesPath}
+				DockerConfig: os.Getenv("DOCKER_CONFIG"), RegistriesPath: agent.DefaultRegistriesPath,
+				BackupDir: agent.DefaultBackupDir, BackupSecret: agent.DefaultBackupSecret, ToolsDir: agent.DefaultToolsDir,
+				ResticCache: agent.DefaultResticCache}
 			if cfg.DockerConfig == "" {
 				cfg.DockerConfig = agent.DefaultDockerConfig
 			}
 			if p, err := config.Load(config.Path); err == nil {
-				cfg.PanelHost = p.PanelHost
+				cfg.PanelHost, cfg.ServerCode = p.PanelHost, p.ServerCode
 			}
 			return agent.Main(ctx, cfg, l)
 		})

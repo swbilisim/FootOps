@@ -47,6 +47,7 @@ type Server struct {
 	Sites   *SiteOps
 	Data    *DataOps
 	Jobs    *Jobs
+	Backups *Backups
 	// Registries are the image registry logins docker pulls with.
 	Registries *Registries
 	// AllowedUIDs may connect; everyone else gets 403. Checked against the kernel's
@@ -165,6 +166,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sites/{name}/migration/discover", s.migrationJob("migrate.discover"))
 	mux.HandleFunc("POST /v1/sites/{name}/migration/scan", s.migrationJob("migrate.scan"))
 	mux.HandleFunc("POST /v1/sites/{name}/migration/copy", s.migrationJob("migrate.copy"))
+	mux.HandleFunc("GET /v1/backup", s.backupStatus)
+	mux.HandleFunc("POST /v1/backup/setup", s.backupSetup)
+	mux.HandleFunc("GET /v1/backup/key", s.backupKey)
+	mux.HandleFunc("POST /v1/backup/confirm", s.backupConfirm)
+	mux.HandleFunc("GET /v1/backup/settings", s.backupSettings)
+	mux.HandleFunc("POST /v1/backup/settings", s.setBackupSettings)
+	mux.HandleFunc("POST /v1/backup/run", s.backupRun)
+	mux.HandleFunc("GET /v1/backup/runs", s.backupRuns)
 	mux.HandleFunc("GET /v1/jobs/{id}", s.getJob)
 	mux.HandleFunc("POST /v1/jobs/{id}/cancel", s.cancelJob)
 	mux.HandleFunc("GET /v1/certs", s.listCerts)
@@ -387,6 +396,13 @@ type Config struct {
 	// when each login was saved.
 	DockerConfig   string
 	RegistriesPath string
+	// Backups (Faz Y): settings and records, the repository's secrets, the restic
+	// binary, restic's cache; ServerCode is restic's host name. BackupDir empty: off.
+	BackupDir    string
+	BackupSecret string
+	ToolsDir     string
+	ResticCache  string
+	ServerCode   string
 }
 
 // Main runs the agent until ctx is done.
@@ -423,11 +439,14 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 	data := &DataOps{Store: ops.Store, Docker: d, Run: run.Exec{KillOnCancel: true}, Stream: run.StreamExec{},
 		Staging: staging.New(cfg.StagingDir, staging.DefaultMax), SnapshotDir: cfg.SnapshotDir,
 		RecoveryDir: cfg.RecoveryDir, Sites: ops, MigrationsDir: cfg.MigrationsDir, DBEditsDir: cfg.DBEditsDir}
-	// Made at start so the web process, which starts after the agent, has it hidden
+	// Made at start so the web process, which starts after the agent, has them hidden
 	// (InaccessiblePaths only covers paths that exist when a service starts).
-	if cfg.DBEditsDir != "" {
-		if err := os.MkdirAll(cfg.DBEditsDir, 0o700); err != nil {
-			logger.Printf("%s oluşturulamadı: %v", cfg.DBEditsDir, err)
+	for _, dir := range []string{cfg.DBEditsDir, cfg.BackupDir, cfg.ResticCache} {
+		if dir == "" {
+			continue
+		}
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			logger.Printf("%s oluşturulamadı: %v", dir, err)
 		}
 	}
 	host, _ := os.Hostname()
@@ -465,8 +484,22 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 	for _, x := range data.SweepSnapshots(true) {
 		logger.Printf("yarım kalan veritabanı kopyası silindi: %s", x)
 	}
+	var backups *Backups
+	if cfg.BackupDir != "" {
+		code := cfg.ServerCode
+		if code == "" {
+			code = host
+		}
+		backups = &Backups{Data: data, Jobs: jobs, Audit: audit, Dir: cfg.BackupDir, SecretPath: cfg.BackupSecret,
+			ToolsDir: cfg.ToolsDir, CacheDir: cfg.ResticCache, Server: code, Log: logger}
+		// A site a cut-off backup froze is unpaused before anything else.
+		backups.Recover(ctx)
+	}
 	startRecovery(jobs, data, audit, tempDBs || data.TempLeft(), logger)
-	go housekeeping(ctx, jobs, data, logger)
+	go housekeeping(ctx, jobs, data, backups, logger)
+	if backups != nil {
+		go backups.Schedule(ctx)
+	}
 	regs := &Registries{ConfigDir: cfg.DockerConfig, MetaPath: cfg.RegistriesPath, Run: run.Exec{},
 		GitHubAPI: "https://api.github.com", HTTP: &http.Client{Timeout: 10 * time.Second}}
 	sampler := NewSampler(d, nil)
@@ -522,12 +555,20 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 		Sites:       ops,
 		Data:        data,
 		Jobs:        jobs,
+		Backups:     backups,
 		Registries:  regs,
 		AllowedUIDs: map[uint32]bool{0: true, uint32(uid): true},
 		Log:         logger,
 	}
 	logger.Printf("agent listening on %s (uid %d allowed)", cfg.Socket, uid)
-	return s.Serve(ctx, l)
+	err = s.Serve(ctx, l)
+	if backups != nil {
+		// The jobs die with the process: a site paused for its copy must not stay so.
+		stop, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		backups.Recover(stop)
+		cancel()
+	}
+	return err
 }
 
 // startRecovery puts back what an agent stop interrupted, as a job (so it shows in the
@@ -616,8 +657,9 @@ func keepHistory(ctx context.Context, h *history.Store, path string, logger *log
 }
 
 // housekeeping removes what data work leaves behind: staging older than a day, copies
-// past their keep time. It runs hourly and skips a round while a job runs.
-func housekeeping(ctx context.Context, jobs *Jobs, data *DataOps, logger *log.Logger) {
+// past their keep time, old backup records. It runs hourly and skips a round while a
+// job runs.
+func housekeeping(ctx context.Context, jobs *Jobs, data *DataOps, backups *Backups, logger *log.Logger) {
 	t := time.NewTicker(time.Hour)
 	defer t.Stop()
 	for {
@@ -636,6 +678,12 @@ func housekeeping(ctx context.Context, jobs *Jobs, data *DataOps, logger *log.Lo
 			}
 			for _, x := range data.SweepDBEdits() {
 				logger.Printf("süresi dolan belge değişikliği kaydı silindi: %s", x)
+			}
+			if backups != nil {
+				if n := len(backups.SweepRuns()); n > 0 {
+					logger.Printf("eski yedek kayıtları silindi: %d", n)
+				}
+				backups.Recover(ctx)
 			}
 		}
 		select {

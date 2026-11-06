@@ -656,3 +656,68 @@ func (c *Client) MigrationJob(ctx context.Context, site, verb, confirm string, a
 		ConfirmRequest{Confirm: confirm, Actor: a}, &r)
 	return r.JobID, err
 }
+
+// ---- backups ----
+
+func (c *Client) BackupStatus(ctx context.Context) (BackupStatus, error) {
+	var st BackupStatus
+	err := c.call(ctx, http.MethodGet, "/v1/backup", nil, &st)
+	return st, err
+}
+
+// BackupSetup starts connecting the server to a repository; the job's result is
+// "created" or "connected".
+func (c *Client) BackupSetup(ctx context.Context, req BackupSetupRequest) (string, error) {
+	var r JobResponse
+	err := c.call(ctx, http.MethodPost, "/v1/backup/setup", req, &r)
+	return r.JobID, err
+}
+
+// BackupKey returns the repository password (root always; the panel until confirmed).
+func (c *Client) BackupKey(ctx context.Context, a Actor) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://agent/v1/backup/key", nil)
+	if err != nil {
+		return "", err
+	}
+	actor, _ := json.Marshal(a)
+	req.Header.Set(ActorHeader, string(actor))
+	resp, err := c.Doer.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("agent'a ulaşılamadı: %w", err)
+	}
+	var k BackupKey
+	err = decode(resp, &k)
+	return k.Password, err
+}
+
+func (c *Client) BackupConfirm(ctx context.Context, a Actor) error {
+	return c.call(ctx, http.MethodPost, "/v1/backup/confirm", RestartRequest{Actor: a}, nil)
+}
+
+func (c *Client) BackupSettings(ctx context.Context) (BackupSettings, error) {
+	var s BackupSettings
+	err := c.call(ctx, http.MethodGet, "/v1/backup/settings", nil, &s)
+	return s, err
+}
+
+func (c *Client) SetBackupSettings(ctx context.Context, s BackupSettings, a Actor) error {
+	return c.call(ctx, http.MethodPost, "/v1/backup/settings", BackupSettingsRequest{Settings: s, Actor: a}, nil)
+}
+
+// BackupRun backs up now: one site, or every site and the server (site empty).
+func (c *Client) BackupRun(ctx context.Context, site string, a Actor) (string, error) {
+	var r JobResponse
+	err := c.call(ctx, http.MethodPost, "/v1/backup/run", BackupRunRequest{Site: site, Actor: a}, &r)
+	return r.JobID, err
+}
+
+// BackupRuns returns run records, newest first (site: only runs that touched it).
+func (c *Client) BackupRuns(ctx context.Context, site string, limit int) ([]BackupRun, error) {
+	q := url.Values{"limit": {strconv.Itoa(limit)}}
+	if site != "" {
+		q.Set("site", site)
+	}
+	var list []BackupRun
+	err := c.call(ctx, http.MethodGet, "/v1/backup/runs?"+q.Encode(), nil, &list)
+	return list, err
+}

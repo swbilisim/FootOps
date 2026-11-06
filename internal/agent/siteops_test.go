@@ -31,6 +31,7 @@ type fakeNet struct {
 	mu       sync.Mutex
 	networks map[string]map[string][]string // network -> container -> aliases
 	running  bool                           // state reported for site containers
+	paused   bool                           // reported paused (with running)
 	status   string                         // overrides the reported status ("restarting")
 	health   string                         // reported healthcheck status, if set
 	restarts int
@@ -110,6 +111,7 @@ func (f *fakeNet) Inspect(_ context.Context, name string) (docker.Inspect, error
 	defer f.mu.Unlock()
 	var in docker.Inspect
 	in.State.Running = f.running
+	in.State.Paused = f.paused
 	in.RestartCount = f.restarts
 	in.Image = f.image
 	in.State.Status = "running"

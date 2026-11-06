@@ -249,12 +249,16 @@ func TestUnitsSeparatePrivileges(t *testing.T) {
 	if strings.Contains(webUnit, "SupplementaryGroups") {
 		t.Error("web process must not get extra groups")
 	}
-	for _, hidden := range []string{"-/srv", "-/etc/footops/secrets", "-/var/lib/docker", "-/var/run/docker.sock", "-/var/lib/footops/audit.jsonl"} {
+	for _, hidden := range []string{"-/srv", "-/etc/footops/secrets", "-/var/lib/docker", "-/var/run/docker.sock", "-/var/lib/footops/audit.jsonl",
+		"-/var/lib/footops/backup", "-/var/cache/footops"} {
 		if !strings.Contains(webUnit, hidden) {
 			t.Errorf("web unit does not hide %s", hidden)
 		}
 	}
-	for _, want := range []string{"\nGroup=footops\n", "RuntimeDirectory=footops", "NoNewPrivileges=yes"} {
+	// The agent writes the backup repository's settings into their own directory; the
+	// rest of /etc, the other secrets included, stays read-only for it.
+	for _, want := range []string{"\nGroup=footops\n", "RuntimeDirectory=footops", "NoNewPrivileges=yes", "ProtectSystem=full\n",
+		"\nReadWritePaths=-/etc/footops/secrets/backup\n"} {
 		if !strings.Contains(agentUnit, want) {
 			t.Errorf("agent unit misses %q", want)
 		}

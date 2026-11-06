@@ -312,6 +312,8 @@ Restart=on-failure
 RestartSec=3
 NoNewPrivileges=yes
 ProtectSystem=full
+# /etc is read-only for the agent but for the backup repository's settings it keeps.
+ReadWritePaths=-/etc/footops/secrets/backup
 ProtectHome=yes
 PrivateTmp=yes
 ProtectKernelModules=yes
@@ -345,9 +347,9 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ReadWritePaths=/var/lib/footops/web
 # Defence in depth: even if the web process were compromised it cannot read site and
-# database files, secrets, Docker's data, the audit log or documents kept for undo (it
-# asks the agent instead).
-InaccessiblePaths=-/srv -/etc/footops/secrets -/var/lib/docker -/var/lib/containerd -/var/lib/footops/audit.jsonl -/var/lib/footops/audit.jsonl.1 -/var/lib/footops/dbedits -/var/run/docker.sock
+# database files, secrets, Docker's data, the audit log, documents kept for undo or the
+# backups' records and cache (it asks the agent instead).
+InaccessiblePaths=-/srv -/etc/footops/secrets -/var/lib/docker -/var/lib/containerd -/var/lib/footops/audit.jsonl -/var/lib/footops/audit.jsonl.1 -/var/lib/footops/dbedits -/var/lib/footops/backup -/var/cache/footops -/var/run/docker.sock
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes

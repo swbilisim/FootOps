@@ -203,7 +203,7 @@ func TestCoreFilesGeneratesSecretOnce(t *testing.T) {
 	if err != nil || st.Mode().Perm() != 0o600 {
 		t.Errorf("secret mode = %v, %v", st.Mode().Perm(), err)
 	}
-	for _, d := range []string{core.MongoDataDir, core.CaddyCertsDir, "/etc/footops/secrets"} {
+	for _, d := range []string{core.MongoDataDir, core.CaddyCertsDir, "/etc/footops/secrets", core.BackupSecretDir} {
 		st, err := os.Stat(h.Path(d))
 		if err != nil || st.Mode().Perm() != 0o700 {
 			t.Errorf("%s mode = %v, %v", d, st.Mode().Perm(), err)

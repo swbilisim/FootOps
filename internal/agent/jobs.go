@@ -56,7 +56,8 @@ type JobSpec struct {
 }
 
 const (
-	maxJobs = 50
+	// maxJobs: hourly backups are jobs too (~24 a day on a server with hourly sites).
+	maxJobs = 200
 	// progressSaveEvery limits disk writes for byte counters; steps are saved at once.
 	progressSaveEvery = 5 * time.Second
 )
@@ -78,6 +79,9 @@ var (
 		"migrate.discover": 6 * time.Minute,
 		"migrate.scan":     6 * time.Minute,
 		"image.check":      15 * time.Minute, // a pull of a few hundred MB on a slow link
+		// The first night uploads everything; prune and check come on top weekly.
+		"backup.run":   3 * time.Hour,
+		"backup.setup": 15 * time.Minute, // restic retries an unreachable bucket for a while
 	}
 )
 

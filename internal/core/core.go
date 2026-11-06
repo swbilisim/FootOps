@@ -18,6 +18,9 @@ const (
 	MongoImage = "mongo:7.0.45"
 	// cloudflared connects the panel to Cloudflare Tunnel (outbound only).
 	CloudflaredImage = "cloudflare/cloudflared:2026.10.3"
+	// ResticImage only supplies the restic binary for backups (by digest: the agent
+	// also checks the binary's own checksum).
+	ResticImage = "restic/restic:0.19.1@sha256:136600b6ff6843d61d355f7f71f460a166429f35de6fd11b568fece3c9a4d510"
 )
 
 // MongoStopGrace is how long MongoDB gets to shut down cleanly when its container is
@@ -49,6 +52,9 @@ const (
 	MongoAddr = "127.0.0.1:27017"
 
 	TunnelSecretPath = "/etc/footops/secrets/cloudflared.env"
+	// BackupSecretDir holds the backup repository's settings: of /etc the only place the
+	// agent may write (its unit's ReadWritePaths); the installer makes it.
+	BackupSecretDir = "/etc/footops/secrets/backup"
 )
 
 // Config holds the values that vary between servers.
