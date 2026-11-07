@@ -143,6 +143,10 @@ What the panel shows:
   limit, restarts within 15 minutes, certificates expiring within 30 days. Short spikes
   (under 30 seconds) are ignored. Alerts show as a count in the menu and a list on the
   dashboard.
+- **Outside watcher (optional):** a Cloudflare Worker ([`worker/`](worker/README.md))
+  visits the sites as a visitor would and reads the status file each server keeps next
+  to its backups; it tells the same Telegram chat when a site stops answering or a
+  server falls silent. The panel shows what it sees, and alerts when it goes quiet.
 - **Logs:** last 200-2000 lines, search (highlighted), warning/error filter, live follow.
 
 Every login, logout, restart and recovery command is written to

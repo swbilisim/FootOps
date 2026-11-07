@@ -1,0 +1,45 @@
+# FootOps' outside watcher. Copy to wrangler.toml (git ignores it), set the buckets,
+# then: npx wrangler@4.152.0 deploy. See README.md.
+name = "footops-nobetci"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+# No address of its own: it only runs on its schedule.
+workers_dev = false
+preview_urls = false
+
+[triggers]
+# Every minute; how often each domain is visited is CHECK_EVERY_MIN below.
+crons = ["* * * * *"]
+
+[observability]
+enabled = true
+
+# One binding per server, named SERVER_<code>: that server's backup bucket, where its
+# FootOps writes izleme/durum.json. The watcher reads that file and writes its heartbeat
+# izleme/nobetci.json next to it; nothing else in the bucket is touched.
+[[r2_buckets]]
+binding = "SERVER_WEB1"
+bucket_name = "footops-web1"
+
+[[r2_buckets]]
+binding = "SERVER_WEB2"
+bucket_name = "footops-web2"
+
+# The watcher's own state (which domain is down, what the chat was told).
+[[r2_buckets]]
+binding = "STATE"
+bucket_name = "footops-izleme"
+
+# Secrets, set with `npx wrangler@4.152.0 secret put <name>`:
+#   TELEGRAM_TOKEN  the bot's token (the same bot the servers use)
+#   TELEGRAM_CHAT   the chat's id
+[vars]
+CHECK_EVERY_MIN = "2"     # minutes between visits of a working domain (1-60)
+# FAIL_AFTER = "3"        # failures in a row before "❌ çalışmıyor"
+# RECOVER_AFTER = "2"     # answers in a row before "✅ yeniden açılıyor"
+# SILENT_AFTER_MIN = "15" # status file older than this: "🔴 FootOps'tan haber yok"
+# BACKUP_AFTER_H = "26"   # newest backup older than this: "🟡"
+# TIMEOUT_SEC = "10"      # a visit with no answer by then fails
+# DRY_RUN = "1"           # log the messages instead of sending them
+# LOG_CHECKS = "1"        # log every visit, not only the failures

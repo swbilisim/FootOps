@@ -74,18 +74,41 @@
 
 <div class="section-head"><h2>Ne gönderilir</h2></div>
 <div class="card stack">
-  <p><strong>Gönderilir:</strong> yedekler (alınamadı, gecikti, depo uyarı eşiğini geçti, haftalık denetim sorun buldu, saklama ya da temizlik yapılamadı, duraklatıldı), disk doluluğu, sertifikaların ve imaj girişi token'larının süresi (ya da sertifikaların okunamaması), MongoDB · Caddy · tünel container'ları, Docker'a ulaşılamaması, kritik RAM ya da swap, bir container'ın belleği doldurması (OOM) ya da sık yeniden başlaması, durum dosyasının yazılamaması.</p>
+  <p><strong>Gönderilir:</strong> yedekler (alınamadı, gecikti, depo uyarı eşiğini geçti, haftalık denetim sorun buldu, saklama ya da temizlik yapılamadı, duraklatıldı), disk doluluğu, sertifikaların ve imaj girişi token'larının süresi (ya da sertifikaların okunamaması), MongoDB · Caddy · tünel container'ları, Docker'a ulaşılamaması, kritik RAM ya da swap, bir container'ın belleği doldurması (OOM) ya da sık yeniden başlaması, durum dosyasının yazılamaması, dış nöbetçinin 30 dakika susması.</p>
   <p><strong>Gönderilmez</strong> (yalnız panelde): CPU, bir container'ın bellek sınırına yaklaşması, RAM ve swap'ın uyarı düzeyi; bir sitenin çalışmaması — bunu dış nöbetçi, ziyaretçinin gördüğü gibi bildirir.</p>
   <p class="muted small">Düzelen bir uyarı 5 dakika kapalı kalınca "Düzeldi" mesajı gelir; arada yeniden açılırsa hiçbir şey gönderilmez. Telegram'a ulaşılamazsa mesajlar bekletilir ve yeniden denenir.</p>
 </div>
 
 {{with $st.StatusFile}}
-<div class="section-head"><h2>Dış nöbetçi için durum dosyası</h2></div>
+<div class="section-head"><h2>Dış nöbetçi</h2></div>
 <div class="card stack">
   {{if .Key}}
-  <p>Her 5 dakikada bir yedek kovasına <span class="mono">{{.Key}}</span> yazılır: siteler, alan adları, container durumları ve son yedek; sır yok. Sunucunun dışındaki nöbetçi bu dosya eskiyince "sunucudan haber yok" der.</p>
-  {{if .LastErr}}<div class="notice warn">{{icon "alert"}}<div>{{if .Failing.IsZero}}Yazılamadı{{else}}Yazılamıyor ({{since .Failing}} başladı){{end}}: {{.LastErr}}</div></div>{{end}}
-  <p class="muted small">{{if .LastOK.IsZero}}Henüz yazılmadı (agent açıldıktan 1 dakika sonra başlar).{{else}}Son yazma {{since .LastOK}}.{{end}}</p>
+  {{with .Watcher}}{{$bad := .Failing}}
+  <p><strong>Son yoklama {{since .Time}}</strong> · {{len .Domains}} alan adı{{with .Minutes}}, çalışanlar {{.}} dakikada bir yoklanıyor{{end}} · {{if $bad}}<strong>{{len $bad}} tanesi açılmıyor</strong>{{else}}hepsi açılıyor{{end}}</p>
+  {{if $bad}}
+  <div class="table-wrap">
+  <table class="responsive">
+    <thead><tr><th>Alan adı</th><th>Neden</th><th>Başlangıç</th></tr></thead>
+    <tbody>
+    {{range $bad}}
+      <tr>
+        <td class="primary">{{if .Down}}<span class="badge bad">çalışmıyor</span>{{else}}<span class="badge warn">deneniyor</span>{{end}} <span class="mono">{{.Name}}</span></td>
+        <td data-label="Neden">{{.Reason}}</td>
+        <td data-label="Başlangıç" class="nowrap">{{since .Since}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{end}}
+  {{with .Blind}}<p class="small">İzlenemeyen (Cloudflare ziyareti bir doğrulama sayfasıyla karşılıyor — Bot Fight Mode ya da bir güvenlik kuralı): {{range $i, $d := .}}{{if $i}}, {{end}}<span class="mono">{{$d.Name}}</span>{{end}}</p>{{end}}
+  {{with .Trouble}}<div class="notice warn">{{icon "alert"}}<div>Nöbetçi {{.}}.</div></div>{{end}}
+  {{else}}
+  <p class="muted">{{if .WatcherNone}}Dış nöbetçi bu sunucuyu izlemiyor: kovada <span class="mono">izleme/nobetci.json</span> yok (kurulumu FootOps reposunda, <span class="mono">worker/</span>).{{else}}Nöbetçinin dosyası henüz okunmadı.{{end}}</p>
+  {{end}}
+  {{with .WatcherErr}}<div class="notice warn">{{icon "alert"}}<div>Nöbetçinin dosyası okunamadı: {{.}}</div></div>{{end}}
+  <p class="muted small">Nöbetçi (sunucunun dışında, Cloudflare Worker) siteleri ziyaretçi gibi yoklar ve bu sunucunun 5 dakikada bir yedek kovasına yazdığı <span class="mono">{{.Key}}</span> dosyasını izler (siteler, alan adları, container durumları, son yedek; sır yok); dosya eskiyince "sunucudan haber yok" der. {{if .LastOK.IsZero}}Durum dosyası henüz yazılmadı (agent açıldıktan 1 dakika sonra başlar).{{else}}Durum dosyası son yazma {{since .LastOK}}.{{end}}</p>
+  {{if .LastErr}}<div class="notice warn">{{icon "alert"}}<div>Durum dosyası {{if .Failing.IsZero}}yazılamadı{{else}}yazılamıyor ({{since .Failing}} başladı){{end}}: {{.LastErr}}</div></div>{{end}}
   {{else}}
   <p class="muted">Yedek deposu bağlı değil: durum dosyası yazılmıyor (<a href="/backup">Yedekleme</a>).</p>
   {{end}}

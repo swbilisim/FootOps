@@ -223,6 +223,60 @@ if not ns.get("status_file", {}).get("last_ok") or ns["status_file"]["key"] != r
 measure["status_file_bytes"] = len(sh("docker run --rm -v it-s3:/veri mongo:7.0.45 cat /veri/%s/izleme/durum.json" % repo_path))
 ok("durum dosyası kovada: %d site, %d bayt, sırsız; panel son yazmayı gösteriyor" % (len(st["sites"]), measure["status_file_bytes"]))
 
+# ---- the outside watcher's heartbeat, read with the agent's own signed GET ----
+BEAT_URL = sec["repository"][len("s3:"):].rstrip("/") + "/izleme/nobetci.json"
+
+
+def beat(minutes_ago, down=False):
+    """Puts a heartbeat as the watcher would, with curl's own SigV4 (not the agent's)."""
+    t = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - minutes_ago * 60))
+    doms = [{"name": "it.example.com", "site": "itsite", "ok": not down}]
+    if down:
+        doms[0].update(down=True, code="502", reason="502 — site yanıt vermiyor", since=t)
+    sh("curl -sS -f --aws-sigv4 aws:amz:auto:s3 --user %s -X PUT -H 'Content-Type: application/json' --data-binary @- %s"
+       % (quote(sec["key_id"] + ":" + sec["secret_key"]), BEAT_URL),
+       stdin=json.dumps({"format": 1, "time": t, "every": 300, "interval": 120, "domains": doms}).encode())
+
+
+def watcher():
+    _, ns = api("GET", "/v1/notify")
+    return ns.get("status_file", {})
+
+
+def alert_keys():
+    _, al = api("GET", "/v1/alerts")
+    return {a["key"] for a in (al if isinstance(al, list) else al.get("alerts", []))}
+
+
+def kick():
+    """A site job makes the agent write the status file (and read the heartbeat) at once."""
+    _, r = api("POST", "/v1/sites/itsite/redeploy", {"actor": ACTOR})
+    if wait_job(r["job_id"]).get("error"):
+        fail("redeploy for the status file")
+
+
+if not watcher().get("watcher_none"):
+    kick()
+    wait(lambda: watcher().get("watcher_none"), "no heartbeat said", timeout=30)
+beat(1, down=True)
+kick()
+wait(lambda: (watcher().get("watcher") or {}).get("domains"), "the heartbeat read", timeout=30)
+w = watcher()["watcher"]
+if w["domains"][0]["reason"] != "502 — site yanıt vermiyor" or w["interval"] != 120 or watcher().get("watcher_error"):
+    fail("heartbeat: %s" % watcher())
+_, _, page = web("/notify")
+if "Son yoklama" not in page or "1 tanesi açılmıyor" not in page or "it.example.com" not in page:
+    fail("the notify page does not show the watcher")
+if "monitor:watcher" in alert_keys():
+    fail("an alert for a fresh heartbeat")
+beat(40)
+kick()
+wait(lambda: "monitor:watcher" in alert_keys(), "the watcher's alert", timeout=40)
+sh("curl -sS -f --aws-sigv4 aws:amz:auto:s3 --user %s -X DELETE %s" % (quote(sec["key_id"] + ":" + sec["secret_key"]), BEAT_URL))
+kick()
+wait(lambda: "monitor:watcher" not in alert_keys() and watcher().get("watcher_none"), "the alert gone with the heartbeat", timeout=40)
+ok("dış nöbetçinin kalp atışı agent'ın imzalı GET'iyle okundu: panelde görünüyor, 40 dk eskisi uyarı, silinince uyarı yok")
+
 # ---- a removed site, removed for good ----
 _, r = api("POST", "/v1/sites", {"spec": {"name": PURGE, "group": "musteri", "domains": [PURGE_DOMAIN],
                                           "image": "nginxinc/nginx-unprivileged:1.27-alpine", "port": 8080, "memory_mb": 64,

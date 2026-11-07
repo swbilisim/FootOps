@@ -17,9 +17,10 @@ import (
 	"time"
 )
 
-// Enough of S3 to store one small object (the status file) without a tool container or
-// an SDK: a PUT signed with AWS Signature Version 4, path-style, which Cloudflare R2
-// and the test server both take.
+// Enough of S3 to store one small object (the status file) and read one back (the
+// outside watcher's heartbeat) without a tool container or an SDK: a PUT and a GET
+// signed with AWS Signature Version 4, path-style, which Cloudflare R2 and the test
+// server both take.
 
 // s3Object is one object in the backup repository's bucket, with the key to write it.
 type s3Object struct {
@@ -98,14 +99,19 @@ func sigV4(method, path, query string, headers [][2]string, payload, stamp, regi
 		", Signature=" + hex.EncodeToString(hmacSHA256(k, toSign))
 }
 
-// put stores body as the object. The secret only ever signs: it is not sent, and no
-// error carries it (the key ID shows in S3's own messages at most).
-func (o s3Object) put(ctx context.Context, c *http.Client, body []byte, contentType string, now time.Time) error {
+// path is the object's path-style address, escaped as SigV4 signs it.
+func (o s3Object) path() string {
 	segs := strings.Split(o.bucket+"/"+o.key, "/")
 	for i, s := range segs {
 		segs[i] = awsEscape(s)
 	}
-	path := "/" + strings.Join(segs, "/")
+	return "/" + strings.Join(segs, "/")
+}
+
+// put stores body as the object. The secret only ever signs: it is not sent, and no
+// error carries it (the key ID shows in S3's own messages at most).
+func (o s3Object) put(ctx context.Context, c *http.Client, body []byte, contentType string, now time.Time) error {
+	path := o.path()
 	sum := sha256.Sum256(body)
 	payload := hex.EncodeToString(sum[:])
 	stamp := now.UTC().Format("20060102T150405Z")
@@ -121,18 +127,74 @@ func (o s3Object) put(ctx context.Context, c *http.Client, body []byte, contentT
 	req.Header.Set("X-Amz-Date", stamp)
 	req.Header.Set("X-Amz-Content-Sha256", payload)
 	req.Header.Set("Authorization", auth)
-	resp, err := c.Do(req)
+	resp, err := do(c, req)
 	if err != nil {
-		var ue *url.Error
-		if errors.As(err, &ue) {
-			err = ue.Err // the address names the account: only the cause
-		}
-		return fmt.Errorf("depoya ulaşılamadı: %v", err)
+		return err
 	}
 	defer drain(resp.Body)
 	if resp.StatusCode/100 == 2 {
 		return nil
 	}
+	return refusal(resp, "yazmayı")
+}
+
+// emptySHA256 is the payload hash of a request without a body.
+const emptySHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+// errNoObject is S3's 404: there is no such object.
+var errNoObject = errors.New("depoda böyle bir dosya yok")
+
+// get reads the object, at most max bytes of it; errNoObject when there is none.
+func (o s3Object) get(ctx context.Context, c *http.Client, max int64, now time.Time) ([]byte, error) {
+	path := o.path()
+	stamp := now.UTC().Format("20060102T150405Z")
+	host := o.endpoint.Host
+	auth := sigV4(http.MethodGet, path, "", [][2]string{{"host", host}, {"x-amz-content-sha256", emptySHA256},
+		{"x-amz-date", stamp}}, emptySHA256, stamp, o.region, o.keyID, o.secret)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, o.endpoint.Scheme+"://"+host+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Amz-Date", stamp)
+	req.Header.Set("X-Amz-Content-Sha256", emptySHA256)
+	req.Header.Set("Authorization", auth)
+	resp, err := do(c, req)
+	if err != nil {
+		return nil, err
+	}
+	defer drain(resp.Body)
+	switch {
+	case resp.StatusCode == http.StatusNotFound:
+		return nil, errNoObject
+	case resp.StatusCode/100 != 2:
+		return nil, refusal(resp, "okumayı")
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, max+1))
+	if err != nil {
+		return nil, fmt.Errorf("depodan okunamadı: %v", err)
+	}
+	if int64(len(data)) > max {
+		return nil, fmt.Errorf("depodaki dosya %d bayttan büyük", max)
+	}
+	return data, nil
+}
+
+// do sends an S3 request; its error says why without the address (which names the
+// account).
+func do(c *http.Client, req *http.Request) (*http.Response, error) {
+	resp, err := c.Do(req)
+	if err != nil {
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err
+		}
+		return nil, fmt.Errorf("depoya ulaşılamadı: %v", err)
+	}
+	return resp, nil
+}
+
+// refusal is S3's answer other than 2xx, as an error; op is what was refused.
+func refusal(resp *http.Response, op string) error {
 	var e struct {
 		Code    string `xml:"Code"`
 		Message string `xml:"Message"`
@@ -140,9 +202,9 @@ func (o s3Object) put(ctx context.Context, c *http.Client, body []byte, contentT
 	}
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 	if xml.Unmarshal(data, &e) != nil || e.Code == "" {
-		return fmt.Errorf("depo yazmayı reddetti (HTTP %d)", resp.StatusCode)
+		return fmt.Errorf("depo %s reddetti (HTTP %d)", op, resp.StatusCode)
 	}
-	se := &s3Error{status: resp.StatusCode, code: e.Code, msg: clipMsg(e.Message, 200), region: e.Region}
+	se := &s3Error{op: op, status: resp.StatusCode, code: e.Code, msg: clipMsg(e.Message, 200), region: e.Region}
 	if m := reExpectRegion.FindStringSubmatch(e.Message); se.region == "" && m != nil {
 		se.region = m[1]
 	}
@@ -151,12 +213,13 @@ func (o s3Object) put(ctx context.Context, c *http.Client, body []byte, contentT
 
 // s3Error is S3's refusal; region is the one it asks for, when it says.
 type s3Error struct {
+	op                string
 	status            int
 	code, msg, region string
 }
 
 func (e *s3Error) Error() string {
-	return fmt.Sprintf("depo yazmayı reddetti (HTTP %d): %s %s", e.status, e.code, e.msg)
+	return fmt.Sprintf("depo %s reddetti (HTTP %d): %s %s", e.op, e.status, e.code, e.msg)
 }
 
 // reExpectRegion reads the region from a message such as "the region 'us-east-1' is

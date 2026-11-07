@@ -192,3 +192,68 @@ func TestSourcesInMenuAndRemoveUnreachable(t *testing.T) {
 		t.Fatalf("removed without cleanup: %d %v", resp.StatusCode, e.agent.mig.removed)
 	}
 }
+
+// The outside watcher's view: none, all answering, some not, an unreadable heartbeat.
+func TestNotifyPageWatcher(t *testing.T) {
+	e := newEnv(t)
+	c := e.client(t, true)
+	e.login(t, c)
+	set := func(fs agent.StatusFileState) {
+		e.agent.mu.Lock()
+		e.agent.nt.status.StatusFile = &fs
+		e.agent.mu.Unlock()
+	}
+	key := "footops-t1/izleme/durum.json"
+
+	set(agent.StatusFileState{Key: key, LastOK: time.Now(), WatcherNone: true})
+	_, body := c.do("GET", "/notify", nil)
+	if !strings.Contains(body, "Dış nöbetçi bu sunucuyu izlemiyor") || !strings.Contains(body, key) {
+		t.Fatalf("no watcher:\n%s", body)
+	}
+
+	beat := &agent.WatcherBeat{Format: 1, Time: time.Now().Add(-3 * time.Minute), Every: 300, Visits: 120,
+		Domains: []agent.WatcherDomain{{Name: "magaza.example", Site: "magaza", OK: true}, {Name: "www.magaza.example", Site: "magaza", OK: true}}}
+	set(agent.StatusFileState{Key: key, LastOK: time.Now(), Watcher: beat})
+	_, body = c.do("GET", "/notify", nil)
+	if !strings.Contains(body, "Son yoklama 3 dk önce") || !strings.Contains(body, "2 alan adı, çalışanlar 2 dakikada bir yoklanıyor") ||
+		!strings.Contains(body, "hepsi açılıyor") || strings.Contains(body, "izlemiyor") {
+		t.Fatalf("all answering:\n%s", body)
+	}
+
+	beat.Domains = append(beat.Domains,
+		agent.WatcherDomain{Name: "blog.example", Site: "blog", Down: true, Code: "502", Reason: "502 — site yanıt vermiyor", Since: time.Now().Add(-20 * time.Minute)},
+		agent.WatcherDomain{Name: "kasa.example", Site: "kasa", Code: "timeout", Reason: "zaman aşımı (10 sn içinde yanıt yok)", Since: time.Now().Add(-time.Minute)})
+	set(agent.StatusFileState{Key: key, LastOK: time.Now(), Watcher: beat, WatcherErr: "depo okumayı reddetti (HTTP 403): AccessDenied Access Denied"})
+	_, body = c.do("GET", "/notify", nil)
+	for _, want := range []string{"2 tanesi açılmıyor", "blog.example", "502 — site yanıt vermiyor", "20 dk önce", ">çalışmıyor<", ">deneniyor<",
+		"kasa.example", "Nöbetçinin dosyası okunamadı: depo okumayı reddetti"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("failing: %q not on the page", want)
+		}
+	}
+	if strings.Contains(body, ">magaza.example<") {
+		t.Error("an answering domain listed among the failing")
+	}
+}
+
+// Domains the watcher cannot watch, and the watcher's own trouble.
+func TestNotifyPageWatcherTrouble(t *testing.T) {
+	e := newEnv(t)
+	c := e.client(t, true)
+	e.login(t, c)
+	beat := &agent.WatcherBeat{Format: 1, Time: time.Now().Add(-time.Minute), Every: 300, Visits: 120,
+		Domains:   []agent.WatcherDomain{{Name: "kasa.example", Site: "kasa", OK: true, Note: "cloudflare-challenge"}, {Name: "magaza.example", Site: "magaza", OK: true}},
+		SendError: "Telegram reddetti (HTTP 403: Forbidden: bot was kicked)"}
+	e.agent.mu.Lock()
+	e.agent.nt.status.StatusFile = &agent.StatusFileState{Key: "footops-t1/izleme/durum.json", LastOK: time.Now(), Watcher: beat}
+	e.agent.mu.Unlock()
+	_, body := c.do("GET", "/notify", nil)
+	for _, want := range []string{"hepsi açılıyor", "İzlenemeyen", ">kasa.example<", "Nöbetçi Telegram&#39;a mesaj gönderemiyor (Telegram reddetti (HTTP 403: Forbidden: bot was kicked))."} {
+		if !strings.Contains(body, want) {
+			t.Errorf("%q not on the page", want)
+		}
+	}
+	if strings.Contains(body, ">magaza.example<") {
+		t.Error("a watched domain listed as not watched")
+	}
+}

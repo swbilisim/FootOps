@@ -1,0 +1,12 @@
+{
+  "name": "footops-nobetci",
+  "private": true,
+  "description": "FootOps' outside watcher: a Cloudflare Worker that visits the sites and watches the servers' status files",
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"test/*.test.js\""
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

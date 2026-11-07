@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/swbilisim/FootOps/internal/sites"
 )
 
 // AWS's own examples (Signature Version 4, "Authenticating Requests: Using the
@@ -64,6 +67,9 @@ type fakeS3 struct {
 	objects map[string][]byte
 	refuse  bool
 	puts    int
+	gets    int
+	// refuseGet refuses reads only.
+	refuseGet bool
 }
 
 func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -82,9 +88,12 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `<?xml version="1.0"?><Error><Code>AuthorizationHeaderMalformed</Code><Message>the region 'us-east-1' is wrong; expecting '`+region+`'</Message></Error>`)
 		return
 	}
-	want := sigV4(r.Method, r.URL.EscapedPath(), "", [][2]string{{"content-type", r.Header.Get("Content-Type")}, {"host", r.Host},
-		{"x-amz-content-sha256", payload}, {"x-amz-date", stamp}}, payload, stamp, region, f.keyID, f.secret)
-	if r.Method != http.MethodPut || r.Header.Get("Authorization") != want || r.Header.Get("X-Amz-Content-Sha256") != payload {
+	headers := [][2]string{{"content-type", r.Header.Get("Content-Type")}, {"host", r.Host}, {"x-amz-content-sha256", payload}, {"x-amz-date", stamp}}
+	if r.Method == http.MethodGet {
+		headers = headers[1:]
+	}
+	want := sigV4(r.Method, r.URL.EscapedPath(), "", headers, payload, stamp, region, f.keyID, f.secret)
+	if (r.Method != http.MethodPut && r.Method != http.MethodGet) || r.Header.Get("Authorization") != want || r.Header.Get("X-Amz-Content-Sha256") != payload {
 		w.WriteHeader(http.StatusForbidden)
 		io.WriteString(w, `<?xml version="1.0"?><Error><Code>SignatureDoesNotMatch</Code><Message>bad signature</Message></Error>`)
 		return
@@ -92,6 +101,22 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if f.refuse {
 		w.WriteHeader(http.StatusForbidden)
 		io.WriteString(w, `<?xml version="1.0"?><Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>`)
+		return
+	}
+	if r.Method == http.MethodGet {
+		f.gets++
+		if f.refuseGet {
+			w.WriteHeader(http.StatusForbidden)
+			io.WriteString(w, `<?xml version="1.0"?><Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>`)
+			return
+		}
+		data, ok := f.objects[r.URL.Path]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			io.WriteString(w, `<?xml version="1.0"?><Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>`)
+			return
+		}
+		w.Write(data)
 		return
 	}
 	f.puts++
@@ -214,6 +239,18 @@ func TestLiveS3Put(t *testing.T) {
 		t.Fatal(maskRepo(repo, err.Error()))
 	}
 	t.Logf("PUT %s/%s %s (region %s)", o.bucket, o.key, time.Since(start).Round(time.Millisecond), o.region)
+	// Read back with the same signing (the watcher's heartbeat is read this way).
+	start = time.Now()
+	data, err := o.get(context.Background(), &http.Client{Timeout: 30 * time.Second}, 1<<10, time.Now())
+	if err != nil || string(data) != `{"format":1,"deneme":true}`+"\n" {
+		t.Fatalf("GET: %q %v", data, err)
+	}
+	t.Logf("GET %s", time.Since(start).Round(time.Millisecond))
+	missing := o
+	missing.key += ".yok"
+	if _, err := missing.get(context.Background(), &http.Client{Timeout: 30 * time.Second}, 1<<10, time.Now()); !errors.Is(err, errNoObject) {
+		t.Fatalf("GET of a missing object: %v", err)
+	}
 	// The wrong secret is refused, and the error does not show it.
 	o.secret = "wrong" + o.secret
 	err = o.put(context.Background(), &http.Client{Timeout: 30 * time.Second}, []byte("x"), "text/plain", time.Now())
@@ -261,5 +298,168 @@ func TestStatusFileNoRedirect(t *testing.T) {
 	w := &StatusWriter{Backups: e.b, Sites: e.b.Data.Store.List, Server: "T1", HTTP: srv.Client()}
 	if err := w.Write(context.Background()); err == nil || !strings.Contains(err.Error(), "307") || gets != 0 {
 		t.Fatalf("redirect: %v (%d GETs)", err, gets)
+	}
+}
+
+// The outside watcher's heartbeat is read after each status file: none, fresh, old (an
+// alert, to Telegram too, judged on fresh reads only and kept while reads fail),
+// unreadable, garbage, a watcher in trouble.
+func TestStatusFileWatcher(t *testing.T) {
+	e := newBackups(t)
+	s3 := &fakeS3{keyID: "KEYID12345", secret: "SeCrEt/Key+123=", objects: map[string][]byte{}}
+	srv := httptest.NewServer(s3)
+	defer srv.Close()
+	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	saveBackupSecret(e.b.SecretPath, backupSecret{Repository: "s3:" + srv.URL + "/footops-t1", KeyID: "KEYID12345", SecretKey: "SeCrEt/Key+123=",
+		Password: "RepoPassword0123456789abcdefghijklmnop"})
+	w := &StatusWriter{Backups: e.b, Sites: e.b.Data.Store.List, Server: "T1", HTTP: srv.Client(), now: func() time.Time { return now }}
+	ctx := context.Background()
+	const key = "/footops-t1/izleme/nobetci.json"
+	at := func(h, m int) time.Time { return time.Date(2026, 11, 7, h, m, 0, 0, time.UTC) }
+	keys := func(al []Alert) (out []string) {
+		for _, a := range al {
+			out = append(out, a.Key)
+		}
+		return out
+	}
+
+	if err := w.Write(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if st := w.State(); st.Watcher != nil || !st.WatcherNone || st.WatcherErr != "" || s3.gets != 1 {
+		t.Fatalf("no heartbeat: %+v (%d GETs)", st, s3.gets)
+	}
+	if al := w.Alerts(now.Add(5 * time.Minute)); len(al) != 0 {
+		t.Fatalf("an alert without a watcher: %+v", al)
+	}
+
+	beat := `{"format":1,"time":"2026-11-07T11:58:00Z","every":300,"interval":120,"domains":[
+		{"name":"magaza.example","site":"magaza","ok":true},
+		{"name":"blog.example","site":"blog","ok":false,"down":true,"code":"502","reason":"502 — site yanıt vermiyor","since":"2026-11-07T11:40:00Z"},
+		{"name":"kasa.example","site":"kasa","ok":true,"note":"cloudflare-challenge"}]}`
+	s3.objects[key] = []byte(beat)
+	if err := w.Write(ctx); err != nil {
+		t.Fatal(err)
+	}
+	st := w.State()
+	if st.Watcher == nil || st.WatcherNone || st.Watcher.Minutes() != 2 || len(st.Watcher.Domains) != 3 || st.Watcher.Trouble() != "" {
+		t.Fatalf("heartbeat: %+v", st)
+	}
+	if bad := st.Watcher.Failing(); len(bad) != 1 || bad[0].Name != "blog.example" || !bad[0].Down || bad[0].Since.IsZero() {
+		t.Fatalf("failing: %+v", bad)
+	}
+	if blind := st.Watcher.Blind(); len(blind) != 1 || blind[0].Name != "kasa.example" {
+		t.Fatalf("blind: %+v", blind)
+	}
+	if al := w.Alerts(now); len(al) != 0 {
+		t.Fatalf("fresh heartbeat, alert: %+v", al)
+	}
+
+	// 30 minutes after its last beat, read afresh: an alert that goes to Telegram.
+	now = at(12, 28)
+	w.Write(ctx)
+	al := w.Alerts(now)
+	if len(al) != 1 || al[0].Key != "monitor:watcher" || !Notifiable(al[0]) || !strings.Contains(al[0].Detail, "30 dk önce") || !al[0].Since.Equal(at(12, 28)) {
+		t.Fatalf("old heartbeat: %+v", al)
+	}
+	// Reads refused: the last heartbeat, and its alert, stand, also once the reads are old.
+	s3.refuseGet = true
+	now = at(12, 33)
+	w.Write(ctx)
+	if st := w.State(); st.Watcher == nil || !strings.Contains(st.WatcherErr, "okumayı reddetti") {
+		t.Fatalf("refused read: %+v", st)
+	}
+	if k := keys(w.Alerts(at(12, 50))); len(k) != 1 || k[0] != "monitor:watcher" {
+		t.Fatalf("alert gone with a failed read: %v", k)
+	}
+	// A connection that fails says so without the address.
+	srv.Close()
+	now = at(12, 51)
+	w.Write(ctx)
+	if st := w.State(); strings.Contains(st.LastErr, "127.0.0.1") || st.LastErr == "" {
+		t.Fatalf("connection error: %q", st.LastErr)
+	}
+	srv = httptest.NewServer(s3)
+	defer srv.Close()
+	saveBackupSecret(e.b.SecretPath, backupSecret{Repository: "s3:" + srv.URL + "/footops-t1", KeyID: "KEYID12345", SecretKey: "SeCrEt/Key+123=",
+		Password: "RepoPassword0123456789abcdefghijklmnop"})
+	w.HTTP = srv.Client()
+
+	// A new heartbeat clears it; garbage is an error, not a heartbeat.
+	s3.refuseGet = false
+	now = at(13, 0)
+	s3.objects[key] = []byte(strings.Replace(beat, "11:58", "12:59", 1))
+	w.Write(ctx)
+	if al := w.Alerts(now); len(al) != 0 {
+		t.Fatalf("fresh again: %+v", al)
+	}
+	s3.objects[key] = []byte(`{"format":0}`)
+	w.Write(ctx)
+	if st := w.State(); st.Watcher == nil || st.WatcherErr != "biçimi tanınmadı" {
+		t.Fatalf("garbage: %+v", st)
+	}
+
+	// A watcher that cannot send: an alert after 15 minutes, from when it began failing.
+	trouble := strings.Replace(beat, `"interval":120,`, `"interval":120,"send_error":"Telegram reddetti (HTTP 403: Forbidden)","send_failing":"2026-11-07T12:50:00Z",`, 1)
+	trouble = strings.Replace(trouble, "11:58", "12:59", 1)
+	s3.objects[key] = []byte(trouble)
+	w.Write(ctx)
+	if k := keys(w.Alerts(now)); len(k) != 0 {
+		t.Fatalf("trouble too soon: %v", k)
+	}
+	now = at(13, 6)
+	w.Write(ctx)
+	al = w.Alerts(now)
+	if len(al) != 1 || al[0].Key != "monitor:watcher-trouble" || !Notifiable(al[0]) || !strings.Contains(al[0].Detail, "Telegram'a mesaj gönderemiyor") ||
+		!al[0].Since.Equal(at(13, 5)) {
+		t.Fatalf("trouble: %+v", al)
+	}
+	s3.objects[key] = []byte(strings.Replace(beat, "11:58", "13:06", 1))
+	w.Write(ctx)
+	if al := w.Alerts(now); len(al) != 0 {
+		t.Fatalf("trouble over: %+v", al)
+	}
+
+	// The copy given out is the writer's own no more.
+	st = w.State()
+	st.Watcher.Domains[0].Name = "x"
+	if w.State().Watcher.Domains[0].Name != "magaza.example" {
+		t.Fatal("the state shares its heartbeat")
+	}
+	// Gone from the bucket: no watcher, no alert.
+	delete(s3.objects, key)
+	w.Write(ctx)
+	if st := w.State(); st.Watcher != nil || !st.WatcherNone || len(w.Alerts(now.Add(time.Hour))) != 0 {
+		t.Fatalf("removed: %+v", st)
+	}
+}
+
+// What the watcher reads must hold no traps: a backup never saved is no time at all
+// (Go would write year 1), and a site list that could not be read says so instead of
+// claiming no sites.
+func TestStatusFileForTheWatcher(t *testing.T) {
+	e := newBackups(t)
+	s3 := &fakeS3{keyID: "KEYID12345", secret: "SeCrEt/Key+123=", objects: map[string][]byte{}}
+	srv := httptest.NewServer(s3)
+	defer srv.Close()
+	saveBackupSecret(e.b.SecretPath, backupSecret{Repository: "s3:" + srv.URL + "/footops-t1", KeyID: "KEYID12345", SecretKey: "SeCrEt/Key+123=",
+		Password: "RepoPassword0123456789abcdefghijklmnop"})
+	broken := errors.New("footops.json okunamadı")
+	listErr := error(nil)
+	w := &StatusWriter{Backups: e.b, Server: "T1", HTTP: srv.Client(),
+		Sites: func() ([]sites.Spec, error) { return nil, listErr }}
+	if err := w.Write(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	body := string(s3.objects["/footops-t1/izleme/durum.json"])
+	if strings.Contains(body, "last_ok") || strings.Contains(body, "0001-01-01") || strings.Contains(body, "sites_error") {
+		t.Fatalf("no backup yet:\n%s", body)
+	}
+	listErr = broken
+	w.Write(context.Background())
+	var got StatusFile
+	json.Unmarshal(s3.objects["/footops-t1/izleme/durum.json"], &got)
+	if got.SitesError != "footops.json okunamadı" || len(got.Sites) != 0 {
+		t.Fatalf("site list error: %+v", got)
 	}
 }

@@ -15,3 +15,8 @@
 .DS_Store
 .idea/
 .vscode/
+
+# The watcher's local Cloudflare setup (worker/wrangler.example.toml is the template)
+/worker/wrangler.toml
+.wrangler/
+node_modules/
