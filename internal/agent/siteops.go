@@ -216,10 +216,14 @@ func (o *SiteOps) Create(ctx context.Context, spec sites.Spec, env map[string]st
 	done("İmaj indirildi: " + spec.Image)
 
 	if spec.DataMount != "" {
-		if err := o.prepareDataDir(ctx, spec); err != nil {
+		uid, err := o.prepareDataDir(ctx, spec)
+		if err != nil {
 			return err
 		}
 		done(fmt.Sprintf("Kalıcı klasör: %s/%s → %s", spec.Dir(), sites.DataDir, spec.DataMount))
+		if a := o.loginAccount(uid); a != "" {
+			progress(uidWarning(uid, a))
+		}
 	}
 
 	if err := o.compose(ctx, spec, "up", "--detach"); err != nil {
@@ -607,17 +611,14 @@ func (o *SiteOps) mongoOps() mongoAdmin {
 }
 
 // prepareDataDir creates the persistent directory owned by the user the image runs as,
-// so the app can write to it without running as root.
-func (o *SiteOps) prepareDataDir(ctx context.Context, s sites.Spec) error {
+// so the app can write to it without running as root; it returns that uid.
+func (o *SiteOps) prepareDataDir(ctx context.Context, s sites.Spec) (int, error) {
 	d := o.path(filepath.Join(s.Dir(), sites.DataDir))
 	if err := os.MkdirAll(d, 0o750); err != nil {
-		return err
+		return 0, err
 	}
 	uid, gid := o.imageUser(ctx, s.Image)
-	if err := os.Chown(d, uid, gid); err != nil {
-		return err
-	}
-	return nil
+	return uid, os.Chown(d, uid, gid)
 }
 
 // imageUser returns the uid/gid the image runs as. It asks the image itself (`id`), which
@@ -638,6 +639,38 @@ func (o *SiteOps) imageUser(ctx context.Context, image string) (int, int) {
 		}
 	}
 	return 0, 0
+}
+
+// loginAccount names the server account with uid that a person can log in with. A
+// container's processes running as that uid are that account's on the server: it reads
+// their environment — the site's secrets — and stops them without sudo (2026-11-03:
+// the admin accounts had 1000 and 1001, the uids of Node and Next.js images). System
+// accounts, nobody and accounts without a shell are left out.
+func (o *SiteOps) loginAccount(uid int) string {
+	if uid < 1000 || uid == 65534 {
+		return ""
+	}
+	data, err := os.ReadFile(o.path("/etc/passwd"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		f := strings.Split(line, ":")
+		if len(f) < 7 || f[2] != strconv.Itoa(uid) {
+			continue
+		}
+		// An empty shell is /bin/sh (passwd(5)): a login too.
+		if sh := strings.TrimSpace(f[6]); strings.HasSuffix(sh, "nologin") || strings.HasSuffix(sh, "/false") {
+			continue
+		}
+		return f[0]
+	}
+	return ""
+}
+
+// uidWarning is the step that says so.
+func uidWarning(uid int, account string) string {
+	return fmt.Sprintf("⚠ İmaj uid %d ile çalışıyor; sunucuda bu numara %s hesabının: o hesap sudo'suz bu sitenin süreçlerinin ortam değişkenlerini (sırlarını) okuyabilir. Hesabı 2000 ve üstü bir numaraya taşı ya da kullanılmıyorsa sil.", uid, account)
 }
 
 // imageIDs runs `id` once in the image, as a site would run it (no network, no

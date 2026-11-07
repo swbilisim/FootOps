@@ -123,7 +123,8 @@ func (b *Backups) ExportBackup(ctx context.Context, t *Task, site string, req Ba
 	}
 	taken := pt.Time.UTC().Truncate(time.Second)
 	now := b.now().UTC().Truncate(time.Second)
-	name := fmt.Sprintf("%s-%s.footops.tar", spec.Name, taken.Format("20060102-150405"))
+	// Named by the backup's time as the panel shows it (the server's), the manifest UTC.
+	name := fmt.Sprintf("%s-%s.footops.tar", spec.Name, taken.Local().Format("20060102-150405"))
 	part := filepath.Join(dir, name+".part")
 	f, err := os.OpenFile(part, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
 	if err != nil {

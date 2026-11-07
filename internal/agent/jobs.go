@@ -88,6 +88,7 @@ var (
 		"backup.restore": 2 * time.Hour,
 		"backup.export":  time.Hour,
 		"backup.list":    15 * time.Minute,
+		"site.purge":     time.Hour, // the database's last copy first
 	}
 )
 

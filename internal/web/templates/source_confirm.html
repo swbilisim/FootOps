@@ -11,8 +11,8 @@
     {{with .Data.Problem}}<div class="notice bad">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
     <form method="post" action="/sources/{{$src.ID}}/remove">
       <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
-      <label class="check"><input type="checkbox" name="cleanup"{{if $src.Pinned}} checked{{else}} disabled{{end}}> <span>Bu sunucunun satırını kaynaktaki <span class="mono">authorized_keys</span> dosyasından da sil (önerilir)</span></label>
-      {{if not $src.Pinned}}<p class="hint">Bu kaynağa hiç bağlanılmadı; satır kaynağa eklendiyse elle sil: <span class="mono">{{$src.Authorized}}</span></p>{{end}}
+      <label class="check"><input type="checkbox" name="cleanup"{{if not $src.Pinned}} disabled{{else if not .Data.Uncheck}} checked{{end}}> <span>Bu sunucunun satırını kaynaktaki <span class="mono">authorized_keys</span> dosyasından da sil (önerilir)</span></label>
+      {{if not $src.Pinned}}<p class="hint">Bu kaynağa hiç bağlanılmadı; satır kaynağa eklendiyse elle sil: <span class="mono">{{$src.Authorized}}</span></p>{{else}}<p class="hint">Bunun için kaynağa bağlanılır{{if not $src.Checked.IsZero}} (son başarılı bağlantı {{since $src.Checked}}){{end}}; kaynak sunucu kapatıldıysa kutuyu boş bırak.</p>{{end}}
       <div class="form-actions">
         <button type="submit" class="danger">{{icon "trash"}}Kaldır</button>
         <a class="btn" href="/sources">Vazgeç</a>

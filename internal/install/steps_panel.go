@@ -312,8 +312,9 @@ Restart=on-failure
 RestartSec=3
 NoNewPrivileges=yes
 ProtectSystem=full
-# /etc is read-only for the agent but for the backup repository's settings it keeps.
-ReadWritePaths=-/etc/footops/secrets/backup
+# /etc is read-only for the agent but for the backup repository's and the notifications'
+# settings it keeps.
+ReadWritePaths=-/etc/footops/secrets/backup -/etc/footops/secrets/notify
 ProtectHome=yes
 PrivateTmp=yes
 ProtectKernelModules=yes

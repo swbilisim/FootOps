@@ -309,9 +309,10 @@ var coreDirs = []struct {
 	// secrets live one level down, root-only.
 	{configDir, 0o750},
 	{filepath.Dir(core.MongoSecretPath), 0o700},
-	// The agent may write only here of /etc (backup settings); it must exist when the
-	// agent starts.
+	// The agent may write only here of /etc (backup and notification settings); they
+	// must exist when the agent starts.
 	{core.BackupSecretDir, 0o700},
+	{core.NotifySecretDir, 0o700},
 }
 
 // Notes collects messages for the end of the run. They are printed to the terminal only,

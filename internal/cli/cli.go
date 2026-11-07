@@ -86,13 +86,15 @@ func Run(args []string, stdout, stderr io.Writer) int {
 				SourcesDir: remote.DefaultDir, MigrationsDir: agent.DefaultMigrationsDir, DBEditsDir: agent.DefaultDBEditsDir,
 				DockerConfig: os.Getenv("DOCKER_CONFIG"), RegistriesPath: agent.DefaultRegistriesPath,
 				BackupDir: agent.DefaultBackupDir, BackupSecret: agent.DefaultBackupSecret, ToolsDir: agent.DefaultToolsDir,
-				ResticCache: agent.DefaultResticCache}
+				ResticCache: agent.DefaultResticCache, NotifySecret: agent.DefaultNotifySecret, NotifyState: agent.DefaultNotifyState}
 			if cfg.DockerConfig == "" {
 				cfg.DockerConfig = agent.DefaultDockerConfig
 			}
 			if p, err := config.Load(config.Path); err == nil {
 				cfg.PanelHost, cfg.ServerCode = p.PanelHost, p.ServerCode
 			}
+			// Only the integration test sets it (a systemd drop-in: root's to write).
+			cfg.NotifyAPI = os.Getenv("FOOTOPS_TELEGRAM_API")
 			return agent.Main(ctx, cfg, l)
 		})
 	case "web":

@@ -608,7 +608,7 @@ func TestRestoreDatabase(t *testing.T) {
 	if _, err := e.b.loadView(v.ID); err == nil {
 		t.Error("view not closed after the restore")
 	}
-	for _, want := range []string{"Site durduruldu", "Yüklendi ve sayıldı", "Site başlatıldı", "Açılan yedek kapatıldı", "Veritabanı kopyaları → " + res.Snapshot} {
+	for _, want := range []string{"Site durduruldu", "Yüklendi ve sayıldı", "Site başlatıldı", "Açılan yedek kapatıldı", "Veritabanı kopyaları → " + copyLabel(res.Snapshot)} {
 		if !strings.Contains(steps(tk), want) {
 			t.Errorf("steps lack %q:\n%s", want, steps(tk))
 		}
@@ -691,7 +691,7 @@ func TestRestoreFiles(t *testing.T) {
 	if strings.Contains(args, "DAC_READ_SEARCH") || strings.Contains(args, "SYS_ADMIN") {
 		t.Errorf("more capabilities than needed: %s", args)
 	}
-	if !strings.Contains(steps(tk), "Dosya kopyaları → "+res.FilesOld) {
+	if !strings.Contains(steps(tk), "Dosya kopyaları → "+copyLabel(res.FilesOld)) {
 		t.Errorf("no undo hint:\n%s", steps(tk))
 	}
 }
@@ -745,7 +745,7 @@ func TestExportBackup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, steps(tk))
 	}
-	if info.File != "magaza-20261106-010000.footops.tar" || !info.Env || info.Backup.IsZero() || info.Files != 3 || info.Documents != 10 {
+	if info.File != "magaza-"+time.Date(2026, 11, 6, 1, 0, 0, 0, time.UTC).Local().Format("20060102-150405")+".footops.tar" || !info.Env || info.Backup.IsZero() || info.Files != 3 || info.Documents != 10 {
 		t.Errorf("info %+v", info)
 	}
 	if !strings.Contains(steps(tk), "1 öğe alınmadı") {

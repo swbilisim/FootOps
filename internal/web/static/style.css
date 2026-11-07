@@ -159,6 +159,8 @@ main { width: 100%; max-width: 1240px; margin: 0 auto; padding: 28px 32px 56px; 
     background: var(--surface); border-top: 1px solid var(--border);
   }
   .nav a { flex-direction: column; justify-content: center; gap: 4px; font-size: .7rem; padding: 6px 2px; }
+  /* Five tabs fit a phone; the rest are linked from their pages (Siteler, Sunucu). */
+  .nav a.more { display: none; }
   .nav a .i { width: 22px; height: 22px; }
   .nav a[aria-current="page"]::before {
     content: ""; position: absolute; top: 0; left: 28%; right: 28%; height: 2px; border-radius: 0 0 2px 2px; background: var(--accent);

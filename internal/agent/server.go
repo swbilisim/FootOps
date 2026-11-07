@@ -48,6 +48,10 @@ type Server struct {
 	Data    *DataOps
 	Jobs    *Jobs
 	Backups *Backups
+	// Notify sends the alerts to Telegram (nil: off); StatusFile writes the status
+	// file for the outside watcher (nil: no backups).
+	Notify     *Notifier
+	StatusFile *StatusWriter
 	// Registries are the image registry logins docker pulls with.
 	Registries *Registries
 	// AllowedUIDs may connect; everyone else gets 403. Checked against the kernel's
@@ -110,6 +114,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sites/check", s.checkSite)
 	mux.HandleFunc("POST /v1/sites/{name}/move", s.moveSite)
 	mux.HandleFunc("GET /v1/sites/{name}/dns", s.siteDNS)
+	mux.HandleFunc("GET /v1/removed", s.listRemoved)
+	mux.HandleFunc("POST /v1/removed/{id}/purge", s.purgeRemoved)
 	mux.HandleFunc("POST /v1/images/check", s.checkImage)
 	mux.HandleFunc("GET /v1/registries", s.listRegistries)
 	mux.HandleFunc("POST /v1/registries", s.loginRegistry)
@@ -187,6 +193,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/sites/{name}/views/{id}/db", s.inView(s.dbCollections))
 	mux.HandleFunc("GET /v1/sites/{name}/views/{id}/db/find", s.inView(s.dbFind))
 	mux.HandleFunc("GET /v1/sites/{name}/views/{id}/db/doc", s.inView(s.dbDoc))
+	mux.HandleFunc("GET /v1/notify", s.notifyStatus)
+	mux.HandleFunc("POST /v1/notify/telegram", s.notifyStart)
+	mux.HandleFunc("POST /v1/notify/telegram/link", s.notifyLink)
+	mux.HandleFunc("POST /v1/notify/telegram/cancel", s.notifyCancel)
+	mux.HandleFunc("POST /v1/notify/telegram/remove", s.notifyRemove)
+	mux.HandleFunc("POST /v1/notify/test", s.notifyTest)
 	mux.HandleFunc("GET /v1/jobs/{id}", s.getJob)
 	mux.HandleFunc("POST /v1/jobs/{id}/cancel", s.cancelJob)
 	mux.HandleFunc("GET /v1/certs", s.listCerts)
@@ -416,6 +428,12 @@ type Config struct {
 	ToolsDir     string
 	ResticCache  string
 	ServerCode   string
+	// NotifySecret keeps the Telegram bot and chat, NotifyState what the chat was told;
+	// NotifySecret empty: no notifications. NotifyAPI replaces Telegram's address (the
+	// integration test's stand-in; empty: Telegram).
+	NotifySecret string
+	NotifyState  string
+	NotifyAPI    string
 }
 
 // Main runs the agent until ctx is done.
@@ -526,6 +544,24 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 	if backups != nil {
 		sampler.Alerts.Backups = backups.Alerts
 	}
+	var notify *Notifier
+	if cfg.NotifySecret != "" {
+		code := cfg.ServerCode
+		if code == "" {
+			code = host
+		}
+		notify = &Notifier{SecretPath: cfg.NotifySecret, StatePath: cfg.NotifyState, Server: code, PanelHost: cfg.PanelHost,
+			API: cfg.NotifyAPI, Active: sampler.Alerts.Active, Log: logger}
+		sampler.Alerts.Extra = append(sampler.Alerts.Extra, notify.Alerts)
+		go notify.Run(ctx)
+	}
+	var statusFile *StatusWriter
+	if backups != nil {
+		statusFile = &StatusWriter{Backups: backups, Sites: ops.Store.List, Server: backups.Server, Log: logger,
+			Containers: func(ctx context.Context) []ContainerInfo { return sampler.Latest(ctx).Containers }}
+		sampler.Alerts.Extra = append(sampler.Alerts.Extra, statusFile.Alerts)
+		go statusFile.Run(ctx)
+	}
 	if cfg.HistoryPath != "" {
 		h, err := history.Load(cfg.HistoryPath, time.Now())
 		if err != nil {
@@ -576,6 +612,8 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 		Data:        data,
 		Jobs:        jobs,
 		Backups:     backups,
+		Notify:      notify,
+		StatusFile:  statusFile,
 		Registries:  regs,
 		AllowedUIDs: map[uint32]bool{0: true, uint32(uid): true},
 		Log:         logger,
@@ -640,7 +678,7 @@ func startRecovery(jobs *Jobs, data *DataOps, audit *Audit, tempDBs bool, logger
 						}
 					}
 					t.Step(fmt.Sprintf("✗ %s: MongoDB cevap vermediği için veritabanı kurtarılamadı; site durmuş, veritabanı yarım olabilir. Veritabanı kopyaları → %s → Geri yükle",
-						r.Site, orDash(r.Snapshot)))
+						r.Site, orDash(copyLabel(r.Snapshot))))
 					data.removeRecovery(r.Job)
 					errs = append(errs, mongoErr)
 					continue
@@ -1023,6 +1061,11 @@ func (s *Server) recordJobDetail(j Job, detail string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	s.Sampler.Sample(ctx)
+	// The outside watcher learns of a new, changed or removed site (or a repository just
+	// set up) at once — after the refresh, so the file has the container's state.
+	if s.StatusFile != nil && (strings.HasPrefix(j.Kind, "site.") || j.Kind == "backup.setup") {
+		s.StatusFile.Kick()
+	}
 }
 
 func (s *Server) getJob(w http.ResponseWriter, r *http.Request) {

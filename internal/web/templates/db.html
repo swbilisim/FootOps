@@ -11,7 +11,13 @@
     <p class="sub">MongoDB <span class="mono">{{$s.Name}}</span>, sitenin kendi kullanıcısıyla (yalnız bu veritabanı). Belgeler sayfa sayfa okunur; panelden düzenlenen ya da silinen bir belgenin önceki hali {{.Data.KeepDays}} gün saklanır ve geri alınabilir.</p>
     {{end}}
   </div>
-  {{with .Data.View}}<div class="page-actions"><a class="btn" href="/sites/{{$s.Name}}/backups/{{$.Data.Run}}/restore">{{icon "undo"}}Geri yükle…</a></div>{{end}}
+  {{with .Data.View}}<div class="page-actions">
+    <form method="post" action="/sites/{{$s.Name}}/backups/{{$.Data.Run}}/close">
+      <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+      <button type="submit" class="btn">{{icon "stop"}}Kapat</button>
+    </form>
+    <a class="btn" href="/sites/{{$s.Name}}/backups/{{$.Data.Run}}/restore">{{icon "undo"}}Geri yükle…</a>
+  </div>{{end}}
 </div>
 
 {{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>Veritabanı okunamadı: {{.}}</div></div>{{end}}

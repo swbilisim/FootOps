@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/swbilisim/FootOps/internal/core"
+	"github.com/swbilisim/FootOps/internal/docker"
 	"github.com/swbilisim/FootOps/internal/mongo"
 )
 
@@ -342,4 +343,47 @@ func sortedSet(m map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// dbPurger is what permanently removing a site takes of MongoDB: the real client has it,
+// tests stand in a fake.
+type dbPurger interface {
+	// Databases lists the databases with their size on disk.
+	Databases(ctx context.Context) (map[string]int64, error)
+	// DropSiteDB removes a removed site's database and every user defined on it.
+	DropSiteDB(ctx context.Context, db string) error
+}
+
+func (m mongoClient) Databases(ctx context.Context) (map[string]int64, error) {
+	out := map[string]int64{}
+	err := m.asRoot(ctx, func(ctx context.Context, c *mongo.Conn) error {
+		list, err := c.Run(ctx, "admin", mongoCmd("listDatabases"), mongoListReply)
+		if err != nil {
+			return err
+		}
+		dbs, err := array(list, "databases")
+		if err != nil {
+			return err
+		}
+		for _, d := range dbs {
+			out[str(d, "name")] = num(d, "sizeOnDisk")
+		}
+		return nil
+	})
+	return out, err
+}
+
+// DropSiteDB refuses MongoDB's own databases and temporary ones (they go their own way);
+// whether no site uses the database any more is the caller's to know.
+func (m mongoClient) DropSiteDB(ctx context.Context, db string) error {
+	if !docker.ValidName(db) || db == "admin" || db == "local" || db == "config" || temporaryDB(db) || strings.HasPrefix(db, "footops") {
+		return fmt.Errorf("%q bir site veritabanı değil", db)
+	}
+	return m.asRoot(ctx, func(ctx context.Context, c *mongo.Conn) error {
+		if _, err := c.Run(ctx, db, mongoCmd("dropAllUsersFromDatabase"), mongoAdminReply); err != nil {
+			return err
+		}
+		_, err := c.Run(ctx, db, mongoCmd("dropDatabase"), mongoAdminReply)
+		return err
+	})
 }

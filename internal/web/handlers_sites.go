@@ -20,7 +20,8 @@ var (
 
 func (s *Server) sitesList(w http.ResponseWriter, r *http.Request) {
 	list, err := s.agent.Sites(r.Context())
-	s.render(w, r, "sites", map[string]any{"Title": "Siteler", "Sites": list, "Err": errString(err)})
+	removed, _ := s.agent.Removed(r.Context(), false) // a directory listing: cheap
+	s.render(w, r, "sites", map[string]any{"Title": "Siteler", "Sites": list, "Err": errString(err), "Removed": len(removed)})
 }
 
 // siteEditForm is the edit form, kept as strings like siteForm. Env holds only new or

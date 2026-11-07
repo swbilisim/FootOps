@@ -109,7 +109,7 @@ func (d *DataOps) snapshotSource(snap Snapshot) (restoreSource, error) {
 	if err != nil {
 		return restoreSource{}, fmt.Errorf("kopya okunamadı: %w", err)
 	}
-	src := restoreSource{Label: "kopya " + snap.ID, Path: path, DB: snap.DB, Expect: map[string]int64{}, Size: snap.DataSize,
+	src := restoreSource{Label: "kopya " + copyLabel(snap.ID), Path: path, DB: snap.DB, Expect: map[string]int64{}, Size: snap.DataSize,
 		Sec: dbSection{Offset: 0, Length: snap.Bytes, Gzip: true, SHA256: snap.SHA256}}
 	views := map[string]bool{}
 	for _, n := range p.Collections(snap.DB) {
@@ -426,10 +426,10 @@ func (d *DataOps) ApplyImport(ctx context.Context, t *Task, site, uploadID strin
 			t.Step("✓ Yüklenen dosya sunucudan silindi")
 		}
 		if res.Snapshot != "" {
-			t.Step(fmt.Sprintf("ℹ Veritabanını geri almak için: site sayfası → Veritabanı kopyaları → %s → Geri yükle", res.Snapshot))
+			t.Step(fmt.Sprintf("ℹ Veritabanını geri almak için: site sayfası → Veritabanı kopyaları → %s → Geri yükle", copyLabel(res.Snapshot)))
 		}
 		if res.FilesOld != "" {
-			t.Step(fmt.Sprintf("ℹ Dosyaları geri almak için: site sayfası → Dosya kopyaları → %s → Geri yükle", res.FilesOld))
+			t.Step(fmt.Sprintf("ℹ Dosyaları geri almak için: site sayfası → Dosya kopyaları → %s → Geri yükle", copyLabel(res.FilesOld)))
 		}
 	}
 	return res, err
@@ -447,10 +447,10 @@ func (d *DataOps) RestoreSnapshot(ctx context.Context, t *Task, site, id string,
 	if err != nil {
 		return Applied{}, err
 	}
-	t.Step(fmt.Sprintf("ℹ Geri yüklenecek kopya: %s (%d koleksiyon, %d belge)", snap.ID, len(snap.Collections), snap.Documents))
+	t.Step(fmt.Sprintf("ℹ Geri yüklenecek kopya: %s (%d koleksiyon, %d belge)", copyLabel(snap.ID), len(snap.Collections), snap.Documents))
 	res, err := d.apply(ctx, t, site, restorePlan{DB: &src, DBMode: ModeReplace, Reason: "before-restore"}, actor)
 	if err == nil {
-		t.Step(fmt.Sprintf("ℹ Bu işlemi geri almak için: Veritabanı kopyaları → %s → Geri yükle", res.Snapshot))
+		t.Step(fmt.Sprintf("ℹ Bu işlemi geri almak için: Veritabanı kopyaları → %s → Geri yükle", copyLabel(res.Snapshot)))
 	}
 	return res, err
 }
@@ -531,7 +531,7 @@ func (d *DataOps) RestoreFiles(ctx context.Context, t *Task, site, id string, ac
 	if err == nil {
 		res := Applied{FilesOld: strings.TrimPrefix(rec.Files.Old, dataOldPrefix)}
 		t.SetResult(res.result())
-		t.Step(fmt.Sprintf("ℹ Bu işlemi geri almak için: Dosya kopyaları → %s → Geri yükle", res.FilesOld))
+		t.Step(fmt.Sprintf("ℹ Bu işlemi geri almak için: Dosya kopyaları → %s → Geri yükle", copyLabel(res.FilesOld)))
 		return res, nil
 	}
 	t.Step("✗ " + err.Error())
@@ -597,15 +597,15 @@ func (d *DataOps) Recover(ctx context.Context, t *Task, r recovery) error {
 			}
 			snap, _, err := d.SnapshotFile(r.Site, r.Snapshot)
 			if err != nil {
-				return fmt.Errorf("güvenlik kopyası %s bulunamadı: %w — site durduruldu, veritabanı yarım olabilir", r.Snapshot, err)
+				return fmt.Errorf("güvenlik kopyası %s bulunamadı: %w — site durduruldu, veritabanı yarım olabilir", copyLabel(r.Snapshot), err)
 			}
 			back, err := d.snapshotSource(snap)
 			if err != nil {
 				return err
 			}
-			t.Step("… Veritabanı " + snap.ID + " kopyasından eski haline getiriliyor")
+			t.Step("… Veritabanı " + copyLabel(snap.ID) + " kopyasından eski haline getiriliyor")
 			if err := d.rollback(ctx, t, creds, back); err != nil {
-				return fmt.Errorf("geri alma başarısız: %w — site durduruldu; panelde Veritabanı kopyaları → %s → Geri yükle", err, snap.ID)
+				return fmt.Errorf("geri alma başarısız: %w — site durduruldu; panelde Veritabanı kopyaları → %s → Geri yükle", err, copyLabel(snap.ID))
 			}
 		}
 		if r.Files != nil && r.Files.Moved {

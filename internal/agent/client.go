@@ -829,3 +829,57 @@ func (c *Client) ViewDoc(ctx context.Context, site, view, coll, id string) (DBDo
 	err := c.call(ctx, http.MethodGet, viewPath(site, view, "/db/doc?"+url.Values{"c": {coll}, "id": {id}}.Encode()), nil, &d)
 	return d, err
 }
+
+// ---- notifications ----
+
+func (c *Client) NotifyStatus(ctx context.Context) (NotifyStatus, error) {
+	var st NotifyStatus
+	err := c.call(ctx, http.MethodGet, "/v1/notify", nil, &st)
+	return st, err
+}
+
+// NotifyStart checks a bot token (or, keep, the saved one) and starts linking a chat.
+func (c *Client) NotifyStart(ctx context.Context, token string, keep bool, a Actor) (NotifyLink, error) {
+	var l NotifyLink
+	err := c.call(ctx, http.MethodPost, "/v1/notify/telegram", NotifyLinkRequest{Token: token, Keep: keep, Actor: a}, &l)
+	return l, err
+}
+
+// NotifyLink finishes linking once the code reached the bot (409: not yet).
+func (c *Client) NotifyLink(ctx context.Context, a Actor) (NotifyStatus, error) {
+	var st NotifyStatus
+	err := c.call(ctx, http.MethodPost, "/v1/notify/telegram/link", RestartRequest{Actor: a}, &st)
+	return st, err
+}
+
+func (c *Client) NotifyCancel(ctx context.Context, a Actor) error {
+	return c.call(ctx, http.MethodPost, "/v1/notify/telegram/cancel", RestartRequest{Actor: a}, nil)
+}
+
+func (c *Client) NotifyTest(ctx context.Context, a Actor) error {
+	return c.call(ctx, http.MethodPost, "/v1/notify/test", RestartRequest{Actor: a}, nil)
+}
+
+func (c *Client) NotifyRemove(ctx context.Context, a Actor) error {
+	return c.call(ctx, http.MethodPost, "/v1/notify/telegram/remove", RestartRequest{Actor: a}, nil)
+}
+
+// ---- removed sites ----
+
+// Removed lists the removed sites; detail adds their sizes.
+func (c *Client) Removed(ctx context.Context, detail bool) ([]RemovedSite, error) {
+	var list []RemovedSite
+	q := ""
+	if detail {
+		q = "?detail=1"
+	}
+	err := c.call(ctx, http.MethodGet, "/v1/removed"+q, nil, &list)
+	return list, err
+}
+
+// PurgeRemoved removes a removed site for good, as a job; confirm is its name.
+func (c *Client) PurgeRemoved(ctx context.Context, id, confirm string, a Actor) (string, error) {
+	var r JobResponse
+	err := c.call(ctx, http.MethodPost, "/v1/removed/"+url.PathEscape(id)+"/purge", PurgeRequest{Confirm: confirm, Actor: a}, &r)
+	return r.JobID, err
+}

@@ -18,14 +18,16 @@ import (
 // the image is pulled (creating the site would pull it anyway) and inspected. It never
 // holds the image's environment values, which may be secrets, except PORT and HOSTNAME.
 type ImageInfo struct {
-	Image       string   `json:"image"`
-	ID          string   `json:"id"`
-	Size        int64    `json:"size"`
-	Platform    string   `json:"platform"`        // the image's, e.g. linux/amd64
-	Server      string   `json:"server_platform"` // this server's
-	User        string   `json:"user,omitempty"`  // USER as written in the image
-	UID         int      `json:"uid"`             // -1: unknown
-	GID         int      `json:"gid"`
+	Image    string `json:"image"`
+	ID       string `json:"id"`
+	Size     int64  `json:"size"`
+	Platform string `json:"platform"`        // the image's, e.g. linux/amd64
+	Server   string `json:"server_platform"` // this server's
+	User     string `json:"user,omitempty"`  // USER as written in the image
+	UID      int    `json:"uid"`             // -1: unknown
+	GID      int    `json:"gid"`
+	// HostAccount is the server's login account with UID, if any (see loginAccount).
+	HostAccount string   `json:"host_account,omitempty"`
 	Ports       []int    `json:"ports,omitempty"` // EXPOSEd TCP ports
 	Volumes     []string `json:"volumes,omitempty"`
 	EnvPort     string   `json:"env_port,omitempty"`
@@ -220,6 +222,10 @@ func (o *SiteOps) CheckImage(ctx context.Context, image string, t *Task) (ImageI
 		t.Step("ℹ Uygulama container'da root olarak çalışıyor (yetkileri yine kısıtlı; kalıcı klasör root'a ait olur)")
 	case info.UID > 0:
 		t.Step(fmt.Sprintf("✓ Kullanıcı: %s (uid %d, gid %d)", orDash(info.User), info.UID, info.GID))
+		if a := o.loginAccount(info.UID); a != "" {
+			info.HostAccount = a
+			t.Step(uidWarning(info.UID, a))
+		}
 	default:
 		t.Step("ℹ İmajın kullanıcısı okunamadı (içinde id komutu yok); kalıcı klasör imajın USER satırına göre hazırlanır")
 	}

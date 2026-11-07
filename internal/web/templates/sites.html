@@ -6,6 +6,8 @@
   </div>
   <div class="page-actions">
     <a class="btn" href="/registries">{{icon "key"}}İmaj girişleri</a>
+    <a class="btn" href="/sources">{{icon "swap"}}Kaynak sunucular</a>
+    {{with .Data.Removed}}<a class="btn" href="/removed">{{icon "trash"}}Kaldırılanlar ({{.}})</a>{{end}}
     {{if .Data.Sites}}<a class="btn primary" href="/sites/new">{{icon "plus"}}Yeni site</a>{{end}}
   </div>
 </div>

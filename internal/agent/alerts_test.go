@@ -160,3 +160,38 @@ func TestAlertsEndpoint(t *testing.T) {
 		t.Errorf("alerts = %+v, %v", list, err)
 	}
 }
+
+// Docker cannot be asked: the container alerts stay (an empty list is no news), and
+// Docker's own trouble is an alert; once it answers again, both follow the containers.
+func TestAlertsDockerUnreachable(t *testing.T) {
+	a := NewAlerter()
+	down := healthy()
+	down.Containers = append(down.Containers, ContainerInfo{Name: "footops-mongo", State: "exited", Project: "footops-core"})
+	for i := 0; i < 5; i++ {
+		a.Evaluate(down, a0.Add(time.Duration(i)*10*time.Second))
+	}
+	if got := keys(a.Active()); !strings.Contains(got, "down:footops-mongo") {
+		t.Fatalf("before: %s", got)
+	}
+	blind := healthy()
+	blind.Containers = nil
+	blind.Errors = []string{"docker: Get \"http://docker/containers/json\": dial unix /var/run/docker.sock: connect: connection refused"}
+	for i := 5; i < 12; i++ {
+		a.Evaluate(blind, a0.Add(time.Duration(i)*10*time.Second))
+	}
+	got := keys(a.Active())
+	if !strings.Contains(got, "down:footops-mongo") || !strings.Contains(got, "docker") {
+		t.Fatalf("docker unreachable: %s", got)
+	}
+	for _, al := range a.Active() {
+		if al.Key == "docker" && (al.Level != "bad" || !Notifiable(al) || !strings.Contains(al.Detail, "connection refused")) {
+			t.Fatalf("docker alert: %+v", al)
+		}
+	}
+	for i := 12; i < 16; i++ {
+		a.Evaluate(healthy(), a0.Add(time.Duration(i)*10*time.Second))
+	}
+	if got := keys(a.Active()); got != "" {
+		t.Fatalf("after: %s", got)
+	}
+}

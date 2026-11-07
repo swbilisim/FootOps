@@ -666,3 +666,30 @@ func TestClassify(t *testing.T) {
 		t.Errorf("mapped: %s", got)
 	}
 }
+
+// An image running as the uid of a server account one can log in with: said in the
+// check (and when a site gets its data directory).
+func TestCheckImageUIDOfAnAccount(t *testing.T) {
+	e := newOps(t)
+	img := "ghcr.io/swbilisim/enisparta:main"
+	e.run.out["image inspect "+img] = inspectFor(serverArch())
+	e.run.out["--entrypoint id "+img] = "uid=1001(nextjs) gid=1001(nodejs) groups=1001(nodejs)"
+	os.MkdirAll(filepath.Join(e.root, "etc"), 0o755)
+	os.WriteFile(filepath.Join(e.root, "etc/passwd"), []byte("root:x:0:0:root:/root:/bin/bash\n"+
+		"furkan:x:1001:1001::/home/furkan:/bin/bash\nsvc:x:1002:1002::/nonexistent:/usr/sbin/nologin\n"), 0o644)
+	task := &Task{j: NewJobs(), job: &Job{ID: "img1"}}
+	info, err := e.ops.CheckImage(context.Background(), img, task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps := strings.Join(task.job.Steps, "\n")
+	if info.HostAccount != "furkan" || !strings.Contains(steps, "⚠ İmaj uid 1001 ile çalışıyor; sunucuda bu numara furkan hesabının") {
+		t.Fatalf("no warning: %+v\n%s", info, steps)
+	}
+	// An account without a shell, root and nobody are no such account.
+	for uid, want := range map[int]string{1002: "", 0: "", 65534: "", 1001: "furkan", 1500: ""} {
+		if got := e.ops.loginAccount(uid); got != want {
+			t.Errorf("loginAccount(%d) = %q, want %q", uid, got, want)
+		}
+	}
+}

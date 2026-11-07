@@ -65,6 +65,9 @@ type fakeAgent struct {
 	db        fakeDB  // the database browser (db_test.go)
 	bk        fakeBackup
 	rs        fakeRestore
+	nt        fakeNotify
+	removed   []agent.RemovedSite
+	purges    []string
 }
 
 func (f *fakeAgent) Overview(context.Context) (agent.Overview, error) {

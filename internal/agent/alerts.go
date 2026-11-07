@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -50,6 +51,8 @@ type Alerter struct {
 	Registries func() ([]RegistryLogin, error)
 	// Backups lists the backup alerts (Backups.Alerts); nil skips them.
 	Backups func(now time.Time) []Alert
+	// Extra lists other parts' alerts (the notifier's, the status file's).
+	Extra []func(now time.Time) []Alert
 	// OnChange, if set, is called (outside the lock) with alerts that opened or resolved.
 	OnChange func(opened, resolved []Alert)
 
@@ -124,6 +127,9 @@ func (a *Alerter) Evaluate(o Overview, now time.Time) {
 	var backups []Alert
 	if a.Backups != nil {
 		backups = a.Backups(now)
+	}
+	for _, f := range a.Extra {
+		backups = append(backups, f(now)...)
 	}
 
 	a.mu.Lock()
@@ -219,6 +225,21 @@ func (a *Alerter) conditions(o Overview, certs []sites.Cert, certErr error, now 
 		}
 	}
 
+	// Docker could not be asked: the empty container list says nothing about the
+	// containers. What was wrong with them stays as it was (it would otherwise read as
+	// "fixed"), and Docker's own trouble is an alert.
+	for _, e := range o.Errors {
+		if msg, ok := strings.CutPrefix(e, "docker: "); ok {
+			add(Alert{Key: "docker", Level: "bad", Title: "Docker'a ulaşılamıyor", Detail: msg + " — container'ların durumu okunamıyor.", Link: "/"})
+			for k, al := range a.active {
+				if containerAlert(k) {
+					add(al)
+				}
+			}
+			return a.certAlerts(out, certs, certErr, now, stable)
+		}
+	}
+
 	present := map[string]bool{}
 	for _, c := range o.Containers {
 		present[c.Name] = true
@@ -269,6 +290,22 @@ func (a *Alerter) conditions(o Overview, certs []sites.Cert, certErr error, now 
 		}
 	}
 
+	return a.certAlerts(out, certs, certErr, now, stable)
+}
+
+// containerAlert tells the alerts about one container (kept while Docker cannot be asked).
+func containerAlert(key string) bool {
+	kind, _, _ := strings.Cut(key, ":")
+	switch kind {
+	case "down", "health", "oom", "limit", "restarts":
+		return true
+	}
+	return false
+}
+
+// certAlerts adds the certificates' alerts to out.
+func (a *Alerter) certAlerts(out []Alert, certs []sites.Cert, certErr error, now, stable time.Time) []Alert {
+	add := func(al Alert) { out = append(out, al) }
 	if certErr != nil {
 		add(Alert{Key: "certs", Level: "warn", Title: "Sertifikalar okunamadı", Detail: certErr.Error(), Link: "/certs", Since: stable})
 	}

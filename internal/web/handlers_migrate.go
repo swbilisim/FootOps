@@ -357,8 +357,14 @@ func (s *Server) sourceRemove(w http.ResponseWriter, r *http.Request) {
 	}
 	cleanup := r.PostFormValue("cleanup") == "on"
 	if err := s.agent.RemoveSource(r.Context(), src.ID, cleanup, s.actor(r)); err != nil {
-		s.renderStatus(w, r, http.StatusUnprocessableEntity, "source_confirm",
-			map[string]any{"Title": src.Label, "Src": src, "Action": "remove", "Problem": err.Error()})
+		data := map[string]any{"Title": src.Label, "Src": src, "Action": "remove", "Problem": err.Error()}
+		if cleanup && (strings.Contains(err.Error(), "kaynaktan silinemedi") || strings.Contains(err.Error(), "hiç bağlanılmadı")) {
+			// Mostly a source that is gone (the old server was cancelled): nothing was
+			// removed, and the form comes back with the box clear, saying why.
+			data["Problem"] = err.Error() + " — hiçbir şey silinmedi. Kaynak sunucu kapatıldıysa ya da artık ulaşılamıyorsa kutuyu boş bırakıp yeniden kaldır: anahtar yalnız bu sunucudan silinir."
+			data["Uncheck"] = true
+		}
+		s.renderStatus(w, r, http.StatusUnprocessableEntity, "source_confirm", data)
 		return
 	}
 	msg := src.Label + " kaldırıldı; anahtarı bu sunucudan silindi."

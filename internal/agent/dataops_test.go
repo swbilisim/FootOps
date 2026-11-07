@@ -244,14 +244,22 @@ func TestSweepSnapshots(t *testing.T) {
 			os.WriteFile(filepath.Join(dir, snapshotManifest), []byte(`{"id":"`+id+`","site":"`+site+`"}`), 0o600)
 		}
 	}
+	// Sites that exist (a removed site that is kept counts too: "d").
+	for _, site := range []string{"a", "b", "c"} {
+		os.MkdirAll(filepath.Join(d.root, "srv/musteri", site), 0o700)
+		os.WriteFile(filepath.Join(d.root, "srv/musteri", site, "footops.json"), []byte(`{"name":"`+site+`","group":"musteri"}`), 0o600)
+	}
+	os.MkdirAll(filepath.Join(d.root, "srv/musteri/_removed/d-20261002-000000"), 0o700)
 	mk("a", "20261001-000000", true)  // old
 	mk("a", "20261019-000000", true)  // old
 	mk("a", "20261026-000000", true)  // recent
 	mk("b", "20261001-000000", true)  // old but b's newest: kept
 	mk("b", "20261001-000001", false) // incomplete, stale
 	mk("c", "20261027-105000", false) // incomplete, maybe still being written
+	mk("d", "20261001-000000", true)  // removed but kept: its newest stays
+	mk("e", "20261001-000000", true)  // removed for good: its last copy goes too
 	got := d.data.SweepSnapshots(false)
-	want := "a/20261001-000000 a/20261019-000000 b/20261001-000001"
+	want := "a/20261001-000000 a/20261019-000000 b/20261001-000001 e/20261001-000000"
 	if strings.Join(got, " ") != want {
 		t.Errorf("removed %v, want %s", got, want)
 	}
@@ -403,5 +411,18 @@ func TestSnapshotEndpoints(t *testing.T) {
 	}
 	if list, _ := c.Snapshots(ctx, "magaza"); len(list) != 1 {
 		t.Errorf("cancelled copy kept: %d", len(list))
+	}
+}
+
+// Copies are named in the server's time for people; their ids stay UTC.
+func TestCopyLabel(t *testing.T) {
+	want := time.Date(2026, 11, 7, 8, 41, 37, 0, time.UTC).Local().Format("2006-01-02 15:04:05")
+	if got := copyLabel("20261107-084137"); got != want {
+		t.Fatalf("copyLabel = %q, want %q", got, want)
+	}
+	for _, id := range []string{"", "bozuk", "20261107"} {
+		if got := copyLabel(id); got != id {
+			t.Fatalf("copyLabel(%q) = %q", id, got)
+		}
 	}
 }

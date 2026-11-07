@@ -1,0 +1,113 @@
+{{template "top" .}}
+{{$st := .Data.St}}
+<div class="page-head">
+  <div>
+    <h1>Bildirimler</h1>
+    <p class="sub">Sunucunun uyarıları Telegram'a gider: açılınca, kötüleşince ve düzelince. Aynı uyarı açık kaldıkça tekrar gönderilmez.</p>
+  </div>
+</div>
+{{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>Agent'a ulaşılamadı: {{.}}</div></div>{{end}}
+{{with $st.Error}}<div class="notice bad">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
+{{template "problems" .Data.Problems}}
+
+{{if $st.Linked}}
+<div class="card stack">
+  <div class="card-head"><h2>Telegram</h2><span class="badge ok">bağlı</span></div>
+  <p><span class="mono">@{{$st.Bot}}</span> → <strong>{{$st.Chat}}</strong> · {{ts $st.Since}} bağlandı{{with $st.By}} ({{.}}){{end}}</p>
+  {{if $st.LastErr}}{{if not $st.Failing.IsZero}}<div class="notice warn">{{icon "alert"}}<div>Mesajlar gönderilemiyor ({{since $st.Failing}} başladı): {{$st.LastErr}}{{if not $st.RetryAt.IsZero}} · yeniden deneme {{tsTime $st.RetryAt}}{{end}}</div></div>{{end}}{{end}}
+  <p class="muted small">{{if $st.LastSent.IsZero}}Henüz uyarı gönderilmedi.{{else}}Son mesaj {{since $st.LastSent}}.{{end}} Sohbetin bildiği açık uyarı: {{$st.Told}}.</p>
+  <div class="form-actions">
+    <form method="post" action="/notify/test">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <button type="submit" class="btn primary">{{icon "bell"}}Deneme mesajı gönder</button>
+    </form>
+    <form method="post" action="/notify/telegram">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <input type="hidden" name="keep" value="1">
+      <button type="submit" class="btn">{{icon "link"}}Başka sohbete bağla</button>
+    </form>
+  </div>
+  <details class="more">
+    <summary>Bağlantıyı kaldır…</summary>
+    <form method="post" action="/notify/remove" class="stack">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <p>Bot token'ı bu sunucudan silinir, uyarılar yalnız panelde görünür. Bot Telegram'da kalır; yeniden bağlamak için token gerekir.</p>
+      <div class="form-actions"><button type="submit" class="danger">{{icon "trash"}}Bağlantıyı kaldır</button></div>
+    </form>
+  </details>
+</div>
+{{end}}
+
+{{with $st.Link}}
+<div class="card stack" id="bagla">
+  <div class="card-head"><h2>{{if $st.Linked}}Başka sohbete bağla{{else}}Telegram'ı bağla{{end}}</h2><span class="badge info">2. adım</span></div>
+  <p><span class="mono">@{{.Bot}}</span> bulundu. Telegram'ın açık olduğu cihazda bu bağlantıyı aç ve <strong>Başlat</strong>'a bas (sohbet açıksa bağlantı kodu gönderir):</p>
+  <p><a class="btn" href="{{.URL}}" rel="noreferrer" target="_blank">{{icon "external"}}t.me/{{.Bot}}</a></p>
+  <p class="hint">Bağlantı açılmazsa bota şu kodu yaz: <strong class="mono">{{.Code}}</strong> · kod {{tsTime .Expires}}'e kadar geçerli. Grup sohbetinde: botu gruba ekle, kodu <span class="mono">/start@{{.Bot}} {{.Code}}</span> diye yaz.</p>
+  {{with $.Data.LinkErr}}<div class="notice warn">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
+  <div class="form-actions">
+    <form method="post" action="/notify/link">
+      <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+      <button type="submit" class="btn primary">{{icon "check"}}Gönderdim, bağla</button>
+    </form>
+    <form method="post" action="/notify/cancel">
+      <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+      <button type="submit" class="btn">Vazgeç</button>
+    </form>
+  </div>
+</div>
+{{else}}{{if not $st.Linked}}
+<form method="post" action="/notify/telegram" class="card stack">
+  <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+  <div class="card-head"><h2>Telegram'ı bağla</h2></div>
+  <ol class="steps">
+    <li>Telegram'da <strong>@BotFather</strong> → <span class="mono">/newbot</span> ile bir bot aç (var olan bir bot için <span class="mono">/mybots</span> → bot → <strong>API Token</strong>).</li>
+    <li>Token'ı aşağıya yapıştır; sonraki adımda panel bir bağlantı kodu gösterir, onu bota gönderirsin.</li>
+  </ol>
+  <label class="field"><span>Bot token'ı</span>
+    <input type="password" name="token" required class="mono" autocomplete="new-password" spellcheck="false" placeholder="123456789:AA…">
+    <span class="hint">Sunucuda yalnız root'un okuyabildiği bir dosyada durur, panelde bir daha gösterilmez. Birden çok sunucu aynı botu kullanabilir; mesajlar <span class="mono">[{{.Server}}]</span> ile başlar.</span>
+  </label>
+  <div class="form-actions"><button type="submit" class="btn primary">{{icon "next"}}Devam</button></div>
+</form>
+{{end}}{{end}}
+
+<div class="section-head"><h2>Ne gönderilir</h2></div>
+<div class="card stack">
+  <p><strong>Gönderilir:</strong> yedekler (alınamadı, gecikti, depo uyarı eşiğini geçti, haftalık denetim sorun buldu, saklama ya da temizlik yapılamadı, duraklatıldı), disk doluluğu, sertifikaların ve imaj girişi token'larının süresi (ya da sertifikaların okunamaması), MongoDB · Caddy · tünel container'ları, Docker'a ulaşılamaması, kritik RAM ya da swap, bir container'ın belleği doldurması (OOM) ya da sık yeniden başlaması, durum dosyasının yazılamaması.</p>
+  <p><strong>Gönderilmez</strong> (yalnız panelde): CPU, bir container'ın bellek sınırına yaklaşması, RAM ve swap'ın uyarı düzeyi; bir sitenin çalışmaması — bunu dış nöbetçi, ziyaretçinin gördüğü gibi bildirir.</p>
+  <p class="muted small">Düzelen bir uyarı 5 dakika kapalı kalınca "Düzeldi" mesajı gelir; arada yeniden açılırsa hiçbir şey gönderilmez. Telegram'a ulaşılamazsa mesajlar bekletilir ve yeniden denenir.</p>
+</div>
+
+{{with $st.StatusFile}}
+<div class="section-head"><h2>Dış nöbetçi için durum dosyası</h2></div>
+<div class="card stack">
+  {{if .Key}}
+  <p>Her 5 dakikada bir yedek kovasına <span class="mono">{{.Key}}</span> yazılır: siteler, alan adları, container durumları ve son yedek; sır yok. Sunucunun dışındaki nöbetçi bu dosya eskiyince "sunucudan haber yok" der.</p>
+  {{if .LastErr}}<div class="notice warn">{{icon "alert"}}<div>{{if .Failing.IsZero}}Yazılamadı{{else}}Yazılamıyor ({{since .Failing}} başladı){{end}}: {{.LastErr}}</div></div>{{end}}
+  <p class="muted small">{{if .LastOK.IsZero}}Henüz yazılmadı (agent açıldıktan 1 dakika sonra başlar).{{else}}Son yazma {{since .LastOK}}.{{end}}</p>
+  {{else}}
+  <p class="muted">Yedek deposu bağlı değil: durum dosyası yazılmıyor (<a href="/backup">Yedekleme</a>).</p>
+  {{end}}
+</div>
+{{end}}
+
+<div class="section-head"><h2>Şu an açık uyarılar <span class="sub">{{len .Data.Rows}}</span></h2></div>
+{{with .Data.AlertsErr}}<div class="notice bad">{{icon "alert"}}<div>Uyarılar okunamadı: {{.}}</div></div>{{end}}
+{{if .Data.Rows}}
+<div class="table-wrap">
+<table class="responsive">
+  <thead><tr><th>Uyarı</th><th>Başlangıç</th><th>Telegram</th></tr></thead>
+  <tbody>
+  {{range .Data.Rows}}
+    <tr>
+      <td class="primary"><span class="badge {{.Level}}">{{if eq .Level "bad"}}ciddi{{else}}uyarı{{end}}</span> {{if .Link}}<a href="{{.Link}}">{{.Title}}</a>{{else}}{{.Title}}{{end}}</td>
+      <td data-label="Başlangıç" class="nowrap">{{since .Since}}</td>
+      <td data-label="Telegram">{{if .Sent}}gider{{else}}<span class="muted">yalnız panelde</span>{{end}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}<div class="card"><p class="muted">Açık uyarı yok.</p></div>{{end}}
+{{template "bottom" .}}

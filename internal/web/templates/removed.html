@@ -1,0 +1,37 @@
+{{template "top" .}}
+<a class="crumb" href="/sites">{{icon "back"}}Siteler</a>
+<div class="page-head">
+  <div>
+    <h1>Kaldırılan siteler</h1>
+    <p class="sub">Kaldırılan bir sitenin klasörü <span class="mono">/srv/&lt;grup&gt;/_removed/</span> altında, veritabanı MongoDB'de durur; burada kalıcı silinir. Uzak yedekleri depoda saklama kuralına göre kalır.</p>
+  </div>
+</div>
+{{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>Liste okunamadı: {{.}}</div></div>{{end}}
+{{with .Data.List}}
+<div class="table-wrap">
+<table class="responsive wide">
+  <thead><tr><th>Site</th><th>Kaldırılma</th><th class="num">Klasör</th><th>Veritabanı</th><th></th></tr></thead>
+  <tbody>
+  {{range .}}
+    <tr>
+      <td class="primary"><strong>{{.Site}}</strong> <span class="chip">{{.Group}}</span><span class="cell-sub mono">{{.ID}}</span>{{with .Broken}}<span class="cell-sub bad">{{.}}</span>{{end}}</td>
+      <td data-label="Kaldırılma" class="nowrap">{{ts .Removed}}</td>
+      <td data-label="Klasör" class="num nowrap">{{bytes .Bytes}} · {{.Files}} dosya</td>
+      <td data-label="Veritabanı">{{template "removedDB" .}}</td>
+      <td class="actions"><a class="btn sm" href="/removed/{{.ID}}">{{icon "trash"}}Kalıcı sil…</a></td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<div class="card empty-state">
+  <div class="icon-wrap">{{icon "trash"}}</div>
+  <h2>Kaldırılan site yok</h2>
+  <p>Bir site kaldırılınca klasörü ve veritabanı burada görünür.</p>
+</div>
+{{end}}
+{{template "bottom" .}}
+
+{{/* A removed site's database (a RemovedSite). */}}
+{{define "removedDB"}}{{if .Current}}<span class="muted">aynı adla yeni site var: veritabanı onun</span>{{else if .Older}}<span class="muted">daha yeni kaldırılan kaydıyla silinir</span>{{else if .DBErr}}<span class="warn">sorulamadı: {{.DBErr}}</span>{{else if not .Database}}{{if gt .DBBytes 0}}<span class="warn">tanımda yok ama bu adla bir veritabanı var ({{bytes .DBBytes}}): dokunulmaz</span>{{else}}<span class="muted">yok</span>{{end}}{{else if lt .DBBytes 0}}<span class="muted">silinmiş</span>{{else}}<span><span class="mono">{{.Site}}</span> · {{bytes .DBBytes}}</span>{{end}}{{end}}

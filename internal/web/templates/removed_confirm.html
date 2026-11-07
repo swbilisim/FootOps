@@ -1,0 +1,32 @@
+{{template "top" .}}
+{{$x := .Data.R}}
+<div class="dialog">
+  <a class="crumb" href="/removed">{{icon "back"}}Kaldırılan siteler</a>
+  <div class="card">
+    <div class="dialog-icon bad">{{icon "trash"}}</div>
+    <h1>{{$x.Site}} kalıcı silinsin mi?</h1>
+    <p>{{ts $x.Removed}} kaldırılan sitenin klasörü <span class="mono">/srv/{{$x.Group}}/_removed/{{$x.ID}}</span> ({{bytes $x.Bytes}}, {{$x.Files}} dosya) sunucudan <strong>geri dönüşsüz</strong> silinir.</p>
+    {{if $x.Current}}
+    <div class="notice info">{{icon "info"}}<div>Bu adla bir site yeniden kurulmuş: veritabanı, kopyaları ve kayıtları onun. Yalnız eski klasör silinir.</div></div>
+    {{else if $x.Older}}
+    <div class="notice info">{{icon "info"}}<div>Bu ad daha sonra yeniden kaldırılmış: veritabanı o kayıtla birlikte silinir. Burada yalnız bu eski klasör silinir.</div></div>
+    {{else if $x.Database}}
+    <p>MongoDB'deki <span class="mono">{{$x.Site}}</span> veritabanı{{if ge $x.DBBytes 0}} ({{bytes $x.DBBytes}}){{end}} ve kullanıcıları da silinir. Önce veritabanının <strong>son kopyası</strong> alınır ve {{.Data.KeepDays}} gün sunucuda kalır (aynı adla site yeniden kurulursa Veritabanı kopyaları'nda görünür); kopya alınamazsa hiçbir şey silinmez.</p>
+    {{with $x.DBErr}}<div class="notice warn">{{icon "alert"}}<div>MongoDB'ye şu an sorulamadı ({{.}}); silme sırasında yeniden denenir, ulaşılamazsa hiçbir şey silinmez.</div></div>{{end}}
+    {{end}}
+    {{with $x.Image}}<p class="hint">Sitenin imajı (<span class="mono">{{.}}</span>) başka bir container kullanmıyorsa o da silinir.</p>{{end}}
+    <p class="hint">Uzak yedekleri (varsa) yedek deposunda kalır; saklama kuralına göre eskir.</p>
+    {{with .Data.Problem}}<div class="notice bad">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
+    <form method="post" action="/removed/{{$x.ID}}" class="stack">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <label class="field"><span>Onay için site adını yaz: <strong class="mono">{{$x.Site}}</strong></span>
+        <input name="confirm" required autocomplete="off" autocapitalize="off" spellcheck="false" class="mono">
+      </label>
+      <div class="form-actions">
+        <button type="submit" class="danger">{{icon "trash"}}Kalıcı sil</button>
+        <a class="btn" href="/removed">Vazgeç</a>
+      </div>
+    </form>
+  </div>
+</div>
+{{template "bottom" .}}

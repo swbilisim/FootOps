@@ -298,3 +298,13 @@ func TestMongoClientOwnTimeout(t *testing.T) {
 		t.Errorf("job's deadline: %v", err)
 	}
 }
+
+// DropSiteDB never reaches MongoDB for its own databases, temporary ones or FootOps's.
+func TestDropSiteDBRefuses(t *testing.T) {
+	m := mongoClient{Addr: "127.0.0.1:1", SecretFile: "/nonexistent"}
+	for _, db := range []string{"admin", "local", "config", "footops_tmp_x", "footops_view_x", "footops-veri", "", "../x", "a b"} {
+		if err := m.DropSiteDB(context.Background(), db); err == nil || !strings.Contains(err.Error(), "site veritabanı değil") {
+			t.Errorf("DropSiteDB(%q) = %v", db, err)
+		}
+	}
+}

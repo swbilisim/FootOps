@@ -55,6 +55,8 @@ const (
 	// BackupSecretDir holds the backup repository's settings: of /etc the only place the
 	// agent may write (its unit's ReadWritePaths); the installer makes it.
 	BackupSecretDir = "/etc/footops/secrets/backup"
+	// NotifySecretDir holds the Telegram bot's token and chat: the agent writes it too.
+	NotifySecretDir = "/etc/footops/secrets/notify"
 )
 
 // Config holds the values that vary between servers.

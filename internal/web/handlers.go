@@ -275,12 +275,12 @@ var navOf = map[string]string{
 	"site_form": "sites", "site_review": "sites", "site_move": "sites", "site_dns": "sites", "registries": "sites", "registry_remove": "sites",
 	"import": "sites", "import_preview": "sites", "restore_confirm": "sites",
 	"files": "sites", "files_rename": "sites", "files_move": "sites", "files_trash": "sites", "files_unpack": "sites",
-	"trash": "sites", "trash_empty": "sites", "migrate": "sites", "sources": "sites", "source_confirm": "sites",
+	"trash": "sites", "trash_empty": "sites", "migrate": "sites", "sources": "sources", "source_confirm": "sources",
 	"db": "sites", "db_coll": "sites", "db_doc": "sites", "db_edit": "sites", "db_delete": "sites", "db_undo": "sites",
 	"certs": "certs", "cert_remove": "certs",
 	"backup": "backup", "backup_repo": "backup", "site_backup": "sites",
 	"backup_point": "sites", "backup_restore": "sites", "backup_files": "sites",
-	"audit": "audit",
+	"audit": "audit", "notify": "notify", "removed": "sites", "removed_confirm": "sites",
 }
 
 func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, data map[string]any) {
@@ -559,9 +559,10 @@ var (
 		"backup.setup": "Yedek deposu bağlanıyor", "backup.run": "Yedekleme",
 		"backup.list": "Yedek listesi okunuyor", "backup.open": "Yedek incelemeye açılıyor",
 		"backup.restore": "Yedekten geri yükleme", "backup.export": "Yedekten arşiv",
+		"site.purge": "Kalıcı siliniyor",
 	}
 	reasonNames = map[string]string{"manual": "elle", "before-import": "içe aktarmadan önce", "before-restore": "geri yüklemeden önce",
-		"before-migrate": "taşımadan önce"}
+		"before-migrate": "taşımadan önce", "before-purge": "kalıcı silmeden önce"}
 	stateNames  = map[string]string{"running": "çalışıyor", "exited": "durdu", "restarting": "yeniden başlıyor", "created": "oluşturuldu", "paused": "duraklatıldı", "dead": "ölü", "removing": "siliniyor"}
 	healthNames = map[string]string{"healthy": "sağlıklı", "unhealthy": "sağlıksız", "starting": "başlıyor"}
 )

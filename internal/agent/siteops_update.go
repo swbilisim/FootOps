@@ -239,10 +239,14 @@ func (o *SiteOps) Update(ctx context.Context, name string, u SiteUpdate, progres
 	if next.DataMount != "" {
 		if _, err := os.Stat(dataDir); errors.Is(err, fs.ErrNotExist) {
 			createdData = true
-			if err := o.prepareDataDir(ctx, next); err != nil {
+			uid, err := o.prepareDataDir(ctx, next)
+			if err != nil {
 				return err
 			}
 			done(fmt.Sprintf("Kalıcı klasör: %s/%s → %s", next.Dir(), sites.DataDir, next.DataMount))
+			if a := o.loginAccount(uid); a != "" {
+				progress(uidWarning(uid, a))
+			}
 		}
 	}
 	if err := o.compose(ctx, next, "up", "--detach", "--remove-orphans"); err != nil {

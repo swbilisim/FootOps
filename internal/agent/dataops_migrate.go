@@ -452,10 +452,10 @@ func (d *DataOps) MigrateCopy(ctx context.Context, t *Task, site string, actor A
 	}
 	t.Step("✓ Ön kopya tamam: site bu sunucuda kaynaktaki verinin kopyasıyla çalışıyor; DNS hâlâ eski sunucuyu gösteriyor")
 	if applied.Snapshot != "" {
-		t.Step(fmt.Sprintf("ℹ Veritabanının önceki hali: Veritabanı kopyaları → %s", applied.Snapshot))
+		t.Step(fmt.Sprintf("ℹ Veritabanının önceki hali: Veritabanı kopyaları → %s", copyLabel(applied.Snapshot)))
 	}
 	if applied.FilesOld != "" {
-		t.Step(fmt.Sprintf("ℹ Kalıcı klasörün önceki hali: Dosya kopyaları → %s", applied.FilesOld))
+		t.Step(fmt.Sprintf("ℹ Kalıcı klasörün önceki hali: Dosya kopyaları → %s", copyLabel(applied.FilesOld)))
 	}
 	return res, nil
 }

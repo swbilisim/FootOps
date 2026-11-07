@@ -14,14 +14,15 @@ import (
 
 // fakeMig is the agent's side of moving sites, for the web tests.
 type fakeMig struct {
-	sources []agent.SourceView
-	view    *agent.MigrationView // nil: no move yet
-	sets    []agent.MigrationChoice
-	jobs    []string // verb/confirm
-	tests   []string
-	testErr error
-	removed []string // id/cleanup
-	forgot  int
+	sources   []agent.SourceView
+	view      *agent.MigrationView // nil: no move yet
+	sets      []agent.MigrationChoice
+	jobs      []string // verb/confirm
+	tests     []string
+	testErr   error
+	removed   []string // id/cleanup
+	removeErr error
+	forgot    int
 }
 
 func (f *fakeAgent) Sources(context.Context) ([]agent.SourceView, error) {
@@ -76,6 +77,9 @@ func (f *fakeAgent) ResetHostKey(_ context.Context, id string, a agent.Actor) (a
 func (f *fakeAgent) RemoveSource(_ context.Context, id string, cleanup bool, a agent.Actor) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.mig.removeErr != nil {
+		return f.mig.removeErr
+	}
 	var keep []agent.SourceView
 	for _, s := range f.mig.sources {
 		if s.ID != id {

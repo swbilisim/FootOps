@@ -121,6 +121,12 @@ func Main(ctx context.Context, o Options) error {
 	if _, err := Run(ctx, steps, o.Out); err != nil {
 		return err
 	}
+	if notes := accountNotes(o.Host, a.AdminUser, a.SudoMode); len(notes) > 0 {
+		fmt.Fprintln(o.Out, "\nGüvenlik notları (kurulum bunları değiştirmez):")
+		for _, n := range notes {
+			fmt.Fprintln(o.Out, "  ⚠ "+n)
+		}
+	}
 	if o.Host.Exists("/var/run/reboot-required") {
 		fmt.Fprintln(o.Out, "\nNot: güncellemeler yeniden başlatma istiyor. Kurulum bitince `sudo reboot` önerilir.")
 	}

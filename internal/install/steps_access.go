@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -62,7 +63,13 @@ func (s adminUserStep) passwordSet(ctx context.Context) bool {
 
 func (s adminUserStep) Apply(ctx context.Context) error {
 	if _, exists := userHome(ctx, s.h, s.user); !exists {
-		if _, err := s.h.Run.Run(ctx, "useradd", "--create-home", "--shell", "/bin/bash", "--groups", "sudo", s.user); err != nil {
+		// Not the next free number (1000, 1001): those are container users' (accounts.go).
+		id, err := freeAdminID(s.h)
+		if err != nil {
+			return err
+		}
+		if _, err := s.h.Run.Run(ctx, "useradd", "--create-home", "--shell", "/bin/bash", "--groups", "sudo",
+			"--uid", strconv.Itoa(id), "--user-group", s.user); err != nil {
 			return err
 		}
 	} else if _, err := s.h.Run.Run(ctx, "usermod", "-aG", "sudo", s.user); err != nil {

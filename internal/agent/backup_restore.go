@@ -1174,10 +1174,10 @@ func (b *Backups) Restore(ctx context.Context, t *Task, site string, req BackupR
 		}
 	}
 	if res.Snapshot != "" {
-		t.Step(fmt.Sprintf("ℹ Veritabanını geri almak için: site sayfası → Veritabanı kopyaları → %s → Geri yükle", res.Snapshot))
+		t.Step(fmt.Sprintf("ℹ Veritabanını geri almak için: site sayfası → Veritabanı kopyaları → %s → Geri yükle", copyLabel(res.Snapshot)))
 	}
 	if res.FilesOld != "" {
-		t.Step(fmt.Sprintf("ℹ Dosyaları geri almak için: site sayfası → Dosya kopyaları → %s → Geri yükle", res.FilesOld))
+		t.Step(fmt.Sprintf("ℹ Dosyaları geri almak için: site sayfası → Dosya kopyaları → %s → Geri yükle", copyLabel(res.FilesOld)))
 	}
 	return res, nil
 }

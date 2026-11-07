@@ -159,6 +159,15 @@ func (p *previewAgent) Job(_ context.Context, id string) (agent.Job, error) {
 				"✓ magaza · dosyalar: 1240 dosya, 356.0 MB (yeni 3, değişen 0) → depoya 2.0 MB eklendi (4.1 sn, en çok 81.0 MB bellek)",
 				"✗ kurumsal · veritabanı: mongodump başarısız, yedek alınmadı: Failed: can't create session: connection refused",
 				"✓ Saklama kuralı uygulandı: 14 eski anlık görüntü silindi", "✓ Depoda yedeklerin kapladığı: 6.7 GB"}}, nil
+	case "purge":
+		return agent.Job{ID: id, Kind: "site.purge", Target: "pos", Started: time.Now().Add(-9 * time.Second), Finished: time.Now(), Done: true,
+			Result: "", Usage: run.Usage{PeakMem: 61 << 20, CPU: 900 * time.Millisecond},
+			Steps: []string{"ℹ Kalıcı silinecek: pos (musteri grubu, 2026-11-02 13:15 kaldırıldı) — klasör 3.0 MB, 12 dosya",
+				"✓ Veritabanı pos: 4 koleksiyon, 1210 belge, 8.0 MB veri", "… mongodump çalışıyor (sınır: 512 MB bellek, %50 CPU)",
+				"✓ mongodump bitti: 4 koleksiyon, 1210 belge → 412.0 KB (0.6 sn, en çok 61.0 MB bellek, 0.4 sn CPU)",
+				"✓ Kopya doğrulandı (gzip bütünlüğü, mongodump arşivi)", "✓ Kopya hazır: 2026-11-07 14:02:11 (sunucuda 7 gün saklanır)",
+				"✓ MongoDB: pos veritabanı ve kullanıcıları silindi", "✓ Klasör silindi: /srv/musteri/_removed/pos-20261102-101500 (3.0 MB)",
+				"ℹ İmaj silinmedi (başka bir container kullanıyor ya da zaten yok): ghcr.io/ornek/pos:main"}}, nil
 	case "bopen":
 		return agent.Job{ID: id, Kind: "backup.open", Target: "magaza", Started: time.Now().Add(-8 * time.Second), Finished: time.Now(), Done: true,
 			Result: "RunGece01", Usage: run.Usage{PeakMem: 104 << 20, CPU: 1900 * time.Millisecond},
@@ -173,13 +182,13 @@ func (p *previewAgent) Job(_ context.Context, id string) (agent.Job, error) {
 			Steps: []string{"ℹ Geri yüklenecek yedek: 06.11.2026 04:00 (gece yedeği) — veritabanı (6 koleksiyon, 1860 belge), dosyalar (1240 dosya, 356.0 MB)",
 				"… Dosyalar yedekten açılıyor: 1240 dosya, 356.0 MB (site bu sırada çalışmaya devam eder)",
 				"✓ Dosyalar açıldı: 1240 dosya, 31 klasör, 356.0 MB; sahip ve izinler yedekteki gibi (14.2 sn, en çok 92.0 MB bellek)",
-				"✓ Site durduruldu (bu sırada ziyaretçiler hata sayfası görür)", "✓ Kopya hazır: 20261106-091502 (sunucuda 7 gün saklanır)",
+				"✓ Site durduruldu (bu sırada ziyaretçiler hata sayfası görür)", "✓ Kopya hazır: 2026-11-06 12:15:02 (sunucuda 7 gün saklanır)",
 				"… Veritabanı: yedek 06.11.2026 04:00 yükleniyor (tamamen değiştir)", "✓ Arşivde olmayan 1 koleksiyon silindi: oturum_kayitlari_yeni_eklenen_koleksiyon",
 				"✓ Yüklendi ve sayıldı: 6 koleksiyon, 1860 belge (önce 1799 belge) — 2.0 sn, en çok 121.0 MB bellek, 1.2 sn CPU",
 				"✓ Kalıcı klasör değiştirildi (tamamen değiştir); önceki hali data.old-20261106-091504, 7 gün saklanır",
 				"✓ Site başlatıldı", "✓ Site sağlıklı cevap veriyor", "✓ Açılan yedek kapatıldı (geçici veritabanı silindi)",
-				"ℹ Veritabanını geri almak için: site sayfası → Veritabanı kopyaları → 20261106-091502 → Geri yükle",
-				"ℹ Dosyaları geri almak için: site sayfası → Dosya kopyaları → 20261106-091504 → Geri yükle"}}, nil
+				"ℹ Veritabanını geri almak için: site sayfası → Veritabanı kopyaları → 2026-11-06 12:15:02 → Geri yükle",
+				"ℹ Dosyaları geri almak için: site sayfası → Dosya kopyaları → 2026-11-06 12:15:04 → Geri yükle"}}, nil
 	case "bexport":
 		return agent.Job{ID: id, Kind: "backup.export", Target: "magaza", Started: time.Now().Add(-19 * time.Second), Finished: time.Now(), Done: true,
 			Result: "bexport", Usage: run.Usage{PeakMem: 88 << 20, CPU: 7 * time.Second},
@@ -200,12 +209,12 @@ func (p *previewAgent) Job(_ context.Context, id string) (agent.Job, error) {
 			Done: true, Result: "20261027-110000", Usage: run.Usage{PeakMem: 96 << 20, CPU: 2 * time.Second},
 			Steps: []string{"✓ Veritabanı magaza: 4 koleksiyon, 2759 belge, 1.1 MB veri", "… mongodump çalışıyor (sınır: 512 MB bellek, %50 CPU)",
 				"✓ mongodump bitti: 4 koleksiyon, 2759 belge → 240.1 KB (0.9 sn, en çok 61.0 MB bellek, 210 ms CPU)",
-				"✓ Kopya doğrulandı (gzip bütünlüğü, mongodump arşivi)", "✓ Kopya hazır: 20261027-110000 (sunucuda 7 gün saklanır)",
+				"✓ Kopya doğrulandı (gzip bütünlüğü, mongodump arşivi)", "✓ Kopya hazır: 2026-10-27 14:00:00 (sunucuda 7 gün saklanır)",
 				"✓ Site durduruldu (bu sırada ziyaretçiler hata sayfası görür)", "… yüklenen dosya magaza-20261027-091500.footops.tar yükleniyor (tamamen değiştir)",
 				"✓ Arşivde olmayan 1 koleksiyon silindi: oturumlar", "… mongorestore çalışıyor (sınır: 512 MB bellek, %50 CPU)",
 				"✓ Yüklendi ve sayıldı: 4 koleksiyon, 2641 belge (önce 2759 belge) — 2.1 sn, en çok 96.0 MB bellek, 1.4 sn CPU",
 				"✓ Site başlatıldı", "✓ Site sağlıklı cevap veriyor", "✓ Yüklenen dosya sunucudan silindi",
-				"ℹ Geri almak için: site sayfası → Veritabanı kopyaları → 20261027-110000 → Geri yükle"}}, nil
+				"ℹ Geri almak için: site sayfası → Veritabanı kopyaları → 2026-10-27 14:00:00 → Geri yükle"}}, nil
 	}
 	if id == "migcopy" {
 		return agent.Job{ID: id, Kind: "migrate.copy", Target: "magaza", Started: time.Now().Add(-42 * time.Second), Finished: time.Now(),
@@ -219,7 +228,7 @@ func (p *previewAgent) Job(_ context.Context, id string) (agent.Job, error) {
 				"… Dosyalar kaynaktan doğrudan bu sunucuya akıyor (SSH, tar → yardımcı; site burada çalışırken data.new'a)",
 				"… Dosyalar açılıyor (site kullanıcısı 1001, sınır: 256 MB bellek, %50 CPU)",
 				"✓ Dosyalar açıldı: 510 dosya, 14 klasör, 229.0 MB — 6.8 sn, en çok 22.0 MB bellek, 1.1 sn CPU",
-				"✓ Site durduruldu (bu sırada ziyaretçiler hata sayfası görür)", "✓ Kopya hazır: 20261028-090000 (sunucuda 7 gün saklanır)",
+				"✓ Site durduruldu (bu sırada ziyaretçiler hata sayfası görür)", "✓ Kopya hazır: 2026-10-28 12:00:00 (sunucuda 7 gün saklanır)",
 				"✓ Yüklendi ve sayıldı: 5 koleksiyon, 804 belge (önce 0 belge) — 1.1 sn, en çok 96.0 MB bellek, 0.4 sn CPU",
 				"✓ Kalıcı klasör değiştirildi (tamamen değiştir); önceki hali data.old-20261028-090001, 7 gün saklanır",
 				"✓ Site başlatıldı", "✓ Site sağlıklı cevap veriyor",
@@ -245,7 +254,7 @@ func (p *previewAgent) Job(_ context.Context, id string) (agent.Job, error) {
 		j.Done, j.Finished, j.Result = true, time.Now(), "20261027-110000"
 		j.Usage = run.Usage{PeakMem: 38 << 20, CPU: 420 * time.Millisecond}
 		j.Steps = append(j.Steps, "✓ mongodump bitti: 10 koleksiyon, 89 belge → 8.6 KB (1.8s, en çok 38.0 MB bellek, 420ms CPU)",
-			"✓ Kopya doğrulandı (gzip bütünlüğü, mongodump arşivi)", "✓ Kopya hazır: 20261027-110000 (sunucuda 7 gün saklanır)")
+			"✓ Kopya doğrulandı (gzip bütünlüğü, mongodump arşivi)", "✓ Kopya hazır: 2026-10-27 14:00:00 (sunucuda 7 gün saklanır)")
 	}
 	return j, nil
 }
@@ -569,6 +578,47 @@ func (p *previewAgent) Migration(_ context.Context, site string) (agent.Migratio
 	return v, nil
 }
 
+// previewNotify is the notifications page's state: none, link (the code shown), linked
+// or failing; /dev-notify?s=… switches it.
+var previewNotify = "linked"
+
+func (p *previewAgent) NotifyStatus(context.Context) (agent.NotifyStatus, error) {
+	now := time.Now()
+	file := &agent.StatusFileState{Key: "footops-h1/izleme/durum.json", LastOK: now.Add(-2 * time.Minute)}
+	linked := agent.NotifyStatus{Linked: true, Bot: "OrnekBot", Chat: "Ayşe Yılmaz (@ayse_yilmaz_uzun_kullanici_adi)", Since: now.Add(-50 * time.Hour),
+		By: "furkan", Told: 3, LastSent: now.Add(-7 * time.Hour), StatusFile: file}
+	switch previewNotify {
+	case "none":
+		return agent.NotifyStatus{StatusFile: &agent.StatusFileState{}}, nil
+	case "link":
+		return agent.NotifyStatus{Link: &agent.NotifyLink{Bot: "OrnekBot", Code: "K7Q2M9XDRA", URL: "https://t.me/OrnekBot?start=K7Q2M9XDRA",
+			Expires: now.Add(29 * time.Minute)}, StatusFile: file}, nil
+	case "failing":
+		linked.LastErr, linked.LastErrAt, linked.Failing, linked.RetryAt = "Telegram'a ulaşılamadı: dial tcp: lookup api.telegram.org: i/o timeout",
+			now.Add(-time.Minute), now.Add(-25*time.Minute), now.Add(4*time.Minute)
+		linked.StatusFile = &agent.StatusFileState{Key: file.Key, LastOK: now.Add(-31 * time.Minute), Failing: now.Add(-26 * time.Minute),
+			LastErr: "depo yazmayı reddetti (HTTP 403): AccessDenied Access Denied", LastErrAt: now.Add(-time.Minute)}
+		return linked, nil
+	}
+	return linked, nil
+}
+
+func (p *previewAgent) Removed(_ context.Context, detail bool) ([]agent.RemovedSite, error) {
+	list := []agent.RemovedSite{
+		{ID: "pos-20261102-101500", Site: "pos", Group: "musteri", Removed: time.Now().Add(-120 * time.Hour), Database: true,
+			Bytes: 3 << 20, Files: 12, DBBytes: 8 << 20, Image: "ghcr.io/ornek/pos:main"},
+		{ID: "buyuksehir-belediyesi-kultur-mrk-20261001-090000", Site: "buyuksehir-belediyesi-kultur-mrk", Group: "musteri",
+			Removed: time.Now().Add(-900 * time.Hour), Database: true, Current: true, Bytes: 356 << 20, Files: 2481},
+		{ID: "eski-20260915-120000", Site: "eski", Group: "musteri", Removed: time.Now().Add(-1300 * time.Hour), Database: true, DBBytes: -1, Bytes: 4 << 10, Files: 2},
+	}
+	if !detail {
+		for i := range list {
+			list[i].Bytes, list[i].Files, list[i].DBBytes = 0, 0, 0
+		}
+	}
+	return list, nil
+}
+
 func TestPreview(t *testing.T) {
 	store := auth.NewStore(filepath.Join(t.TempDir(), "auth.json"))
 	cfg := config.Panel{ServerCode: "H1", PanelHost: "panel.example.com"}
@@ -608,6 +658,11 @@ func TestPreview(t *testing.T) {
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.ServeHTTP(frameable{w}, r)
 	}))
+	// /dev-notify?s=none|link|linked|failing switches the notifications page's state.
+	mux.HandleFunc("/dev-notify", func(w http.ResponseWriter, r *http.Request) {
+		previewNotify = r.URL.Query().Get("s")
+		http.Redirect(w, r, "/notify", http.StatusSeeOther)
+	})
 	// /dev-backup?s=setup|key|ready|running switches the backup page's state.
 	mux.HandleFunc("/dev-backup", func(w http.ResponseWriter, r *http.Request) {
 		previewBackup = r.URL.Query().Get("s")

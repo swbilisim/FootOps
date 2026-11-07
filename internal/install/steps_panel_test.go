@@ -258,7 +258,7 @@ func TestUnitsSeparatePrivileges(t *testing.T) {
 	// The agent writes the backup repository's settings into their own directory; the
 	// rest of /etc, the other secrets included, stays read-only for it.
 	for _, want := range []string{"\nGroup=footops\n", "RuntimeDirectory=footops", "NoNewPrivileges=yes", "ProtectSystem=full\n",
-		"\nReadWritePaths=-/etc/footops/secrets/backup\n"} {
+		"\nReadWritePaths=-/etc/footops/secrets/backup -/etc/footops/secrets/notify\n"} {
 		if !strings.Contains(agentUnit, want) {
 			t.Errorf("agent unit misses %q", want)
 		}

@@ -448,7 +448,7 @@ func TestBackupListsAndSitePage(t *testing.T) {
 		t.Error("runs not asked for the site")
 	}
 	_, body = c.do("GET", "/sites/enisparta", nil)
-	if !strings.Contains(body, "Uzak yedek") || !strings.Contains(body, "veritabanı günlük") || !strings.Contains(body, "ayarlar ve geçmiş") {
+	if !strings.Contains(body, "Uzak yedek") || !strings.Contains(body, "veritabanı günlük") || !strings.Contains(body, "yedekler ve ayarlar") {
 		t.Errorf("site page summary missing")
 	}
 	st.Settings.Confirmed = time.Time{}

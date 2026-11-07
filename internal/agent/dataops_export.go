@@ -141,7 +141,8 @@ func (d *DataOps) Export(ctx context.Context, t *Task, site string) (info Export
 		}
 	}()
 	now := d.now().UTC().Truncate(time.Second)
-	name := fmt.Sprintf("%s-%s.footops.tar", spec.Name, now.Format("20060102-150405"))
+	// The name shows the panel's (the server's) time, the manifest UTC.
+	name := fmt.Sprintf("%s-%s.footops.tar", spec.Name, now.Local().Format("20060102-150405"))
 	part := filepath.Join(dir, name+".part")
 	f, err := os.OpenFile(part, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
 	if err != nil {

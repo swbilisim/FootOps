@@ -82,7 +82,7 @@ func TestAdminUserCreatesUserWithPassword(t *testing.T) {
 	if err := s.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !f.ran("useradd --create-home --shell /bin/bash --groups sudo furkan") {
+	if !f.ran("useradd --create-home --shell /bin/bash --groups sudo --uid 2000 --user-group furkan") {
 		t.Errorf("useradd missing: %v", f.cmds())
 	}
 	if got := read(t, h, "/home/furkan/.ssh/authorized_keys"); got != keyA+"\n" {

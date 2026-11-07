@@ -121,6 +121,14 @@ type AgentAPI interface {
 	ViewCollections(ctx context.Context, site, view string) (agent.DBOverview, error)
 	ViewFind(ctx context.Context, site, view string, q agent.DBQuery) (agent.DBPage, error)
 	ViewDoc(ctx context.Context, site, view, coll, id string) (agent.DBDocument, error)
+	Removed(ctx context.Context, detail bool) ([]agent.RemovedSite, error)
+	PurgeRemoved(ctx context.Context, id, confirm string, a agent.Actor) (string, error)
+	NotifyStatus(ctx context.Context) (agent.NotifyStatus, error)
+	NotifyStart(ctx context.Context, token string, keep bool, a agent.Actor) (agent.NotifyLink, error)
+	NotifyLink(ctx context.Context, a agent.Actor) (agent.NotifyStatus, error)
+	NotifyCancel(ctx context.Context, a agent.Actor) error
+	NotifyTest(ctx context.Context, a agent.Actor) error
+	NotifyRemove(ctx context.Context, a agent.Actor) error
 }
 
 // AccessVerifier checks Cloudflare Access tokens. *cfaccess.Verifier implements it.
@@ -298,6 +306,15 @@ func (s *Server) Handler(via string) http.Handler {
 	mux.Handle("GET /sites/{name}/backups/{run}/db/coll", s.requireSession(s.viewDBColl))
 	mux.Handle("GET /sites/{name}/backups/{run}/db/doc", s.requireSession(s.viewDBDoc))
 	mux.Handle("POST /sites/{name}/backup/run", s.requireSession(s.backupRun))
+	mux.Handle("GET /removed", s.requireSession(s.removedPage))
+	mux.Handle("GET /removed/{id}", s.requireSession(s.removedConfirm))
+	mux.Handle("POST /removed/{id}", s.requireSession(s.removedPurge))
+	mux.Handle("GET /notify", s.requireSession(s.notifyPage))
+	mux.Handle("POST /notify/telegram", s.requireSession(s.notifyStart))
+	mux.Handle("POST /notify/link", s.requireSession(s.notifyLink))
+	mux.Handle("POST /notify/cancel", s.requireSession(s.notifyCancel))
+	mux.Handle("POST /notify/test", s.requireSession(s.notifyTest))
+	mux.Handle("POST /notify/remove", s.requireSession(s.notifyRemove))
 	mux.Handle("GET /jobs/{id}", s.requireSession(s.job))
 	mux.Handle("POST /jobs/{id}/cancel", s.requireSession(s.jobCancel))
 	mux.Handle("GET /certs", s.requireSession(s.certs))

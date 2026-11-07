@@ -43,6 +43,17 @@ const (
 	toolPrefix = "footops-job-"
 )
 
+// copyLabel names a copy for steps and messages as the panel's tables show it: a
+// database copy's or previous data directory's id (YYYYMMDD-HHMMSS, UTC — ids are
+// parsed and sorted, so they stay UTC) in the server's time.
+func copyLabel(id string) string {
+	t, err := time.ParseInLocation("20060102-150405", id, time.UTC)
+	if err != nil {
+		return id
+	}
+	return t.Local().Format("2006-01-02 15:04:05")
+}
+
 // Snapshot is a copy of a site's database taken on this server.
 type Snapshot struct {
 	Format      int              `json:"format"`
@@ -194,6 +205,12 @@ func (d *DataOps) Snapshot(ctx context.Context, t *Task, site, reason string, ac
 	if err != nil {
 		return snap, err
 	}
+	return d.snapshotOf(ctx, t, spec, creds, reason, actor)
+}
+
+// snapshotOf copies the database creds open; spec names the copy (a removed site's
+// last copy too).
+func (d *DataOps) snapshotOf(ctx context.Context, t *Task, spec sites.Spec, creds dbCreds, reason string, actor Actor) (snap Snapshot, err error) {
 	st, err := d.stats(ctx, creds)
 	if err != nil {
 		return snap, err
@@ -314,7 +331,7 @@ func (d *DataOps) Snapshot(ctx context.Context, t *Task, site, reason string, ac
 		return snap, err
 	}
 	t.SetResult(snap.ID)
-	t.Step(fmt.Sprintf("✓ Kopya hazır: %s (sunucuda %d gün saklanır)", snap.ID, int(SnapshotKeep.Hours()/24)))
+	t.Step(fmt.Sprintf("✓ Kopya hazır: %s (sunucuda %d gün saklanır)", copyLabel(snap.ID), int(SnapshotKeep.Hours()/24)))
 	return snap, nil
 }
 
@@ -535,6 +552,13 @@ func (d *DataOps) SweepSnapshots(idle bool) []string {
 	}
 	var removed []string
 	cutoff := d.now().UTC().Add(-SnapshotKeep).Format("20060102-150405")
+	// A site's newest copy is kept however old, while the site exists; the last copy of
+	// one removed for good goes after its time like the rest.
+	exists := map[string]bool{}
+	list, lerr := d.Store.List()
+	for _, s := range list {
+		exists[s.Name] = true
+	}
 	for _, sd := range sitesDirs {
 		if !sd.IsDir() || !docker.ValidName(sd.Name()) {
 			continue
@@ -555,6 +579,13 @@ func (d *DataOps) SweepSnapshots(idle bool) []string {
 		for _, id := range ids {
 			if _, err := d.readSnapshot(sd.Name(), id); err == nil {
 				complete[id], newest = true, id
+			}
+		}
+		if lerr == nil && !exists[sd.Name()] && !d.removedKept(sd.Name()) {
+			// Asked once more for this site alone: one moved between groups while the
+			// list was read could have been missed by it.
+			if _, err := d.Store.Get(sd.Name()); errors.Is(err, sites.ErrNotFound) {
+				newest = ""
 			}
 		}
 		for _, id := range ids {

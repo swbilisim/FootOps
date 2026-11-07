@@ -5,7 +5,10 @@
     <h1>Sunucu</h1>
     <p class="sub" data-live-id="updated">{{with $o.System.Hostname}}{{.}} · {{end}}ölçüm {{since $o.SampledAt}}</p>
   </div>
-  {{template "live"}}
+  <div class="page-actions">
+    {{template "live"}}
+    <a class="btn" href="/notify">{{icon "bell"}}Bildirimler</a>
+  </div>
 </div>
 {{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>Agent'a ulaşılamadı: {{.}}</div></div>{{end}}
 
