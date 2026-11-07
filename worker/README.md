@@ -72,7 +72,11 @@ their backups on R2 in that account.
 
 ## Cost
 
-Free plan: one invocation a minute (1,440 a day of 100,000), a few milliseconds of CPU.
+Free plan: one invocation a minute (1,440 a day of 100,000). CPU: measured about 18 ms
+a run (p99 50 ms), most of it a cold start, against the free plan's 10 ms "with some
+flexibility for a Worker that infrequently runs over"; Cloudflare has let every run
+through so far. If it starts cutting runs short (outcome `exceededCpu`), the heartbeats
+stop and FootOps says the watcher is silent; the Paid plan allows 30 s.
 R2: about 3 reads a minute and a few writes every 5 minutes (well inside the free 10 M
 reads and 1 M writes a month). Each visit costs the server about what a visitor's page
 view does; with 16 domains every 2 minutes, measured on a 2-core server: about 0.07% of
