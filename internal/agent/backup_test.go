@@ -994,6 +994,10 @@ func TestBackupTimetable(t *testing.T) {
 	if k, err := e2.b.Tick(boot.Add(startGrace)); k != RunDaily || err != nil {
 		t.Errorf("catch-up: %s %v", k, err)
 	}
+	// The catch-up runs on: it must end before the test's folders are removed.
+	for e2.b.Jobs.Busy() {
+		time.Sleep(time.Millisecond)
+	}
 	// 03:30 with yesterday's night missed long ago: wait for tonight.
 	e3 := newBackups(t)
 	e3.now = time.Date(2026, 11, 7, 3, 30, 0, 0, time.UTC)
