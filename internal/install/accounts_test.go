@@ -27,7 +27,7 @@ func TestAccountNotes(t *testing.T) {
 	}, "\n"))
 	put(t, h, "/etc/group", "sudo:x:27:ubuntu,furkan\nfurkan:x:1001:\n")
 	put(t, h, "/etc/sudoers", "root ALL=(ALL:ALL) ALL\n# %wheel ALL=(ALL) NOPASSWD: ALL\n#includedir /etc/sudoers.d\n")
-	put(t, h, "/etc/sudoers.d/90-cloud-init-users", "# Created by cloud-init\nubuntu ALL=(ALL) NOPASSWD:ALL\n")
+	put(t, h, "/etc/sudoers.d/90-cloud-init-users", "# Created by cloud-init\nubuntu ALL=(ALL) NOPASSWD:ALL\nroot ALL=(ALL) NOPASSWD:ALL\n")
 	put(t, h, "/etc/sudoers.d/90-footops-furkan", "furkan ALL=(ALL) NOPASSWD:ALL\n")
 	put(t, h, "/etc/sudoers.d/README.txt", "x ALL=(ALL) NOPASSWD:ALL\n") // sudo skips names with a dot
 
@@ -39,7 +39,7 @@ func TestAccountNotes(t *testing.T) {
 			t.Errorf("notes lack %q:\n%s", want, notes)
 		}
 	}
-	for _, not := range []string{"README", "admin", "90-footops-furkan", "%wheel"} {
+	for _, not := range []string{"README", "admin", "90-footops-furkan", "%wheel", "root ALL"} {
 		if strings.Contains(notes, not) {
 			t.Errorf("notes mention %q:\n%s", not, notes)
 		}

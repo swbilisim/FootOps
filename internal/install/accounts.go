@@ -181,6 +181,11 @@ func nopasswdRules(h Host) []sudoRule {
 			if l == "" || strings.HasPrefix(l, "#") || !strings.Contains(l, "NOPASSWD") {
 				continue
 			}
+			// root's own rule opens nothing (cloud-init writes one where root is the
+			// image's user, as on Hetzner).
+			if f := strings.Fields(l); f[0] == "root" {
+				continue
+			}
 			out = append(out, sudoRule{file: f, line: l})
 		}
 	}
