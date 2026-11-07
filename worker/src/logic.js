@@ -376,7 +376,11 @@ export function told(st, evs, now) {
         delete st.servers[e.code];
         break;
       case "down":
-        if (d) d.told = true;
+        if (d) {
+          d.told = true;
+          // What the chat heard of together, it hears back of together.
+          d.toldAt = iso(now);
+        }
         break;
       case "up":
         if (d) {
@@ -386,6 +390,7 @@ export function told(st, evs, now) {
           else delete d.since;
           delete d.okAt;
           delete d.nextSince;
+          delete d.toldAt;
         }
         break;
       case "blind":
@@ -532,12 +537,15 @@ export function render(evs, st, cfg, now) {
     blocks.push({ text: `✅ ${tag(e.code)} FootOps'tan yeniden haber var${took}`, evs: [e] });
   }
 
-  const took = (d) => (d.since && d.okAt ? spanTR(ms(d.okAt) - ms(d.since)) : "");
-  for (const list of group(kind("up"), (e) => `${dom(e).server}\u0000${took(dom(e))}`)) {
+  // Back together what was reported down together (domains of one site, or a whole
+  // server, are first seen failing a minute or two apart): the longest outage is told.
+  const outage = (d) => (d.since && d.okAt ? ms(d.okAt) - ms(d.since) : NaN);
+  for (const list of group(kind("up"), (e) => `${dom(e).server}\u0000${dom(e).toldAt || e.name}`)) {
     const d0 = dom(list[0]);
     const names = list.map((e) => e.name);
     const s = subject(st, d0.server, names);
-    let text = `✅ ${tag(d0.server)} ${s.text} yeniden açılıyor${took(d0) ? ` (kesinti ${took(d0)})` : ""}`;
+    const longest = Math.max(...list.map((e) => outage(dom(e))).filter(Number.isFinite));
+    let text = `✅ ${tag(d0.server)} ${s.text} yeniden açılıyor${Number.isFinite(longest) ? ` (kesinti ${spanTR(longest)})` : ""}`;
     if (s.list) text += "\n" + names.join(", ");
     blocks.push({ text, evs: list });
   }

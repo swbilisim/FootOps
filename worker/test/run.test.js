@@ -532,3 +532,22 @@ test("no server bindings: the run says so and does not fail", async () => {
   assert.match(web.sent[0].text, /İzlenecek sunucu yok/);
   await assert.rejects(run({}, { now: T0, fetch: web.fetch, log: () => {} }), /STATE kovası bağlı değil/);
 });
+
+test("domains reported down together come back in one line, with the longest outage", async () => {
+  // Every two minutes: the site's two domains are first seen failing in different minutes.
+  const w = world({ CHECK_EVERY_MIN: "2" });
+  w.write(T0);
+  for (let i = 0; i < 2; i++) await w.at(T0 + i * MIN);
+  for (const d of MAGAZA) w.web.site(d, 502);
+  for (let i = 2; i <= 7; i++) await w.at(T0 + i * MIN);
+  const downs = texts(w.web).filter((t) => t.startsWith("❌"));
+  assert.equal(downs.length, 1, texts(w.web).join("\n---\n"));
+  assert.match(downs[0], /^❌ \[A1\] magaza \(2 alan adı\) çalışmıyor/);
+  const since = w.env.STATE.json(STATE_KEY).domains;
+  assert.notEqual(since["magaza.example"].since, since["www.magaza.example"].since, "the test needs the two to start apart");
+  for (const d of MAGAZA) w.web.site(d, 200);
+  for (let i = 8; i <= 10; i++) await w.at(T0 + i * MIN);
+  const ups = texts(w.web).filter((t) => t.startsWith("✅"));
+  assert.equal(ups.length, 1, texts(w.web).join("\n---\n"));
+  assert.match(ups[0], /^✅ \[A1\] magaza \(2 alan adı\) yeniden açılıyor \(kesinti \d+ dk\)\nmagaza\.example, www\.magaza\.example$/);
+});
