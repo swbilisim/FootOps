@@ -67,7 +67,7 @@ their backups on R2 in that account.
 | `TIMEOUT_SEC` | `10` | a visit with no answer by then fails (2-15) |
 | `MAX_CHECKS` | `40` | visits per run at most; more domains take turns |
 | `SUBREQUESTS` | `50` | the plan's subrequests a run (Workers Free); R2 calls and up to 3 messages are taken off before visits |
-| `TIME_ZONE` | `Europe/Istanbul` | times in messages |
+| `UTC_OFFSET_MIN` | `180` | times in messages, minutes east of UTC (Türkiye +3 h); a fixed offset, as the first use of `Intl` costs a run most of its 10 ms of CPU |
 | `DRY_RUN`, `LOG_CHECKS` | off | log messages instead of sending; log every visit |
 
 ## Cost

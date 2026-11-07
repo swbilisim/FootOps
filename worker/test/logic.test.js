@@ -40,11 +40,11 @@ test("spanTR is FootOps' way of writing durations", () => {
   assert.equal(spanTR(27 * HOUR), "1 gün 3 sa");
 });
 
-test("localTime is day.month hour:minute in the zone given", () => {
+test("localTime is day.month hour:minute at the offset given", () => {
   const t = Date.parse("2026-11-07T21:05:00Z");
-  assert.equal(localTime(t, "Europe/Istanbul"), "08.11 00:05");
-  assert.equal(localTime(t, "UTC"), "07.11 21:05");
-  assert.equal(localTime(t, "No/Such_Zone"), "2026-11-07 21:05 UTC");
+  assert.equal(localTime(t, settings({}).utcOffset), "08.11 00:05");
+  assert.equal(localTime(t, 0), "07.11 21:05");
+  assert.equal(localTime(t, settings({ UTC_OFFSET_MIN: "-300" }).utcOffset), "07.11 16:05");
 });
 
 test("slot spreads domains over the minutes", () => {
@@ -95,6 +95,6 @@ test("clean: a name keeps letters, digits, spaces and ._- only", () => {
 });
 
 test("localTime: no time is a question mark, not an error", () => {
-  assert.equal(localTime(NaN, "Europe/Istanbul"), "?");
-  assert.equal(localTime(Date.parse("nonsense"), "UTC"), "?");
+  assert.equal(localTime(NaN, 0), "?");
+  assert.equal(localTime(Date.parse("nonsense"), 0), "?");
 });

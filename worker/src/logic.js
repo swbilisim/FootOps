@@ -56,7 +56,9 @@ export function settings(env = {}) {
     beatEvery: 5 * MIN,
     checkURL: url,
     telegramAPI: String(env.TELEGRAM_API || "https://api.telegram.org").replace(/\/+$/, ""),
-    timeZone: typeof env.TIME_ZONE === "string" && env.TIME_ZONE ? env.TIME_ZONE : "Europe/Istanbul",
+    // Times in messages: minutes east of UTC (Türkiye: +3 h all year since 2016). A fixed
+    // offset, not a zone: the first use of Intl costs a cron run ~8 ms of its 10 ms CPU.
+    utcOffset: num("UTC_OFFSET_MIN", 180, -720, 840) * MIN,
     dryRun: /^(1|true|yes|evet)$/i.test(String(env.DRY_RUN ?? "")),
     logChecks: /^(1|true|yes|evet)$/i.test(String(env.LOG_CHECKS ?? "")),
   };
@@ -410,19 +412,11 @@ export function spanTR(d) {
   return h % 24 === 0 ? `${h / 24} gün` : `${Math.floor(h / 24)} gün ${h % 24} sa`;
 }
 
-/** localTime is "07.11 16:05" in the given time zone ("?" for no time). */
-export function localTime(t, timeZone) {
+/** localTime is "07.11 16:05" at the given offset from UTC ("?" for no time). */
+export function localTime(t, offset = 0) {
   if (!Number.isFinite(t)) return "?";
-  try {
-    const p = Object.fromEntries(
-      new Intl.DateTimeFormat("tr-TR", { timeZone, day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
-        .formatToParts(t)
-        .map((x) => [x.type, x.value]),
-    );
-    return `${p.day}.${p.month} ${p.hour}:${p.minute}`;
-  } catch {
-    return new Date(t).toISOString().slice(0, 16).replace("T", " ") + " UTC";
-  }
+  const s = new Date(t + offset).toISOString();
+  return `${s.slice(8, 10)}.${s.slice(5, 7)} ${s.slice(11, 16)}`;
 }
 
 const CONTAINER = {
@@ -472,7 +466,7 @@ export function render(evs, st, cfg, now) {
   const blocks = [];
   const tag = (code) => `[${st.servers[code]?.name || code}]`;
   const kind = (k) => evs.filter((e) => e.kind === k);
-  const at = (s) => localTime(ms(s), cfg.timeZone);
+  const at = (s) => localTime(ms(s), cfg.utcOffset);
   const dom = (e) => st.domains[e.name];
 
   for (const e of kind("welcome")) {
