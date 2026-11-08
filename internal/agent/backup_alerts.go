@@ -74,13 +74,19 @@ func (b *Backups) Alerts(now time.Time) []Alert {
 		return unreadable("sites", "Yedeklenecek siteler okunamadı", err)
 	}
 	due := map[string]time.Duration{serverPart + "/" + PartServer: staleAfter}
-	since := map[string]time.Time{}
+	// since: the site's creation (an older failure was another site's); resumed: when it
+	// came back from parking — its data were not backed up meanwhile, by design.
+	since, resumed := map[string]time.Time{}, map[string]time.Time{}
 	for _, spec := range all {
 		pol := s.For(spec.Name)
 		if pol.Off {
 			continue
 		}
 		due[spec.Name+"/"+PartDef] = staleAfter
+		since[spec.Name], resumed[spec.Name] = spec.CreatedAt, spec.Resumed
+		if spec.IsParked() {
+			continue // only its definition is backed up while it is parked
+		}
 		if spec.Database {
 			due[spec.Name+"/"+PartDB] = staleAfter
 		}
@@ -90,7 +96,6 @@ func (b *Backups) Alerts(now time.Time) []Alert {
 				due[spec.Name+"/"+PartFiles] = staleWeekly
 			}
 		}
-		since[spec.Name] = spec.CreatedAt
 	}
 	// Sites in name order, each part in the order a run takes them, the server last.
 	keys := make([]string, 0, len(due))
@@ -138,7 +143,11 @@ func (b *Backups) Alerts(now time.Time) []Alert {
 			continue
 		}
 		ref := st.Last[k].Time
-		for _, t := range []time.Time{since[site], s.Confirmed} {
+		bounds := []time.Time{since[site], s.Confirmed}
+		if _, part, _ := strings.Cut(k, "/"); part != PartDef {
+			bounds = append(bounds, resumed[site])
+		}
+		for _, t := range bounds {
 			if t.After(ref) {
 				ref = t // nothing is owed from before the site, or the backups, existed
 			}

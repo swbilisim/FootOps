@@ -56,10 +56,27 @@ type Spec struct {
 	Database bool   `json:"database"`
 	DBVar    string `json:"db_var,omitempty"`
 	// EnvKeys lists the variable names only; values live in compose.yaml (0600).
-	EnvKeys   []string  `json:"env_keys,omitempty"`
+	EnvKeys []string `json:"env_keys,omitempty"`
+	// Expires is the last day the site is paid for, on the server's calendar
+	// ("2026-12-31"); empty: it does not end. Parked is set while the site is parked:
+	// its container stopped, its domains answering a neutral maintenance page (Faz P1b).
+	Expires string     `json:"expires,omitempty"`
+	Parked  *ParkState `json:"parked,omitempty"`
+	// Resumed is when the site was last brought back from parking: its data's backups
+	// are owed from then on, not from before it was parked.
+	Resumed   time.Time `json:"resumed,omitzero"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
+
+// ParkState is when a site was parked, and by whom.
+type ParkState struct {
+	At time.Time `json:"at"`
+	By string    `json:"by,omitempty"`
+}
+
+// IsParked reports whether the site is parked.
+func (s Spec) IsParked() bool { return s.Parked != nil }
 
 // Dir is the site's directory on the host.
 func (s Spec) Dir() string { return path.Join(SrvDir, s.Group, s.Name) }
@@ -100,6 +117,7 @@ func (s *Spec) Normalize() {
 	s.DataMount = strings.TrimSpace(s.DataMount)
 	s.DataURL = strings.TrimRight(strings.TrimSpace(s.DataURL), "/")
 	s.DBVar = strings.TrimSpace(s.DBVar)
+	s.Expires = strings.TrimSpace(s.Expires)
 	if s.Database && s.DBVar == "" {
 		s.DBVar = defaultDBVar
 	}
@@ -160,6 +178,9 @@ func (s Spec) Validate(env map[string]string) error {
 	if s.Database && !reEnvKey.MatchString(s.DBVar) {
 		add("veritabanı değişken adı geçersiz")
 	}
+	if err := ValidExpiry(s.Expires); err != nil {
+		add("bitiş tarihi: %v", err)
+	}
 	if len(env) > maxEnv {
 		add("en fazla %d ortam değişkeni", maxEnv)
 	}
@@ -180,6 +201,51 @@ func (s Spec) Validate(env map[string]string) error {
 		return &ValidationError{Problems: p}
 	}
 	return nil
+}
+
+// DayLayout is how an end date is written.
+const DayLayout = "2006-01-02"
+
+// ValidExpiry accepts an end date (DayLayout) between 2020 and 2100; "" is no end.
+func ValidExpiry(d string) error {
+	if d == "" {
+		return nil
+	}
+	t, err := time.Parse(DayLayout, d)
+	if err != nil {
+		return errors.New("YYYY-AA-GG biçiminde bir tarih olmalı (örn. 2026-12-31)")
+	}
+	if t.Year() < 2020 || t.Year() > 2100 {
+		return errors.New("2020 ile 2100 arasında olmalı")
+	}
+	return nil
+}
+
+// DaysLeft is how many days of the server's calendar (now's location) are left until
+// the end date: 0 on the day itself, negative once it has passed. ok is false for no
+// end (or one that does not read).
+func DaysLeft(expires string, now time.Time) (int, bool) {
+	t, err := time.Parse(DayLayout, expires)
+	if expires == "" || err != nil {
+		return 0, false
+	}
+	y, m, d := now.Date()
+	today := time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+	return int(t.Sub(today).Hours() / 24), true
+}
+
+// Extend is the end date a renewal of months gives: counted from the end date while it
+// has not passed, from today once it has (or when there is none). A day the month does
+// not have becomes its last (31 January + 1 month: the end of February).
+func Extend(expires string, months int, now time.Time) string {
+	y, m, d := now.Date()
+	from := time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+	if t, err := time.Parse(DayLayout, expires); expires != "" && err == nil && t.After(from) {
+		from = t
+	}
+	first := time.Date(from.Year(), from.Month()+time.Month(months), 1, 0, 0, 0, 0, time.UTC)
+	last := first.AddDate(0, 1, -1).Day()
+	return time.Date(first.Year(), first.Month(), min(from.Day(), last), 0, 0, 0, 0, time.UTC).Format(DayLayout)
 }
 
 // ValidImage accepts an image reference such as ghcr.io/user/site:main.

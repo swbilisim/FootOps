@@ -53,6 +53,9 @@ type Alerter struct {
 	Backups func(now time.Time) []Alert
 	// Extra lists other parts' alerts (the notifier's, the status file's).
 	Extra []func(now time.Time) []Alert
+	// Parked names the containers of parked sites (Faz P1b): stopped on purpose, they
+	// are not "down". nil: none.
+	Parked func() map[string]bool
 	// OnChange, if set, is called (outside the lock) with alerts that opened or resolved.
 	OnChange func(opened, resolved []Alert)
 
@@ -131,9 +134,13 @@ func (a *Alerter) Evaluate(o Overview, now time.Time) {
 	for _, f := range a.Extra {
 		backups = append(backups, f(now)...)
 	}
+	var parked map[string]bool
+	if a.Parked != nil {
+		parked = a.Parked()
+	}
 
 	a.mu.Lock()
-	found := append(a.conditions(o, a.certs, a.certErr, now), tokenAlerts(a.regs, now)...)
+	found := append(a.conditions(o, a.certs, a.certErr, parked, now), tokenAlerts(a.regs, now)...)
 	found = append(found, backups...)
 	var opened, resolved []Alert
 	seen := map[string]bool{}
@@ -182,7 +189,7 @@ func (a *Alerter) Evaluate(o Overview, now time.Time) {
 
 // conditions lists what is wrong right now. A non-zero Since marks a condition that
 // needs no hold time (it does not flap). Callers hold a.mu.
-func (a *Alerter) conditions(o Overview, certs []sites.Cert, certErr error, now time.Time) []Alert {
+func (a *Alerter) conditions(o Overview, certs []sites.Cert, certErr error, parked map[string]bool, now time.Time) []Alert {
 	var out []Alert
 	stable := now // Since set: skip the hold
 	add := func(al Alert) { out = append(out, al) }
@@ -244,8 +251,9 @@ func (a *Alerter) conditions(o Overview, certs []sites.Cert, certErr error, now 
 	for _, c := range o.Containers {
 		present[c.Name] = true
 		link := "/containers/" + c.Name
-		// Only containers FootOps manages (compose projects) are expected to run.
-		if c.Project != "" {
+		// Only containers FootOps manages (compose projects) are expected to run, and of
+		// those not a parked site's.
+		if c.Project != "" && !parked[c.Name] {
 			switch {
 			case c.State == "restarting":
 				add(Alert{Key: "down:" + c.Name, Level: "bad", Title: c.Name + " sürekli yeniden başlıyor",

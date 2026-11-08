@@ -146,7 +146,9 @@ What the panel shows:
 - **Telegram (optional, Bildirimler):** alerts go to a linked chat when they open, get
   worse and clear. In that chat the person who linked it can ask **`/durum`** — CPU,
   load, memory, swap, disk, uptime, the sites, the last backup and the open alerts,
-  with a **Yenile** button that brings the message up to date. Nobody else gets an
+  with a **Yenile** button that brings the message up to date — and **`/siteler`**: the
+  sites with an end date and the parked ones, with buttons to give more time, park or
+  bring back (see [End date and parking](#end-date-and-parking)). Nobody else gets an
   answer, commands are rate-limited and audited, and nothing can be deleted from
   Telegram. **Give every server a bot of its own:** Telegram lets one reader at a time
   read a bot's messages; a second one is refused, and the panel says so after 10
@@ -197,6 +199,26 @@ files are restored and the old container is started again.
 **Redeploy** pulls the image again and recreates the container if it changed.
 **Remove** (confirmed by typing the name) takes the site offline and moves its files to
 `/srv/<group>/_removed/`; the database is kept.
+
+### End date and parking
+
+A site may have an **end date** (site page → **Süre**; none by default). The linked
+Telegram chat hears of it 7 and 3 days before and on the day (at 10:00 server time),
+with **+1 ay** / **+1 yıl** buttons; on the day it is asked whether to **park** the site.
+Without an answer the site stays up and the question comes again every morning: no
+site goes offline without a yes. Every button asks once more, with its exact effect;
+only that answer's **Evet** acts, once, within 5 minutes, and a button pressed after the
+site changed does nothing.
+
+**Parking** (from the chat or the site page) puts a neutral maintenance page in the
+site's place — Caddy answers it itself, `503` with `Retry-After`; it says nothing about
+why — and then stops the container (kept, with its image). Data and backups stay;
+scheduled backups take only the site's definition while it is parked (its data do not
+change; its last backups are kept). Redeploy, edit, group change and restart are refused
+until the site is brought back (**Yayına al**, with a new end date or none), which
+starts the container, waits for the app and restores the site's own Caddy block — or
+stops it again and keeps the maintenance page if the app does not come up. The status
+file marks a parked site, so the outside watcher leaves it alone.
 
 Host names no site claims get their connection dropped. Caddy trusts Cloudflare's ranges
 for the visitor's address (`CF-Connecting-IP`). In Cloudflare, point the domains at the

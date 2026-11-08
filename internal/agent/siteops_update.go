@@ -46,6 +46,9 @@ func (o *SiteOps) planUpdate(name string, u SiteUpdate) (updatePlan, error) {
 	if err != nil {
 		return p, err
 	}
+	if cur.IsParked() {
+		return p, errParked // the change starts the container again
+	}
 	env, err := o.Store.Env(cur)
 	if err != nil {
 		return p, err

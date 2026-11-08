@@ -21,8 +21,8 @@
   <h3>Komutlar</h3>
   {{if $c.Off}}<div class="notice warn">{{icon "alert"}}<div>Telegram'dan komut kapalı: {{$c.Off}}.</div></div>
   {{else}}
-  <p>Sohbete <span class="mono">/durum</span> yaz: işlemci, bellek, disk, siteler, son yedek ve açık uyarılar gelir; altındaki <strong>Yenile</strong> mesajı yerinde günceller. Komutu yalnız <strong>{{$c.User}}</strong> verebilir, başkasına bot hiç cevap vermez. Telegram'dan hiçbir şey silinemez.</p>
-  <p class="muted small">{{if $c.Paused}}Sohbet bağlanırken bot okunmuyor.{{else if $c.Reading}}Bot dinleniyor · son okuma {{since $c.LastOK}}.{{else if not $c.LastErr}}Bot henüz okunmadı (agent açılınca başlar).{{end}}{{if $c.LastCommand}} Son komut: <span class="mono">{{$c.LastCommand}}</span> · {{since $c.LastCommandAt}}.{{end}}</p>
+  <p>Sohbete <span class="mono">/durum</span> yaz: işlemci, bellek, disk, siteler, son yedek ve açık uyarılar gelir; altındaki <strong>Yenile</strong> mesajı yerinde günceller. <span class="mono">/siteler</span> süreli ve parktaki siteleri listeler: süre uzatma, parka alma ve yeniden açma düğmeleriyle (her biri bir kez daha sorar, onay 5 dakika geçerli). Sitelerin süre hatırlatmaları (7 ve 3 gün önce, o gün) buraya kendiliğinden gelir. Komutu yalnız <strong>{{$c.User}}</strong> verebilir, başkasına bot hiç cevap vermez. Telegram'dan hiçbir şey silinemez.</p>
+  <p class="muted small">{{if $c.Paused}}Sohbet bağlanırken bot okunmuyor.{{else if $c.Reading}}Bot dinleniyor · son okuma {{since $c.LastOK}}.{{else if $c.Listening}}Bot dinleniyor.{{else if not $c.LastErr}}Bot henüz okunmadı (agent açılınca başlar).{{end}}{{if $c.LastCommand}} Son komut: <span class="mono">{{$c.LastCommand}}</span> · {{since $c.LastCommandAt}}.{{end}}</p>
   {{if $c.LastErr}}<div class="notice warn">{{icon "alert"}}<div>Komutlar okunamıyor ({{since $c.Failing}} başladı): {{$c.LastErr}}</div></div>{{end}}
   {{end}}
   {{end}}

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -179,7 +180,17 @@ func (b *Backups) Start(p runPlan, actor Actor) (string, error) {
 	}
 	return b.Jobs.Start(JobSpec{Kind: "backup.run", Target: p.Target(), Actor: actor, Cancellable: true},
 		func(ctx context.Context, t *Task) error {
-			_, err := b.Run(ctx, t, p, actor)
+			if p.Timeout <= 0 {
+				_, err := b.Run(ctx, t, p, actor)
+				return err
+			}
+			rctx, cancel := context.WithTimeout(ctx, p.Timeout)
+			defer cancel()
+			_, err := b.Run(rctx, t, p, actor)
+			if err != nil && rctx.Err() != nil && ctx.Err() == nil {
+				// Said as itself, not as the job's own (longer) limit.
+				return fmt.Errorf("%s içinde bitmedi (yedek deposuna ulaşılamıyor olabilir); gece yedeği yeniden dener", spanTR(p.Timeout))
+			}
 			return err
 		}, func(j Job) {
 			detail := j.Err

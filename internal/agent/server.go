@@ -53,6 +53,8 @@ type Server struct {
 	// file for the outside watcher (nil: no backups).
 	Notify     *Notifier
 	StatusFile *StatusWriter
+	// Expiry keeps the sites' end dates and parks them (Faz P1b).
+	Expiry *Expiry
 	// Recovery brings the server back from its backups; Rehearsal is the state it
 	// leaves the server in (nil in tests that do not need them).
 	Recovery  *Recovery
@@ -128,6 +130,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sites/{name}/redeploy", s.siteJob("site.redeploy"))
 	mux.HandleFunc("POST /v1/sites/{name}/update", s.updateSite)
 	mux.HandleFunc("POST /v1/sites/{name}/remove", s.siteJob("site.remove"))
+	mux.HandleFunc("POST /v1/sites/{name}/expiry", s.setExpiry)
+	mux.HandleFunc("POST /v1/sites/{name}/park", s.parkSite)
+	mux.HandleFunc("POST /v1/sites/{name}/unpark", s.unparkSite)
 	mux.HandleFunc("GET /v1/sites/{name}/snapshots", s.listSnapshots)
 	mux.HandleFunc("POST /v1/sites/{name}/snapshots", s.takeSnapshot)
 	mux.HandleFunc("GET /v1/sites/{name}/snapshots/{id}/download", s.downloadSnapshot)
@@ -311,6 +316,12 @@ func (s *Server) restart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	entry := AuditEntry{Actor: req.Actor, Action: "container.restart", Target: name}
+	// A parked site's container stays stopped until the site is brought back.
+	if s.Sites != nil && s.Sites.ParkedContainers()[name] {
+		s.record(entry, errParked)
+		writeErr(w, http.StatusConflict, errParked.Error())
+		return
+	}
 	// A site stopped for a restore must stay stopped until the job starts it.
 	if s.Jobs != nil {
 		if j, busy := s.Jobs.Running(); busy && j.Target == name {
@@ -447,6 +458,9 @@ type Config struct {
 	// RecoverDir keeps the recovery's record and what go-live puts in place (Faz Y5).
 	RehearsalPath string
 	RecoverDir    string
+	// ExpiryState keeps what the chat was told of the sites' end dates (Faz P1b);
+	// empty: memory only.
+	ExpiryState string
 }
 
 // Main runs the agent until ctx is done.
@@ -564,7 +578,6 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 		sampler.Alerts.Backups = backups.Alerts
 	}
 	var notify *Notifier
-	var readDone chan struct{}
 	if cfg.NotifySecret != "" {
 		code := cfg.ServerCode
 		if code == "" {
@@ -574,6 +587,29 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 			API: cfg.NotifyAPI, Active: sampler.Alerts.Active, Log: logger, Rehearsal: rehearsal,
 			Report: NewReport(sampler, ops.Store.List, backups), Audit: audit}
 		sampler.Alerts.Extra = append(sampler.Alerts.Extra, notify.Alerts)
+	}
+	var statusFile *StatusWriter
+	if backups != nil {
+		statusFile = &StatusWriter{Backups: backups, Sites: ops.Store.List, Server: backups.Server, Log: logger,
+			Containers: func(ctx context.Context) []ContainerInfo { return sampler.Latest(ctx).Containers }}
+		sampler.Alerts.Extra = append(sampler.Alerts.Extra, statusFile.Alerts)
+	}
+	// End dates and parking (Faz P1b): the panel and the chat park and bring back sites
+	// through it; a parked site's stopped container is no alert.
+	expiry := &Expiry{Sites: ops, Jobs: jobs, Backups: backups, Audit: audit, StatePath: cfg.ExpiryState, Log: logger,
+		Changed: func() {
+			sctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			sampler.Sample(sctx)
+			if statusFile != nil {
+				statusFile.Kick()
+			}
+		}}
+	sampler.Alerts.Extra = append(sampler.Alerts.Extra, expiry.Alerts)
+	sampler.Alerts.Parked = ops.ParkedContainers
+	var readDone chan struct{}
+	if notify != nil {
+		expiry.Notify, notify.Sites, notify.OnLink = notify, expiry, expiry.Kick
 		go notify.Run(ctx)
 		readDone = make(chan struct{})
 		go func() {
@@ -581,13 +617,10 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 			close(readDone)
 		}()
 	}
-	var statusFile *StatusWriter
-	if backups != nil {
-		statusFile = &StatusWriter{Backups: backups, Sites: ops.Store.List, Server: backups.Server, Log: logger,
-			Containers: func(ctx context.Context) []ContainerInfo { return sampler.Latest(ctx).Containers }}
-		sampler.Alerts.Extra = append(sampler.Alerts.Extra, statusFile.Alerts)
+	if statusFile != nil {
 		go statusFile.Run(ctx)
 	}
+	go expiry.Run(ctx)
 	if rehearsal != nil {
 		// Its own ticker: Reconcile waits behind a site being made (a recovery's restore).
 		go func() {
@@ -628,11 +661,14 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 
 	// Reconcile often: until it runs, a recreated Caddy cannot reach the sites. It only
 	// inspects one network per site. Once per start, as soon as Caddy runs, the site
-	// blocks are brought up to this version's rendering (a no-op unless FootOps changed).
+	// blocks are brought up to this version's rendering (a no-op unless FootOps changed),
+	// and parked sites' containers left running are stopped.
 	go func() {
 		t := time.NewTicker(10 * time.Second)
 		defer t.Stop()
-		var resync caddyResync
+		// parks paces FinishParks as resync paces SyncCaddy: once per start, again
+		// later after a failure.
+		var resync, parks caddyResync
 		for {
 			for _, err := range ops.Reconcile(ctx) {
 				logger.Printf("reconcile: %v", err)
@@ -643,6 +679,13 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 					logger.Printf("Caddy site blokları güncellenemedi (eski halleri yerinde, yeniden denenecek): %v", err)
 				}
 				resync.result(ran, err, now)
+			}
+			if now := time.Now(); parks.due(now) {
+				err := ops.FinishParks(ctx, logger.Printf)
+				if err != nil {
+					logger.Printf("parktaki sitelerin container'ları denetlenemedi (yeniden denenecek): %v", err)
+				}
+				parks.result(true, err, now)
 			}
 			select {
 			case <-ctx.Done():
@@ -662,6 +705,7 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 		Backups:     backups,
 		Notify:      notify,
 		StatusFile:  statusFile,
+		Expiry:      expiry,
 		Recovery:    recovery,
 		Rehearsal:   rehearsal,
 		Registries:  regs,
@@ -1078,6 +1122,10 @@ func (s *Server) updateSite(w http.ResponseWriter, r *http.Request) {
 	changes, err := s.Sites.CheckUpdate(name, req.Update)
 	if errors.Is(err, sites.ErrNotFound) {
 		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if errors.Is(err, errParked) {
+		writeErr(w, http.StatusConflict, err.Error())
 		return
 	}
 	if err != nil {

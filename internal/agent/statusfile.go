@@ -133,8 +133,9 @@ type StatusFile struct {
 type StatusSite struct {
 	Name    string   `json:"name"`
 	Domains []string `json:"domains"`
-	// State: running, unhealthy, restarting, paused (frozen for a backup), stopped or
-	// missing (no container).
+	// State: running, unhealthy, restarting, paused (frozen for a backup), stopped,
+	// missing (no container) or parked (switched off on purpose, Faz P1b: the watcher
+	// leaves it alone).
 	State string `json:"state"`
 }
 
@@ -260,10 +261,7 @@ func (w *StatusWriter) Build(ctx context.Context) StatusFile {
 			out.SitesError = clipMsg(err.Error(), 200)
 		} else {
 			for _, spec := range list {
-				st := "missing"
-				if c, ok := byName[spec.Container()]; ok {
-					st = containerState(c)
-				}
+				st := siteState(spec, byName)
 				out.Sites = append(out.Sites, StatusSite{Name: spec.Name, Domains: append([]string{}, spec.Domains...), State: st})
 			}
 		}
@@ -282,6 +280,18 @@ func (w *StatusWriter) Build(ctx context.Context) StatusFile {
 		}
 	}
 	return out
+}
+
+// siteState is the site's state for the status file and /durum: parked, or its
+// container's.
+func siteState(spec sites.Spec, byName map[string]ContainerInfo) string {
+	if spec.IsParked() {
+		return "parked"
+	}
+	if c, ok := byName[spec.Container()]; ok {
+		return containerState(c)
+	}
+	return "missing"
 }
 
 func containerState(c ContainerInfo) string {

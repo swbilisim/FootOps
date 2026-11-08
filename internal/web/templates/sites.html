@@ -15,14 +15,15 @@
 {{if .Data.Sites}}
 <div class="table-wrap">
 <table class="responsive wide">
-  <thead><tr><th>Site</th><th>Grup</th><th>Alan adları</th><th>Durum</th><th class="num">RAM</th></tr></thead>
+  <thead><tr><th>Site</th><th>Grup</th><th>Alan adları</th><th>Durum</th><th>Süre</th><th class="num">RAM</th></tr></thead>
   <tbody>
   {{range .Data.Sites}}
     <tr>
       <td class="primary"><a class="cell-title" href="/sites/{{.Spec.Name}}">{{.Spec.Name}}</a><span class="cell-sub">{{.Spec.Image}}</span></td>
       <td data-label="Grup"><span class="chip">{{.Spec.Group}}</span></td>
       <td data-label="Alan adları"><span>{{range $i, $d := .Spec.Domains}}{{if $i}}<br>{{end}}{{$d}}{{end}}</span></td>
-      <td data-label="Durum">{{with .Container}}{{template "state" .}}{{else}}<span class="badge bad">container yok</span>{{end}}</td>
+      <td data-label="Durum">{{if .Spec.Parked}}<span class="badge warn">parkta</span>{{else}}{{with .Container}}{{template "state" .}}{{else}}<span class="badge bad">container yok</span>{{end}}{{end}}</td>
+      <td data-label="Süre">{{$t := term .Spec}}{{if $t.Has}}{{if .Spec.Parked}}<span class="muted">{{$t.Day}}</span>{{else}}<span><span class="nowrap">{{$t.Day}}</span>{{if $t.Class}} <span class="badge {{$t.Class}}">{{$t.Text}}</span>{{else}} <span class="muted nowrap">{{$t.Text}}</span>{{end}}</span>{{end}}{{else}}<span class="muted">süresiz</span>{{end}}</td>
       <td data-label="RAM" class="num wrap">{{with .Container}}{{if eq .State "running"}}<span><span class="nowrap">{{bytes .MemUsage}}</span> <span class="muted nowrap">/ {{bytes .MemLimit}}</span></span>{{else}}—{{end}}{{else}}—{{end}}</td>
     </tr>
   {{end}}

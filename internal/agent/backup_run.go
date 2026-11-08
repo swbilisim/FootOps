@@ -103,6 +103,9 @@ type runPlan struct {
 	Forget   bool
 	Maintain bool // prune + check
 	Stats    bool
+	// Timeout bounds a small run that must not hold the job slot for long (0: the job's
+	// own limit).
+	Timeout time.Duration
 }
 
 type sitePlan struct {
@@ -169,10 +172,15 @@ func (b *Backups) Plan(kind, site string, now time.Time) (runPlan, error) {
 		}
 		sp := sitePlan{Spec: spec, Freeze: pol.Freeze}
 		hasFiles := spec.DataMount != "" && pol.Files != FilesOff
-		switch kind {
-		case RunHourly:
+		switch {
+		case spec.IsParked() && kind != RunManual:
+			// Its data do not change while it is parked: its last backups stand (retention
+			// counts from each part's newest backup). The definition goes every night, so a
+			// recovery brings the site back parked.
+			sp.Def = kind == RunDaily
+		case kind == RunHourly:
 			sp.DB = spec.Database && (pol.DB == DBHourly || (pol.DB == DB6h && slot%6 == 0))
-		case RunDaily:
+		case kind == RunDaily:
 			sp.DB, sp.Def = spec.Database, true
 			sp.Files = hasFiles && (pol.Files == FilesDaily || weekly)
 		default:
@@ -196,6 +204,23 @@ func (b *Backups) Plan(kind, site string, now time.Time) (runPlan, error) {
 		p.Server = site == ""
 	}
 	return p, nil
+}
+
+// defTimeout bounds the definition's backup after a park or an unpark: it takes
+// seconds; a repository out of reach would otherwise hold the job slot for restic's
+// retries (a park from the chat would wait behind it).
+const defTimeout = 3 * time.Minute
+
+// DefPlan backs up one site's definition alone (a few KB): after it was parked or
+// brought back, so that a recovery brings it back as it is now, not as the last night
+// left it.
+func (b *Backups) DefPlan(site string) (runPlan, error) {
+	b.init()
+	spec, err := b.Data.Store.Get(site)
+	if err != nil {
+		return runPlan{}, err
+	}
+	return runPlan{Kind: RunManual, Site: site, Sites: []sitePlan{{Spec: spec, Def: true}}, Timeout: defTimeout}, nil
 }
 
 // errNotConfirmed: the password was never confirmed as kept elsewhere.

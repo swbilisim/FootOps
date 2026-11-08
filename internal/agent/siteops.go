@@ -59,6 +59,8 @@ type SiteOps struct {
 
 	mu  sync.Mutex
 	now func() time.Time
+	// terms keeps the sites' end dates and parking for the alerts (Terms).
+	terms siteTerms
 	// probes are replaceable in tests.
 	dial  func(ctx context.Context, addr string) error
 	https func(ctx context.Context, domain string) (int, error)
@@ -158,10 +160,14 @@ func (o *SiteOps) CreateWith(ctx context.Context, spec sites.Spec, env map[strin
 	defer o.mu.Unlock()
 	o.init()
 	keep := spec
+	if !opt.Keep {
+		spec.Parked = nil // parked only as a recovery brings a parked site back
+	}
 	spec, err = o.Check(spec, env)
 	if err != nil {
 		return nil, err
 	}
+	defer o.dropTerms()
 	env = copyEnv(env)
 	userKeys := sites.SortedKeys(env)
 	warn := func(msg string) {
@@ -268,6 +274,20 @@ func (o *SiteOps) CreateWith(ctx context.Context, spec sites.Spec, env map[strin
 		}
 	}
 
+	if spec.IsParked() {
+		// Brought back as it was: parked. Its container is made when it is brought back
+		// into service (the image is here already).
+		if err := o.writeCaddy(ctx, spec); err != nil {
+			return nil, err
+		}
+		undo = append(undo, func() {
+			_ = os.Remove(o.path(caddyFile(spec)))
+			_ = o.caddy(bg(), "reload")
+		})
+		done("Site parkta (" + localTime(spec.Parked.At) + " tarihinden beri): alan adları bakım sayfasını gösteriyor, container açılmadı")
+		return warnings, nil
+	}
+
 	if err := o.compose(ctx, spec, "up", "--detach"); err != nil {
 		return nil, fmt.Errorf("container başlatılamadı: %w", err)
 	}
@@ -348,6 +368,9 @@ func (o *SiteOps) Redeploy(ctx context.Context, name string, progress Progress) 
 	if err != nil {
 		return err
 	}
+	if spec.IsParked() {
+		return errParked
+	}
 	if err := o.syncCompose(spec, progress); err != nil {
 		return err
 	}
@@ -383,6 +406,7 @@ func (o *SiteOps) Remove(ctx context.Context, name string, progress Progress) er
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.init()
+	defer o.dropTerms()
 	spec, err := o.Store.Get(name)
 	if err != nil {
 		return err
@@ -569,7 +593,7 @@ func (c *caddyResync) result(ran bool, err error, now time.Time) {
 }
 
 // rerenderCaddy rewrites, for the given certificates, the site blocks that differ from
-// their rendering, validates the whole configuration and reloads. If Caddy refuses
+// their rendering (a parked site's is its maintenance page), validates the whole configuration and reloads. If Caddy refuses
 // either, the previous files go back: the files on disk always match what Caddy runs,
 // and a later change does not trip over a block Caddy never accepted. A site without a
 // block (a removal stopped halfway, or taken offline by hand) stays without one.
@@ -598,7 +622,7 @@ func (o *SiteOps) rerenderCaddy(ctx context.Context, certs []sites.Cert) error {
 			restore()
 			return err
 		}
-		want := sites.CaddyBlock(s, certFor)
+		want := sites.SiteBlock(s, certFor)
 		if string(have) == want {
 			continue
 		}
@@ -662,7 +686,7 @@ func (o *SiteOps) writeCaddy(ctx context.Context, s sites.Spec) error {
 		return fmt.Errorf("sertifika yok: %s", strings.Join(missing, ", "))
 	}
 	f := o.path(caddyFile(s))
-	if err := writeFile(f, sites.CaddyBlock(s, certFor), 0o644); err != nil {
+	if err := writeFile(f, sites.SiteBlock(s, certFor), 0o644); err != nil {
 		return err
 	}
 	if err := o.caddy(ctx, "validate"); err != nil {

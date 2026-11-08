@@ -18,6 +18,9 @@ func (o *SiteOps) CheckMove(name, group string) (sites.Spec, sites.Spec, error) 
 	if err != nil {
 		return cur, cur, err
 	}
+	if cur.IsParked() {
+		return cur, cur, errParked // the move starts the container again
+	}
 	next := cur
 	next.Group = strings.ToLower(strings.TrimSpace(group))
 	switch {

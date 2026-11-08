@@ -1,0 +1,27 @@
+{{template "top" .}}
+{{$s := .Data.S.Spec}}
+<div class="dialog">
+  <a class="crumb" href="/sites/{{$s.Name}}">{{icon "back"}}{{$s.Name}}</a>
+  <div class="card">
+    <div class="dialog-icon">{{icon "play"}}</div>
+    <h1>{{$s.Name}} yeniden yayına alınsın mı?</h1>
+    <p>Container başlar; uygulama cevap verince {{range $i, $d := $s.Domains}}{{if $i}}, {{end}}<span class="mono">{{$d}}</span>{{end}} bakım sayfası yerine yeniden siteyi gösterir. Uygulama açılmazsa container yeniden durur, site parkta kalır.</p>
+    {{with $s.Parked}}<p class="muted small">{{datefmt .At}} tarihinden beri parkta{{with .By}} ({{.}}){{end}}.{{with $s.Expires}} Eski bitiş tarihi: {{dayTR .}}.{{end}}</p>{{end}}
+    {{template "problems" .Data.Problems}}
+    <form method="post" action="/sites/{{$s.Name}}/unpark" class="stack">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <div class="choices" role="radiogroup" aria-label="Yeni süre">
+        {{range .Data.Choices}}
+        <label class="choice"><input type="radio" name="choice" value="{{.Value}}"{{if eq .Value $.Data.Choice}} checked{{end}}>
+          <span><strong>{{.Label}}</strong>{{if eq .Value "set"}}<br><input type="date" name="expires" value="{{$.Data.Date}}" aria-label="Yeni bitiş tarihi">{{end}}</span></label>
+        {{end}}
+      </div>
+      <p class="muted small">Süre, eski bitiş tarihi geçmediyse o tarihten, geçtiyse bugünden itibaren eklenir.</p>
+      <div class="form-actions">
+        <button type="submit" class="primary">{{icon "play"}}Yayına al</button>
+        <a class="btn" href="/sites/{{$s.Name}}">Vazgeç</a>
+      </div>
+    </form>
+  </div>
+</div>
+{{template "bottom" .}}

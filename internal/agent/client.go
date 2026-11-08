@@ -229,6 +229,26 @@ func (c *Client) SiteJob(ctx context.Context, name, verb string, a Actor) (strin
 	return r.JobID, err
 }
 
+// SetExpiry gives a site an end date ("" : none) at once; with was, only if it still
+// has that one.
+func (c *Client) SetExpiry(ctx context.Context, name, expires string, was *string, a Actor) error {
+	return c.call(ctx, http.MethodPost, "/v1/sites/"+url.PathEscape(name)+"/expiry", ExpiryRequest{Expires: expires, Was: was, Actor: a}, nil)
+}
+
+// ParkSite starts parking a site (Faz P1b).
+func (c *Client) ParkSite(ctx context.Context, name string, a Actor) (string, error) {
+	var r JobResponse
+	err := c.call(ctx, http.MethodPost, "/v1/sites/"+url.PathEscape(name)+"/park", RestartRequest{Actor: a}, &r)
+	return r.JobID, err
+}
+
+// UnparkSite starts bringing a parked site back with the end date expires ("" : none).
+func (c *Client) UnparkSite(ctx context.Context, name, expires string, a Actor) (string, error) {
+	var r JobResponse
+	err := c.call(ctx, http.MethodPost, "/v1/sites/"+url.PathEscape(name)+"/unpark", ExpiryRequest{Expires: expires, Actor: a}, &r)
+	return r.JobID, err
+}
+
 // UpdateSite starts a site update job.
 func (c *Client) UpdateSite(ctx context.Context, name string, req UpdateSiteRequest) (string, error) {
 	var r JobResponse

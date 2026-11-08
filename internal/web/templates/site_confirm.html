@@ -19,6 +19,29 @@
         <a class="btn" href="/sites/{{$s.Name}}">Vazgeç</a>
       </div>
     </form>
+  {{else if and (eq .Data.Verb "park") $s.Parked}}
+    <div class="dialog-icon">{{icon "pause"}}</div>
+    <h1>{{$s.Name}} parkı tamamlansın mı?</h1>
+    <p>Site parkta: alan adları bakım sayfasını gösteriyor. Container'ı hâlâ çalışıyorsa durdurulur (silinmez); park sayfası eksikse yeniden yazılır.</p>
+    <form method="post" action="/sites/{{$s.Name}}/park">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <div class="form-actions">
+        <button type="submit" class="primary">{{icon "pause"}}Parkı tamamla</button>
+        <a class="btn" href="/sites/{{$s.Name}}">Vazgeç</a>
+      </div>
+    </form>
+  {{else if eq .Data.Verb "park"}}
+    <div class="dialog-icon">{{icon "pause"}}</div>
+    <h1>{{$s.Name}} parka alınsın mı?</h1>
+    <p>Container durur (silinmez); {{range $i, $d := $s.Domains}}{{if $i}}, {{end}}<span class="mono">{{$d}}</span>{{end}} ziyaretçilere nötr bir <strong>bakım sayfası</strong> gösterir (“Bakım çalışması — Bu site şu anda bakımda. Kısa süre içinde yeniden yayında olacak.”, HTTP 503). Sayfada neden ya da sunucuyla ilgili bir şey yazmaz.</p>
+    <p><strong>Silinmeyenler:</strong> {{if $s.Database}}veritabanı, {{end}}{{if $s.DataMount}}yüklenen dosyalar, {{end}}ayarlar ve yedekler. Parktayken zamanlanmış yedek sitenin yalnız tanımını alır (veri değişmiyor; son yedekleri saklanır). Site sayfasından ya da Telegram'dan <strong>Yayına al</strong> ile geri açılır.</p>
+    <form method="post" action="/sites/{{$s.Name}}/park">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <div class="form-actions">
+        <button type="submit" class="primary">{{icon "pause"}}Parka al</button>
+        <a class="btn" href="/sites/{{$s.Name}}">Vazgeç</a>
+      </div>
+    </form>
   {{else}}
     <div class="dialog-icon">{{icon "deploy"}}</div>
     <h1>{{$s.Name}} yeniden dağıtılsın mı?</h1>

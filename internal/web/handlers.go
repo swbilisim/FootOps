@@ -19,6 +19,7 @@ import (
 	"github.com/swbilisim/FootOps/internal/agent"
 	"github.com/swbilisim/FootOps/internal/auth"
 	"github.com/swbilisim/FootOps/internal/docker"
+	"github.com/swbilisim/FootOps/internal/sites"
 )
 
 // liveHeader marks the background requests of live.js: "full", or "1" for a light
@@ -232,7 +233,22 @@ func (s *Server) restartConfirm(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	s.render(w, r, "restart", map[string]any{"Title": name, "Name": name})
+	site, parked := s.siteOf(r, name)
+	s.render(w, r, "restart", map[string]any{"Title": name, "Name": name, "Site": site, "Parked": parked})
+}
+
+// siteOf names the site a container belongs to ("" : none), and whether it is parked.
+func (s *Server) siteOf(r *http.Request, container string) (string, bool) {
+	list, err := s.agent.Sites(r.Context())
+	if err != nil {
+		return "", false
+	}
+	for _, st := range list {
+		if st.Spec.Container() == container {
+			return st.Spec.Name, st.Spec.IsParked()
+		}
+	}
+	return "", false
 }
 
 func (s *Server) restart(w http.ResponseWriter, r *http.Request) {
@@ -271,7 +287,7 @@ type alertSummary struct {
 // navOf maps a template to its menu entry.
 var navOf = map[string]string{
 	"dashboard": "server", "container": "server", "logs": "server", "restart": "server",
-	"sites": "sites", "site": "sites", "site_new": "sites", "site_edit": "sites", "site_confirm": "sites", "job": "sites",
+	"sites": "sites", "site": "sites", "site_new": "sites", "site_edit": "sites", "site_confirm": "sites", "site_unpark": "sites", "job": "sites",
 	"site_form": "sites", "site_review": "sites", "site_move": "sites", "site_dns": "sites", "registries": "sites", "registry_remove": "sites",
 	"import": "sites", "import_preview": "sites", "restore_confirm": "sites",
 	"files": "sites", "files_rename": "sites", "files_move": "sites", "files_trash": "sites", "files_unpack": "sites",
@@ -455,6 +471,10 @@ var funcs = template.FuncMap{
 		return fmt.Sprintf("%d dk %d sn", int(d.Minutes()), int(d.Seconds())%60)
 	},
 	"datefmt": func(t time.Time) string { return t.Local().Format("02.01.2006") },
+	// term is a site's end date as the pages show it; extendTo the one a renewal gives.
+	"term":     termOf,
+	"extendTo": func(expires string, months int) string { return sites.Extend(expires, months, time.Now()) },
+	"dayTR":    dayTR,
 	"daysLeft": func(t, now time.Time) int {
 		return int(math.Floor(t.Sub(now).Hours() / 24))
 	},
@@ -559,7 +579,7 @@ var (
 		"backup.setup": "Yedek deposu bağlanıyor", "backup.run": "Yedekleme",
 		"backup.list": "Yedek listesi okunuyor", "backup.open": "Yedek incelemeye açılıyor",
 		"backup.restore": "Yedekten geri yükleme", "backup.export": "Yedekten arşiv",
-		"site.purge": "Kalıcı siliniyor",
+		"site.purge": "Kalıcı siliniyor", "site.park": "Parka alınıyor", "site.unpark": "Yayına alınıyor",
 	}
 	reasonNames = map[string]string{"manual": "elle", "before-import": "içe aktarmadan önce", "before-restore": "geri yüklemeden önce",
 		"before-migrate": "taşımadan önce", "before-purge": "kalıcı silmeden önce"}

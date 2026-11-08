@@ -66,6 +66,7 @@ type fakeAgent struct {
 	bk        fakeBackup
 	rs        fakeRestore
 	nt        fakeNotify
+	pk        fakePark // end dates and parking (park_test.go)
 	removed   []agent.RemovedSite
 	purges    []string
 }
@@ -74,9 +75,9 @@ func (f *fakeAgent) Overview(context.Context) (agent.Overview, error) {
 	return agent.Overview{
 		SampledAt: time.Now(),
 		System:    agent.SystemMetrics{Hostname: "h1", MemTotal: 4 << 30, MemUsed: 1 << 30},
-		Containers: []agent.ContainerInfo{
+		Containers: append([]agent.ContainerInfo{
 			{Name: "footops-mongo", Image: "mongo:7.0.45", State: "running", Health: "healthy", Project: "footops-core"},
-		},
+		}, f.pk.containers...),
 	}, nil
 }
 
@@ -115,9 +116,16 @@ func (f *fakeAgent) RecordAuth(_ context.Context, e agent.AuditEntry) error {
 func (f *fakeAgent) AuditTail(context.Context, int) ([]agent.AuditEntry, error) { return f.audit, nil }
 
 func (f *fakeAgent) Sites(context.Context) ([]agent.SiteStatus, error) {
-	return []agent.SiteStatus{{Spec: sites.Spec{Name: "enisparta", Group: "musteri", Domains: []string{"enisparta.com"},
+	st := agent.SiteStatus{Spec: sites.Spec{Name: "enisparta", Group: "musteri", Domains: []string{"enisparta.com"},
 		Image: "ghcr.io/x/enisparta:main", Port: 3000, MemoryMB: 256, EnvKeys: []string{"NODE_ENV"}, Database: f.dbSite,
-		DataMount: map[bool]string{true: "/app/uploads", false: ""}[f.dataSite], DataURL: f.dataURL}}}, nil
+		DataMount: map[bool]string{true: "/app/uploads", false: ""}[f.dataSite], DataURL: f.dataURL,
+		Expires: f.pk.expires, Parked: f.pk.parked}}
+	for _, c := range f.pk.containers {
+		if c.Name == "enisparta" {
+			st.Container = &c
+		}
+	}
+	return []agent.SiteStatus{st}, nil
 }
 
 func (f *fakeAgent) CreateSite(_ context.Context, req agent.CreateSiteRequest) (string, error) {

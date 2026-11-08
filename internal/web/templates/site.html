@@ -12,20 +12,26 @@
     {{if $s.DataMount}}<a class="btn" href="/sites/{{$s.Name}}/files">{{icon "folder"}}Dosyalar</a>{{end}}
     <a class="btn" href="/sites/{{$s.Name}}/backup">{{icon "backup"}}Yedekler</a>
     <a class="btn" href="/containers/{{$s.Container}}/logs">{{icon "logs"}}Loglar</a>
+    {{if $s.Parked}}
+    <a class="btn primary" href="/sites/{{$s.Name}}/unpark">{{icon "play"}}Yayına al…</a>
+    {{else}}
     <a class="btn" href="/containers/{{$s.Container}}/restart">{{icon "restart"}}Yeniden başlat</a>
     <a class="btn" href="/sites/{{$s.Name}}/edit">{{icon "edit"}}Düzenle</a>
     <a class="btn primary" href="/sites/{{$s.Name}}/redeploy">{{icon "deploy"}}Yeniden dağıt</a>
+    {{end}}
   </div>
 </div>
 
-{{with .Data.S.Container}}{{template "facts" .}}{{else}}<div class="notice bad">{{icon "alert"}}<div>Bu sitenin container'ı yok. Yeniden dağıtmak container'ı tekrar oluşturur.</div></div>{{end}}
+{{with $s.Parked}}<div class="notice warn">{{icon "pause"}}<div><strong>Bu site parkta</strong> ({{datefmt .At}} tarihinden beri{{with .By}}, {{.}}{{end}}): container durdu, alan adları ziyaretçilere bakım sayfası gösteriyor (HTTP 503). Veri ve yedekler yerinde. Geri açmak için <a href="/sites/{{$s.Name}}/unpark">Yayına al</a>; düzenleme, yeniden dağıtma ve grup değiştirme o zamana kadar kapalı.</div></div>{{end}}
+{{if $s.Parked}}{{with .Data.S.Container}}{{if eq .State "running"}}<div class="notice bad">{{icon "alert"}}<div><strong>Park yarım kalmış:</strong> site parkta ama container'ı hâlâ çalışıyor (durdurulamadı ya da agent o sırada yeniden başladı). Agent açılınca kendisi durdurur; şimdi durdurmak için <a href="/sites/{{$s.Name}}/park">Parkı tamamla</a>.</div></div>{{end}}{{end}}{{end}}
+{{with .Data.S.Container}}{{template "facts" .}}{{else}}{{if not $s.Parked}}<div class="notice bad">{{icon "alert"}}<div>Bu sitenin container'ı yok. Yeniden dağıtmak container'ı tekrar oluşturur.</div></div>{{end}}{{end}}
 
 {{template "history" .Data.History}}
 
-<div class="section-head"><h2>Ayarlar</h2><a class="btn sm" href="/sites/{{$s.Name}}/edit">{{icon "edit"}}Düzenle</a></div>
+<div class="section-head"><h2>Ayarlar</h2>{{if not $s.Parked}}<a class="btn sm" href="/sites/{{$s.Name}}/edit">{{icon "edit"}}Düzenle</a>{{end}}</div>
 <div class="table-wrap">
 <table class="kv">
-  <tr><th>Grup</th><td><span class="chip">{{$s.Group}}</span> <span class="mono small">/srv/{{$s.Group}}/{{$s.Name}}</span> · <a href="/sites/{{$s.Name}}/move">değiştir…</a></td></tr>
+  <tr><th>Grup</th><td><span class="chip">{{$s.Group}}</span> <span class="mono small">/srv/{{$s.Group}}/{{$s.Name}}</span>{{if not $s.Parked}} · <a href="/sites/{{$s.Name}}/move">değiştir…</a>{{end}}</td></tr>
   <tr><th>Alan adları</th><td>{{range $i, $d := $s.Domains}}{{if $i}}, {{end}}<a href="https://{{$d}}" rel="noreferrer" target="_blank">{{$d}}</a>{{end}}</td></tr>
   <tr><th>İmaj</th><td class="mono">{{$s.Image}}</td></tr>
   <tr><th>Uygulama portu</th><td>{{$s.Port}}</td></tr>
@@ -37,6 +43,26 @@
   <tr><th>Oluşturma</th><td>{{ts $s.CreatedAt}}</td></tr>
   <tr><th>Son güncelleme</th><td>{{ts $s.UpdatedAt}}</td></tr>
 </table>
+</div>
+
+{{$t := term $s}}
+<div class="section-head" id="sure"><h2>Süre</h2>{{if not $s.Parked}}<a class="btn sm" href="/sites/{{$s.Name}}/park">{{icon "pause"}}Parka al…</a>{{end}}</div>
+<div class="card">
+  <p>{{if $t.Has}}Bitiş tarihi <strong>{{$t.Day}}</strong>{{if not $s.Parked}} <span class="badge{{with $t.Class}} {{.}}{{end}}">{{$t.Text}}</span>{{end}}{{else}}<strong>Süresiz</strong>: bitiş tarihi yok.{{end}}</p>
+  {{if $s.Parked}}
+  <p class="muted small">Yeni süre, siteyi <a href="/sites/{{$s.Name}}/unpark">yayına alırken</a> seçilir.</p>
+  {{else}}
+  <p class="muted small">Bitişten 7 ve 3 gün önce ve o gün Telegram'a hatırlatma gelir; o gün “parka alınsın mı?” diye sorulur. Onay gelmezse site açık kalır, her gün 10:00'da yeniden sorulur. Parka alınan site bakım sayfası gösterir, veri silinmez. Süre, bitiş geçmediyse o tarihten, geçtiyse bugünden itibaren eklenir.</p>
+  <form method="post" action="/sites/{{$s.Name}}/expiry" class="page-actions">
+    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+    <input type="hidden" name="was" value="{{$s.Expires}}">
+    <input type="date" name="expires" value="{{$s.Expires}}" aria-label="Bitiş tarihi">
+    <button type="submit" name="act" value="set" class="btn sm">{{icon "check"}}Kaydet</button>
+    <button type="submit" name="act" value="month" class="btn sm">+1 ay ({{dayTR (extendTo $s.Expires 1)}})</button>
+    <button type="submit" name="act" value="year" class="btn sm">+1 yıl ({{dayTR (extendTo $s.Expires 12)}})</button>
+    {{if $s.Expires}}<button type="submit" name="act" value="none" class="btn sm">Süresiz yap</button>{{end}}
+  </form>
+  {{end}}
 </div>
 
 {{if or $s.Database $s.DataMount}}

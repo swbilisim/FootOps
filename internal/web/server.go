@@ -46,6 +46,9 @@ type AgentAPI interface {
 	RegistryLogin(ctx context.Context, host, user, token string, a agent.Actor) (agent.RegistryLoginResponse, error)
 	RegistryLogout(ctx context.Context, host string, a agent.Actor) error
 	UpdateSite(ctx context.Context, name string, req agent.UpdateSiteRequest) (string, error)
+	SetExpiry(ctx context.Context, name, expires string, was *string, a agent.Actor) error
+	ParkSite(ctx context.Context, name string, a agent.Actor) (string, error)
+	UnparkSite(ctx context.Context, name, expires string, a agent.Actor) (string, error)
 	SiteJob(ctx context.Context, name, verb string, a agent.Actor) (string, error)
 	Job(ctx context.Context, id string) (agent.Job, error)
 	CancelJob(ctx context.Context, id string, a agent.Actor) error
@@ -225,6 +228,11 @@ func (s *Server) Handler(via string) http.Handler {
 	mux.Handle("POST /sites/{name}/redeploy", s.requireSession(s.siteAction("redeploy")))
 	mux.Handle("GET /sites/{name}/remove", s.requireSession(s.siteConfirm("remove")))
 	mux.Handle("POST /sites/{name}/remove", s.requireSession(s.siteAction("remove")))
+	mux.Handle("POST /sites/{name}/expiry", s.requireSession(s.siteExpiry))
+	mux.Handle("GET /sites/{name}/park", s.requireSession(s.siteConfirm("park")))
+	mux.Handle("POST /sites/{name}/park", s.requireSession(s.sitePark))
+	mux.Handle("GET /sites/{name}/unpark", s.requireSession(s.siteUnparkForm))
+	mux.Handle("POST /sites/{name}/unpark", s.requireSession(s.siteUnpark))
 	mux.Handle("POST /sites/{name}/snapshots", s.requireSession(s.snapshotTake))
 	mux.Handle("GET /sites/{name}/snapshots/{id}/download", s.requireSession(s.snapshotDownload))
 	mux.Handle("GET /sites/{name}/snapshots/{id}/restore", s.requireSession(s.restoreConfirm))

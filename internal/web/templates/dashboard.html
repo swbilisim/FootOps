@@ -79,14 +79,14 @@
   {{range $o.Containers}}
     <tr>
       <td class="primary"><a class="cell-title" href="/containers/{{.Name}}">{{.Name}}</a><span class="cell-sub">{{.Image}}</span></td>
-      <td data-label="Durum">{{template "state" .}}</td>
+      <td data-label="Durum">{{if index $.Data.Parked .Name}}<span class="badges"><span class="badge warn">parkta</span></span>{{else}}{{template "state" .}}{{end}}</td>
       <td data-label="CPU" class="num">{{if eq .State "running"}}%{{f1 .CPUPercent}}{{else}}—{{end}}</td>
       <td data-label="RAM" class="num wrap">{{if eq .State "running"}}<span><span class="nowrap">{{bytes .MemUsage}}</span>{{if limited .MemLimit $o.System.MemTotal}} <span class="muted nowrap">/ {{bytes .MemLimit}}</span>{{end}}</span>{{else}}—{{end}}</td>
       <td data-label="Restart" class="num">{{.RestartCount}}</td>
       <td data-label="Başlama" class="nowrap">{{since .StartedAt}}</td>
       <td class="actions">
         <a class="btn sm" href="/containers/{{.Name}}/logs">{{icon "logs"}}Loglar</a>
-        <a class="btn sm" href="/containers/{{.Name}}/restart">{{icon "restart"}}Yeniden başlat</a>
+        {{if not (index $.Data.Parked .Name)}}<a class="btn sm" href="/containers/{{.Name}}/restart">{{icon "restart"}}Yeniden başlat</a>{{end}}
       </td>
     </tr>
   {{else}}

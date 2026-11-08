@@ -91,7 +91,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 				DockerConfig: os.Getenv("DOCKER_CONFIG"), RegistriesPath: agent.DefaultRegistriesPath,
 				BackupDir: agent.DefaultBackupDir, BackupSecret: agent.DefaultBackupSecret, ToolsDir: agent.DefaultToolsDir,
 				ResticCache: agent.DefaultResticCache, NotifySecret: agent.DefaultNotifySecret, NotifyState: agent.DefaultNotifyState,
-				RehearsalPath: agent.DefaultRehearsalPath, RecoverDir: agent.DefaultRecoverDir}
+				RehearsalPath: agent.DefaultRehearsalPath, RecoverDir: agent.DefaultRecoverDir, ExpiryState: agent.DefaultExpiryState}
 			if cfg.DockerConfig == "" {
 				cfg.DockerConfig = agent.DefaultDockerConfig
 			}

@@ -104,23 +104,9 @@ const MaxRequestBody = "100MiB"
 // core.Caddyfile) and replaces whatever the visitor sent under that name. Apps should
 // read it rather than X-Forwarded-For, whose first entries the visitor chooses.
 func CaddyBlock(s Spec, certFor map[string]Cert) string {
-	byCert := map[string][]string{}
-	var order []string
-	for _, d := range s.Domains {
-		id := certFor[d].ID
-		if _, ok := byCert[id]; !ok {
-			order = append(order, id)
-		}
-		byCert[id] = append(byCert[id], d)
-	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Managed by FootOps: site %s (%s)\n", s.Name, s.Group)
-	for _, id := range order {
-		addrs := make([]string, len(byCert[id]))
-		for i, d := range byCert[id] {
-			addrs[i] = "https://" + d
-		}
-		c := certFor[byCert[id][0]]
+	for _, g := range certGroups(s, certFor) {
 		fmt.Fprintf(&b, `%s {
 	tls %s %s
 	encode zstd gzip
@@ -131,7 +117,90 @@ func CaddyBlock(s Spec, certFor map[string]Cert) string {
 		header_up X-Real-IP {client_ip}
 	}
 }
-`, strings.Join(addrs, ", "), c.CertPath(), c.KeyPath(), MaxRequestBody, s.Container(), s.Port)
+`, g.addrs, g.cert.CertPath(), g.cert.KeyPath(), MaxRequestBody, s.Container(), s.Port)
 	}
 	return b.String()
+}
+
+// ParkTitle and ParkPage are what a parked site's domains answer (Faz P1b): a neutral
+// maintenance page. Nothing on it says why the site is away, or what serves it. It
+// holds no brace, backtick or dollar sign: it goes into the Caddyfile as a backtick
+// string, where Caddy would read {…} as a placeholder and {$…} as the environment.
+const (
+	ParkTitle = "Bakım çalışması"
+	ParkPage  = `<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>` + ParkTitle + `</title>
+</head>
+<body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;text-align:center">
+<main style="max-width:32rem;padding:2rem 1.5rem">
+<h1 style="font-size:1.6rem;font-weight:600;margin:0 0 0.75rem">` + ParkTitle + `</h1>
+<p style="margin:0;line-height:1.6;opacity:0.75">Bu site şu anda bakımda. Kısa süre içinde yeniden yayında olacak.</p>
+</main>
+</body>
+</html>
+`
+	// ParkRetryAfter (seconds) tells visitors' software, and search engines, that the
+	// 503 is for a while.
+	ParkRetryAfter = 3600
+)
+
+// ParkBlock renders a parked site's Caddy configuration: its domains, under their
+// certificates as in CaddyBlock, answer ParkPage with 503 Service Unavailable. No
+// container is involved.
+func ParkBlock(s Spec, certFor map[string]Cert) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# Managed by FootOps: site %s (%s), parked\n", s.Name, s.Group)
+	for _, g := range certGroups(s, certFor) {
+		fmt.Fprintf(&b, `%s {
+	tls %s %s
+	header {
+		Content-Type "text/html; charset=utf-8"
+		Cache-Control no-store
+		Retry-After %d
+	}
+	respond `+"`%s`"+` 503
+}
+`, g.addrs, g.cert.CertPath(), g.cert.KeyPath(), ParkRetryAfter, ParkPage)
+	}
+	return b.String()
+}
+
+// SiteBlock is the block the site should have now: ParkBlock while it is parked.
+func SiteBlock(s Spec, certFor map[string]Cert) string {
+	if s.IsParked() {
+		return ParkBlock(s, certFor)
+	}
+	return CaddyBlock(s, certFor)
+}
+
+// certGroup is the site's domains one certificate covers, as Caddy addresses.
+type certGroup struct {
+	addrs string
+	cert  Cert
+}
+
+func certGroups(s Spec, certFor map[string]Cert) []certGroup {
+	byCert := map[string][]string{}
+	var order []string
+	for _, d := range s.Domains {
+		id := certFor[d].ID
+		if _, ok := byCert[id]; !ok {
+			order = append(order, id)
+		}
+		byCert[id] = append(byCert[id], d)
+	}
+	out := make([]certGroup, 0, len(order))
+	for _, id := range order {
+		addrs := make([]string, len(byCert[id]))
+		for i, d := range byCert[id] {
+			addrs[i] = "https://" + d
+		}
+		out = append(out, certGroup{addrs: strings.Join(addrs, ", "), cert: certFor[byCert[id][0]]})
+	}
+	return out
 }

@@ -50,9 +50,10 @@ const (
 	commandsPerMinute = 20
 	// strangerLogEvery: messages from others are logged at most this often.
 	strangerLogEvery = 10 * time.Minute
-	// buttonTTL is how long a button under a message works; buttonsMax how many are kept.
+	// buttonTTL is how long a button under a message works; buttonsMax how many are kept
+	// (a /siteler can make a few dozen).
 	buttonTTL     = 24 * time.Hour
-	buttonsMax    = 50
+	buttonsMax    = 100
 	buttonCodeLen = 12
 )
 
@@ -88,9 +89,11 @@ type CommandsStatus struct {
 	User string `json:"user,omitempty"`
 	// Off says why commands do not work in this chat, when they do not.
 	Off string `json:"off,omitempty"`
-	// Reading: the bot is being read (a read worked since the last failure); Paused: the
+	// Reading: the bot is being read (a read worked since the last failure); Listening:
+	// the first read waits at Telegram (none has come back yet, none failed); Paused: the
 	// reader stands aside while a link is made.
 	Reading       bool      `json:"reading"`
+	Listening     bool      `json:"listening,omitempty"`
 	Paused        bool      `json:"paused,omitempty"`
 	LastOK        time.Time `json:"last_ok,omitzero"`
 	LastErr       string    `json:"last_error,omitempty"`
@@ -117,15 +120,26 @@ type tgCallback struct {
 
 // tgButton is a button the agent put under a message: what a press does, in which chat
 // and under which message it counts, until when. Once: it does something (P1b's
-// buttons) — used up by its first press, before the work starts, and never taken from
+// [Evet]) — used up by its first press, before the work starts, and never taken from
 // a backlog (a press found waiting may be hours old: Telegram does not say when it was
 // made); such a button should ask again before it acts.
 type tgButton struct {
-	Kind    string    `json:"kind"` // "refresh": /durum again, in place
+	// Kind: "refresh" (/durum again, in place), "site" (proposes Act for Site: asks to
+	// confirm) or "confirm" (the question's [Evet] — data <code>/y — and [Vazgeç] — /n).
+	Kind    string    `json:"kind"`
 	Chat    int64     `json:"chat"`
 	Msg     int64     `json:"msg,omitempty"` // 0: the message's id was not learnt
 	Once    bool      `json:"once,omitempty"`
 	Expires time.Time `json:"expires"`
+	// A site's button (notify_sites.go): the action ("park", "extend", "unpark"), its
+	// months (extend, unpark; 0: no end), the site's end date and parking when the button
+	// was made (a press after they changed does nothing), and the end date it gives.
+	Site      string `json:"site,omitempty"`
+	Act       string `json:"act,omitempty"`
+	Months    int    `json:"months,omitempty"`
+	Was       string `json:"was,omitempty"`
+	WasParked bool   `json:"was_parked,omitempty"`
+	To        string `json:"to,omitempty"`
 }
 
 // commander is whose commands count: the person who sent the link code; for a link
@@ -347,6 +361,7 @@ func (n *Notifier) readFailed(err error) time.Duration {
 func (n *Notifier) setMenu(ctx context.Context, cfg telegramConfig) {
 	cmds, _ := json.Marshal([]map[string]string{
 		{"command": "durum", "description": "Sunucunun durumu: işlemci, bellek, disk, siteler, yedek"},
+		{"command": "siteler", "description": "Süreli ve parktaki siteler"},
 		{"command": "yardim", "description": "Komutlar"},
 	})
 	scope, _ := json.Marshal(map[string]any{"type": "chat", "chat_id": cfg.ChatID})
@@ -419,6 +434,8 @@ func (n *Notifier) handleMessage(ctx context.Context, cfg telegramConfig, m *tgM
 	switch cmd {
 	case "durum", "status":
 		n.sendReport(ctx, cfg)
+	case "siteler", "sites":
+		n.sendSites(ctx, cfg)
 	case "start", "yardim", "yardım", "help":
 		n.reply(ctx, cfg, n.helpText(""))
 	default:
@@ -437,26 +454,38 @@ func (n *Notifier) handleButton(ctx context.Context, cfg telegramConfig, q *tgCa
 		n.answerButton(ctx, cfg, q.ID, "Çok sık; biraz sonra yeniden dene.")
 		return
 	}
-	b, ok, waited := n.takeButton(q.Data, q.Message.Chat.ID, q.Message.MessageID, now, backlog)
+	// A question's two answers share its code: "<code>/y", "<code>/n".
+	code, answer, _ := strings.Cut(q.Data, "/")
+	b, ok, waited := n.takeButton(code, q.Message.Chat.ID, q.Message.MessageID, now, backlog)
 	switch {
 	case waited:
 		n.answerButton(ctx, cfg, q.ID, "Sunucu yeni açıldı ya da bağlantısı koptu; bu basış eski olabilir. İstiyorsan yeniden bas.")
 		return
 	case !ok:
-		n.answerButton(ctx, cfg, q.ID, "Bu düğmenin süresi doldu: /durum yaz.")
+		n.answerButton(ctx, cfg, q.ID, "Bu düğmenin süresi doldu: /durum ya da /siteler yaz.")
 		return
 	}
 	switch b.Kind {
 	case "refresh":
 		n.noteCommand(cfg, "Yenile", now)
-		err := n.editMessage(ctx, cfg, q.Message.MessageID, n.reportText(ctx), refreshMarkup(q.Data))
+		err := n.editMessage(ctx, cfg, q.Message.MessageID, n.reportText(ctx), refreshMarkup(code))
 		if err != nil {
 			n.logf("Telegram mesajı güncellenemedi: %v", err)
 			n.answerButton(ctx, cfg, q.ID, "Güncellenemedi; /durum yaz.")
 			return
 		}
-		n.renewButton(q.Data, now.Add(buttonTTL))
+		n.renewButton(code, now.Add(buttonTTL))
 		n.answerButton(ctx, cfg, q.ID, "Güncellendi")
+	case "site":
+		n.noteCommand(cfg, actLabel(b), now)
+		n.propose(ctx, cfg, q, b)
+	case "confirm":
+		what := "Vazgeç"
+		if answer == "y" {
+			what = "Evet"
+		}
+		n.noteCommand(cfg, actLabel(b)+" → "+what, now)
+		n.confirm(ctx, cfg, q, b, answer == "y")
 	default:
 		n.answerButton(ctx, cfg, q.ID, "Bu düğme bu sürümde çalışmıyor.")
 	}
@@ -513,7 +542,9 @@ func (n *Notifier) helpText(unknown string) string {
 	if unknown != "" {
 		fmt.Fprintf(&b, "Bilinmeyen komut: /%s\n\n", clipMsg(strings.ToValidUTF8(unknown, "?"), 40))
 	}
-	fmt.Fprintf(&b, "%s Komutlar:\n/durum — sunucunun durumu: işlemci, bellek, disk, siteler, son yedek, açık uyarılar\n/yardim — bu liste\n\nUyarılar buraya kendiliğinden gelir.", n.prefix())
+	fmt.Fprintf(&b, "%s Komutlar:\n/durum — sunucunun durumu: işlemci, bellek, disk, siteler, son yedek, açık uyarılar\n"+
+		"/siteler — süreli ve parktaki siteler; süre uzatma, parka alma, yeniden açma\n/yardim — bu liste\n\n"+
+		"Uyarılar ve sitelerin süre hatırlatmaları buraya kendiliğinden gelir.", n.prefix())
 	return b.String()
 }
 
@@ -555,14 +586,18 @@ func refreshMarkup(code string) string {
 	return string(b)
 }
 
+// editMessage puts text (and markup's buttons; "": none) in place of a message's.
 func (n *Notifier) editMessage(ctx context.Context, cfg telegramConfig, msg int64, text, markup string) error {
-	err := n.call(ctx, cfg.Token, "editMessageText", url.Values{
+	params := url.Values{
 		"chat_id":              {strconv.FormatInt(cfg.ChatID, 10)},
 		"message_id":           {strconv.FormatInt(msg, 10)},
 		"text":                 {text},
-		"reply_markup":         {markup},
 		"link_preview_options": {`{"is_disabled":true}`},
-	}, nil)
+	}
+	if markup != "" {
+		params.Set("reply_markup", markup) // left out, the buttons go
+	}
+	err := n.call(ctx, cfg.Token, "editMessageText", params, nil)
 	var te *telegramError
 	if errors.As(err, &te) && te.code == 400 && strings.Contains(strings.ToLower(te.desc), "not modified") {
 		return nil // pressed twice within a second: it is up to date
@@ -598,6 +633,8 @@ func (n *Notifier) commandsStatus(cfg telegramConfig) *CommandsStatus {
 	if n.rd.token == cfg.Token {
 		out.LastOK, out.LastErr, out.LastErrAt, out.Failing = n.rd.lastOK, n.rd.lastErr, n.rd.errAt, n.rd.failing
 		out.LastCommand, out.LastCommandAt = n.rd.lastCmd, n.rd.lastCmdAt
+		// Just linked or started: the first read waits at Telegram for up to pollWait.
+		out.Listening = out.LastOK.IsZero() && out.Failing.IsZero() && n.rd.cancel != nil
 	}
 	out.Reading = !out.LastOK.IsZero() && out.Failing.IsZero()
 	out.Paused = n.link != nil && now.Before(n.link.expires)
@@ -660,36 +697,59 @@ func (n *Notifier) saveButtons(now time.Time) error {
 	return writeSynced(n.buttonsPath(), append(data, '\n'))
 }
 
-// newButton keeps b under a fresh code; past buttonsMax the ones closest to expiring go.
+// newButton keeps b under a fresh code; past buttonsMax others go (evictBefore).
 func (n *Notifier) newButton(b tgButton) (string, error) {
-	code, err := randomCode(buttonCodeLen)
+	codes, err := n.newButtons([]tgButton{b})
 	if err != nil {
 		return "", err
+	}
+	return codes[0], nil
+}
+
+// newButtons keeps every one of list under a fresh code, in one write.
+func (n *Notifier) newButtons(list []tgButton) ([]string, error) {
+	codes := make([]string, len(list))
+	for i := range list {
+		code, err := randomCode(buttonCodeLen)
+		if err != nil {
+			return nil, err
+		}
+		codes[i] = code
 	}
 	now := n.now()
 	n.btnMu.Lock()
 	defer n.btnMu.Unlock()
 	// Not for a chat removed (or relinked) meanwhile: Remove clears the file after the
 	// settings are gone.
-	if cfg, err := n.config(); err != nil || cfg.ChatID != b.Chat {
-		return "", errNoNotify
+	cfg, err := n.config()
+	if err != nil {
+		return nil, errNoNotify
+	}
+	for _, b := range list {
+		if cfg.ChatID != b.Chat {
+			return nil, errNoNotify
+		}
 	}
 	n.loadButtons()
-	for len(n.buttons) >= buttonsMax {
-		oldest := ""
+	for len(n.buttons)+len(list) > buttonsMax && len(n.buttons) > 0 {
+		first := ""
 		for c, x := range n.buttons {
-			if oldest == "" || x.Expires.Before(n.buttons[oldest].Expires) {
-				oldest = c
+			if first == "" || evictBefore(x, n.buttons[first]) {
+				first = c
 			}
 		}
-		delete(n.buttons, oldest)
+		delete(n.buttons, first)
 	}
-	n.buttons[code] = b
+	for i, b := range list {
+		n.buttons[codes[i]] = b
+	}
 	if err := n.saveButtons(now); err != nil {
-		delete(n.buttons, code)
-		return "", err
+		for _, c := range codes {
+			delete(n.buttons, c)
+		}
+		return nil, err
 	}
-	return code, nil
+	return codes, nil
 }
 
 // takeButton finds the button a press is for: it must not have expired and must be
@@ -718,8 +778,37 @@ func (n *Notifier) takeButton(code string, chat, msg int64, now time.Time, backl
 	return b, true, false
 }
 
+// evictBefore: a goes before b when the buttons are too many — anything before a
+// question's answers (they expire soonest, and are the ones someone is about to press),
+// then the one closest to expiring.
+func evictBefore(a, b tgButton) bool {
+	if ac, bc := a.Kind == "confirm", b.Kind == "confirm"; ac != bc {
+		return !ac
+	}
+	return a.Expires.Before(b.Expires)
+}
+
 func (n *Notifier) bindButton(code string, msg int64) {
-	n.editButton(code, func(b *tgButton) { b.Msg = msg })
+	n.bindButtons([]string{code}, msg)
+}
+
+// bindButtons ties buttons to the message they went under, in one write.
+func (n *Notifier) bindButtons(codes []string, msg int64) {
+	if len(codes) == 0 {
+		return
+	}
+	n.btnMu.Lock()
+	defer n.btnMu.Unlock()
+	n.loadButtons()
+	for _, c := range codes {
+		if b, ok := n.buttons[c]; ok {
+			b.Msg = msg
+			n.buttons[c] = b
+		}
+	}
+	if err := n.saveButtons(n.now()); err != nil {
+		n.logf("Telegram düğmeleri kaydedilemedi: %v", err)
+	}
 }
 
 func (n *Notifier) renewButton(code string, until time.Time) {
@@ -745,11 +834,25 @@ func (n *Notifier) dropButton(code string) {
 	if code == "" {
 		return
 	}
+	n.dropButtons([]string{code})
+}
+
+// dropButtons forgets buttons whose message did not go, in one write.
+func (n *Notifier) dropButtons(codes []string) {
+	if len(codes) == 0 {
+		return
+	}
 	n.btnMu.Lock()
 	defer n.btnMu.Unlock()
 	n.loadButtons()
-	if _, ok := n.buttons[code]; ok {
-		delete(n.buttons, code)
+	gone := false
+	for _, c := range codes {
+		if _, ok := n.buttons[c]; ok {
+			delete(n.buttons, c)
+			gone = true
+		}
+	}
+	if gone {
 		if err := n.saveButtons(n.now()); err != nil {
 			n.logf("Telegram düğmeleri kaydedilemedi: %v", err)
 		}

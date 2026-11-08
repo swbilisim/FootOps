@@ -3,6 +3,11 @@
   <a class="crumb" href="/containers/{{.Data.Name}}">{{icon "back"}}{{.Data.Name}}</a>
   <div class="card">
     <div class="dialog-icon">{{icon "restart"}}</div>
+    {{if .Data.Parked}}
+    <h1>{{.Data.Name}} yeniden başlatılamaz</h1>
+    <p>Bu container parktaki <strong>{{.Data.Site}}</strong> sitesinin: bilerek durduruldu. Açmak için sitenin sayfasından <strong>Yayına al</strong>.</p>
+    <div class="form-actions"><a class="btn primary" href="/sites/{{.Data.Site}}/unpark">{{icon "play"}}Yayına al…</a><a class="btn" href="/containers/{{.Data.Name}}">Vazgeç</a></div>
+    {{else}}
     <h1>{{.Data.Name}} yeniden başlatılsın mı?</h1>
     <p>Container durdurulup tekrar başlatılır; birkaç saniye erişilemeyebilir.</p>
     <form method="post" action="/containers/{{.Data.Name}}/restart">
@@ -12,6 +17,7 @@
         <a class="btn" href="/containers/{{.Data.Name}}">Vazgeç</a>
       </div>
     </form>
+    {{end}}
   </div>
 </div>
 {{template "bottom" .}}

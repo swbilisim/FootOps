@@ -52,6 +52,7 @@ var siteStateTR = map[string]string{
 	"paused":     "yedek için duraklatılmış",
 	"stopped":    "duruyor",
 	"missing":    "container yok",
+	"parked":     "parkta",
 }
 
 // renderReport is the /durum message (plain text, local time).
@@ -114,10 +115,7 @@ func reportSites(r ServerReport) string {
 	running := 0
 	other := map[string][]string{}
 	for _, spec := range r.Sites {
-		st := "missing"
-		if c, ok := byName[spec.Container()]; ok {
-			st = containerState(c)
-		}
+		st := siteState(spec, byName)
 		if st == "running" {
 			running++
 			continue

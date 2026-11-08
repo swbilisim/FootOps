@@ -44,7 +44,9 @@ func (o *SiteOps) Stop(ctx context.Context, name string) error {
 	return nil
 }
 
-// Start starts the site's container and waits until the app accepts connections.
+// Start starts the site's container and waits until the app accepts connections. A
+// parked site stays stopped: what stopped it for data work does not bring it back
+// (only Unpark does).
 func (o *SiteOps) Start(ctx context.Context, name string) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -52,6 +54,9 @@ func (o *SiteOps) Start(ctx context.Context, name string) error {
 	spec, err := o.Store.Get(name)
 	if err != nil {
 		return err
+	}
+	if spec.IsParked() {
+		return nil
 	}
 	if err := o.syncCompose(spec, nil); err != nil {
 		return err

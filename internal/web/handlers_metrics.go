@@ -39,8 +39,17 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 			hv.Charts = serverCharts(o.System, h)
 		}
 	}
+	// A parked site's container is stopped on purpose (Faz P1b): said so, not "exited".
+	parked := map[string]bool{}
+	if list, err := s.agent.Sites(r.Context()); err == nil {
+		for _, st := range list {
+			if st.Spec.IsParked() {
+				parked[st.Spec.Container()] = true
+			}
+		}
+	}
 	s.render(w, r, "dashboard", map[string]any{"Title": "Sunucu", "O": o, "Err": errString(err), "History": hv,
-		"Live": liveEvery, "Refresh": 15})
+		"Live": liveEvery, "Refresh": 15, "Parked": parked})
 }
 
 func serverCharts(sys agent.SystemMetrics, h agent.History) []template.HTML {
@@ -108,15 +117,8 @@ func (s *Server) container(w http.ResponseWriter, r *http.Request) {
 	if c != nil && c.MemLimit > 0 && c.MemLimit < o.System.MemTotal {
 		limit = c.MemLimit // without a limit Docker reports the host's memory
 	}
-	site := ""
-	if list, err := s.agent.Sites(r.Context()); err == nil {
-		for _, st := range list {
-			if st.Spec.Container() == name {
-				site = st.Spec.Name
-			}
-		}
-	}
-	data := map[string]any{"Title": name, "Name": name, "Site": site, "Err": errString(err),
+	site, parked := s.siteOf(r, name)
+	data := map[string]any{"Title": name, "Name": name, "Site": site, "Parked": parked, "Err": errString(err),
 		"History": s.containerHistory(r, name, limit), "Live": liveEvery, "Refresh": 15}
 	if c != nil {
 		data["C"] = c

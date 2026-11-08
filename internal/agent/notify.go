@@ -129,6 +129,11 @@ type Notifier struct {
 	Report func(ctx context.Context) ServerReport
 	// Audit records the commands and buttons that came from Telegram (nil: not recorded).
 	Audit *Audit
+	// Sites is what /siteler and the sites' buttons see and do (Faz P1b; nil: they say
+	// they cannot). OnLink is called once a chat is linked: what is owed to it (an end
+	// date's question) goes at once.
+	Sites  siteDoer
+	OnLink func()
 
 	now      func() time.Time
 	initOnce sync.Once
@@ -449,12 +454,13 @@ func (n *Notifier) events(sent map[string]sentAlert, active []Alert, now time.Ti
 // the dashboard (CPU, a container close to its memory limit, RAM or swap that is high
 // but not critical), the notifier's own trouble (it could not send it anyway), and
 // sites that are down — the outside watcher (Y4b) reports those as visitors see them,
-// so the chat does not hear it twice. The server's own containers (MongoDB, Caddy, the
+// so the chat does not hear it twice —, and an end date that has come (it has messages
+// of its own, with buttons: Expiry). The server's own containers (MongoDB, Caddy, the
 // tunnel; site names cannot start with "footops") do go: nothing else would tell.
 func Notifiable(a Alert) bool {
 	kind, name, _ := strings.Cut(a.Key, ":")
 	switch kind {
-	case "cpu", "limit", "notify":
+	case "cpu", "limit", "notify", "expiry":
 		return false
 	case "memory", "swap":
 		return a.Level == "bad"
@@ -988,7 +994,7 @@ func (n *Notifier) FinishLink(ctx context.Context, by string) (NotifyStatus, err
 	}
 	welcome := fmt.Sprintf("✅ %s FootOps bu sohbete bağlandı. Sunucunun uyarıları (yedek, disk, sertifika, MongoDB…) buraya gelecek: açılınca, kötüleşince ve düzelince.", n.prefix())
 	if _, off := cfg.commander(); off == "" {
-		welcome += fmt.Sprintf(" Sunucunun durumu için /durum yaz; komutları yalnız %s verebilir.", cfg.commanderName())
+		welcome += fmt.Sprintf(" Sunucunun durumu için /durum, süreli ve parktaki siteler için /siteler yaz; komutları yalnız %s verebilir.", cfg.commanderName())
 	}
 	if err := n.send(ctx, cfg, welcome); err != nil {
 		n.work.Unlock()
@@ -1022,6 +1028,9 @@ func (n *Notifier) FinishLink(ctx context.Context, by string) (NotifyStatus, err
 	n.work.Unlock()
 	n.poke() // the open alerts go out right away
 	n.wakeReader()
+	if n.OnLink != nil {
+		n.OnLink()
+	}
 	return n.Status(), nil
 }
 
