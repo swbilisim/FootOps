@@ -18,7 +18,7 @@ import sys
 import threading
 import time
 
-from itlib import ACTOR, api, fail, ok, rss, sh, tools, wait, wait_job
+from itlib import ACTOR, api, fail, ok, rss, sh, tools, wait, wait_idle, wait_job
 
 C = sys.argv[1]
 SITE, DOMAIN = "itbak", "bak.it.example.com"  # covered by f0's *.it.example.com certificate
@@ -313,6 +313,8 @@ measure.update(night_run_s=round(sum(p.get("took", 0) for p in nr["parts"]) / 1e
                night_peak_mem=nr["usage"].get("peak_mem"))
 ok("gece yedeği zamanlayıcıdan (%s): %d parça + saklama + prune + check; depo %.1f MB" %
    (night, len(nr["parts"]), nr["repo_size"] / 2**20))
+# The trial restore that follows the night run would make the hourly slot skip.
+wait_idle()
 
 # ---- an hourly run: the site's database only ----
 cli(["set", SITE, "db=hourly"])

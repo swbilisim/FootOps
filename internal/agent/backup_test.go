@@ -179,7 +179,8 @@ func newBackups(t *testing.T) *backupEnv {
 	e.b = &Backups{Data: d.data, Jobs: NewJobs(), Audit: NewAudit(filepath.Join(d.root, "audit.jsonl")),
 		Dir: filepath.Join(d.root, "backup"), SecretPath: filepath.Join(d.root, "etc/footops/secrets/backup.json"),
 		ToolsDir: filepath.Join(d.root, "tools"), CacheDir: filepath.Join(d.root, "cache"), Server: "T1",
-		now: func() time.Time { return d.now }, loc: time.UTC}
+		now: func() time.Time { return d.now }, loc: time.UTC,
+		trialEvery: -1} // no trial restore after these night runs (backup_trial_test.go has its own)
 	// A site's directory as the store expects it, with something in its data directory.
 	os.WriteFile(filepath.Join(d.root, "srv/musteri/magaza/data/logo.png"), []byte("png"), 0o644)
 	return e

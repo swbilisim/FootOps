@@ -44,6 +44,11 @@ type Answers struct {
 	AccessTeam    string `json:"access_team,omitempty"`
 	AccessAUD     string `json:"access_aud,omitempty"`
 
+	// Recover makes the install a recovery from the backups of the server whose code
+	// it takes (recover.go): no tunnel and no panel account of its own, and a
+	// rehearsal until `footops go-live`.
+	Recover *RecoverAnswers `json:"recover,omitempty"`
+
 	// Secrets are only held in memory for the run that sets them.
 	SudoPasswordValue string `json:"-"`
 	TunnelToken       string `json:"-"`
@@ -213,6 +218,11 @@ func (a Answers) Validate() error {
 		}
 		if err := config.ValidateAUD(a.AccessAUD); err != nil {
 			return fmt.Errorf("access_aud: %w", err)
+		}
+	}
+	if a.Recover != nil {
+		if err := a.Recover.Validate(); err != nil {
+			return err
 		}
 	}
 	return nil

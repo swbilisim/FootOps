@@ -297,7 +297,8 @@ func containerState(c ContainerInfo) string {
 // Write puts the status file next to the repository; without a repository it does
 // nothing.
 func (w *StatusWriter) Write(ctx context.Context) error {
-	if w.Backups == nil {
+	// A rehearsal writes nowhere: next to the old server's backups it would pass for it.
+	if w.Backups == nil || w.Backups.Rehearsal.Active() {
 		return nil
 	}
 	sec, err := w.Backups.secret()

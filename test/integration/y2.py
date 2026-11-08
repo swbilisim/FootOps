@@ -17,7 +17,7 @@ import re
 import sys
 import time
 
-from itlib import ACTOR, api, fail, fresh_totp, ok, rss, sh, wait, wait_job
+from itlib import ACTOR, api, fail, fresh_totp, ok, rss, sh, wait, wait_idle, wait_job
 
 C, LOGIN = sys.argv[1], sys.argv[2]
 SITE, DOMAIN = "itbak", "bak.it.example.com"  # covered by f0's *.it.example.com certificate
@@ -252,6 +252,14 @@ measure["first_backup_parts"], measure["first_backup_took_s"] = len(first["parts
     sum(p.get("took", 0) for p in first["parts"]) / 1e9, 1)
 ok("ilk yedek onaydan sonra kendiliğinden başladı (%.0f sn içinde biten gece işi, %d parça, %s dondurularak)%s" %
    (measure["first_backup_after_confirm_s"], len(first["parts"]), SITE, "; sayfa iş sürerken canlı" if live else ""))
+# A clean night run is followed by the monthly trial restore: never made in this new
+# repository, so now.
+wait(lambda: (api("GET", "/v1/backup")[1].get("trial") or {}).get("job"), "the trial after the first night run", timeout=300)
+trial = api("GET", "/v1/backup")[1]["trial"]
+if not trial.get("ok"):
+    fail("trial after the first night run: %s" % trial)
+wait_idle()
+ok("ardından aylık deneme geri yüklemesi kendiliğinden: %s — %s" % (trial["site"], trial["detail"]))
 wait(lambda: not any(k.startswith("backup:") for k in alerts()), "backup alerts to clear", timeout=30)
 
 code, _, page = web("/backup")

@@ -119,6 +119,24 @@ func snapshotOf(id string, at time.Time, paths, tags []string) (BackupSnapshot, 
 // refreshIndex reads the repository's snapshots of this server into the index (restic
 // snapshots: its cache keeps the ones it saw before, only new ones are fetched).
 func (b *Backups) refreshIndex(ctx context.Context, t *Task, env *resticEnv) (int, error) {
+	list, err := b.listSnapshots(ctx, t, env, b.Server)
+	if err != nil {
+		return 0, err
+	}
+	data, err := json.Marshal(snapshotIndex{Repository: env.repo, Updated: b.now().UTC(), Snapshots: list})
+	if err != nil {
+		return 0, err
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if err := os.MkdirAll(b.Dir, 0o700); err != nil {
+		return 0, err
+	}
+	return len(list), writeSynced(b.indexPath(), data)
+}
+
+// listSnapshots reads the snapshots FootOps took under host, newest first.
+func (b *Backups) listSnapshots(ctx context.Context, t *Task, env *resticEnv, host string) ([]BackupSnapshot, error) {
 	list := []BackupSnapshot{}
 	arr := newJSONArray(func(raw json.RawMessage) error {
 		var sn struct {
@@ -147,25 +165,16 @@ func (b *Backups) refreshIndex(ctx context.Context, t *Task, env *resticEnv) (in
 		list = append(list, s)
 		return nil
 	})
-	_, err := b.restic(ctx, t, env, resticOpts{out: arr}, "snapshots", "--json", "--no-lock", "--host", b.Server)
+	_, err := b.restic(ctx, t, env, resticOpts{out: arr}, "snapshots", "--json", "--no-lock", "--host", host)
 	derr := arr.result()
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if derr != nil {
-		return 0, fmt.Errorf("anlık görüntü listesi okunamadı: %w", derr)
+		return nil, fmt.Errorf("anlık görüntü listesi okunamadı: %w", derr)
 	}
 	sort.SliceStable(list, func(i, j int) bool { return list[i].Time.After(list[j].Time) })
-	data, err := json.Marshal(snapshotIndex{Repository: env.repo, Updated: b.now().UTC(), Snapshots: list})
-	if err != nil {
-		return 0, err
-	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if err := os.MkdirAll(b.Dir, 0o700); err != nil {
-		return 0, err
-	}
-	return len(list), writeSynced(b.indexPath(), data)
+	return list, nil
 }
 
 // updateIndex refreshes the index at the end of a job that changed the repository; a
@@ -1153,7 +1162,7 @@ func (b *Backups) Restore(ctx context.Context, t *Task, site string, req BackupR
 		defer done()
 		plan.Files = &filesSource{Label: "yedek " + localTime(snap.Time), Expect: datafs.Stats{Files: int(snap.Files), Bytes: snap.Bytes},
 			Fill: func(ctx context.Context, t *Task, sf siteFiles, dir string) (datafs.Stats, error) {
-				return b.restoreFiles(ctx, t, env, snap, sf, dir)
+				return b.restoreFiles(ctx, t, env, snap, sf, dir, " (site bu sırada çalışmaya devam eder)")
 			}}
 		what = append(what, fmt.Sprintf("dosyalar (%d dosya, %s)", snap.Files, humanBytes(snap.Bytes)))
 	}
@@ -1182,13 +1191,14 @@ func (b *Backups) Restore(ctx context.Context, t *Task, site string, req BackupR
 	return res, nil
 }
 
-// restoreFiles fills dir (a fresh data.new) with a backup's files. restic restores them
-// with their owners, modes and times (its container may change owners and override
-// permissions, nothing else), and they must add up to what the backup read. The top
-// takes data/'s owner and mode; if every file belonged to one other user — the image's
-// user changed since — they are given to the site's user now.
-func (b *Backups) restoreFiles(ctx context.Context, t *Task, env *resticEnv, snap BackupSnapshot, sf siteFiles, dir string) (datafs.Stats, error) {
-	t.Step(fmt.Sprintf("… Dosyalar yedekten açılıyor: %d dosya, %s (site bu sırada çalışmaya devam eder)", snap.Files, humanBytes(snap.Bytes)))
+// restoreFiles fills dir (a fresh data.new, or the empty data directory of a site being
+// recovered) with a backup's files. restic restores them with their owners, modes and
+// times (its container may change owners and override permissions, nothing else), and
+// they must add up to what the backup read. The top takes data/'s owner and mode; if
+// every file belonged to one other user — the image's user changed since — they are
+// given to the site's user now. note ends the first step.
+func (b *Backups) restoreFiles(ctx context.Context, t *Task, env *resticEnv, snap BackupSnapshot, sf siteFiles, dir, note string) (datafs.Stats, error) {
+	t.Step(fmt.Sprintf("… Dosyalar yedekten açılıyor: %d dosya, %s%s", snap.Files, humanBytes(snap.Bytes), note))
 	start := b.now()
 	var restored, total int64
 	lines := &jsonLines{each: func(line []byte) {

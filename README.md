@@ -196,11 +196,62 @@ server (A record, proxied) and use SSL mode **Full (strict)**.
 The agent re-attaches Caddy and MongoDB to every site network every 10 seconds, so
 recreating the core containers heals itself.
 
+## Recovering a server from its backups
+
+Backups go to the server's own S3 bucket with restic (encrypted on the server). When a
+server is lost, a new one is installed from them:
+
+1. `sudo ./footops install` and answer **yes** to "Bu sunucu bir yedekten mi kurulacak?".
+   Give the old server's code (backups are taken under it), the usual answers, and the
+   repository: a key that can *read* the bucket is enough. The Mac helper prints all of
+   it as one line for a single paste: `footops-yedek kurtarma h1 | pbcopy`.
+2. After the usual steps (no tunnel, no new panel account: the old one comes back) the
+   agent brings back the server's own part (certificates, the panel's login and 2FA,
+   registry logins, backup settings) and then every site of the newest full backup:
+   definition, a new database user, the database and the files *before* the container
+   first starts, then Caddy and an HTTPS check. Every read is `--no-lock`; nothing is
+   written to the repository. A site that fails is undone and the others go on; running
+   the installer again brings back only what is missing.
+3. The server is now a **rehearsal**: the tunnel's token, the repository's settings and
+   the Telegram bot are kept aside (root only), no repository or bot can be set up, and
+   one firewall rule (`DOCKER-USER`, tagged `footops-prova`) rejects every new
+   connection from the sites' networks to the outside, so an app's mail, payments or
+   marketplace updates do not happen twice while the old server still runs (at boot,
+   `footops-prova.service` puts it in place before Docker starts the sites). Look around
+   through the SSH tunnel and try the sites with `curl -k --resolve <domain>:443:<ip>`.
+4. Once the old server is surely off: `sudo footops go-live` connects the repository
+   again with the old server's write key (it asks for a new one if that key was revoked,
+   and stops to ask if a backup newer than the recovery shows the old server still
+   runs), puts Telegram, the tunnel and Access back, opens the sites to the outside and
+   starts a first backup. Then point the domains' A records at the new address.
+
+Once a month, after a clean night run, one site's newest backup (the sites take turns) is
+restored where it harms nothing and checked: its database into a temporary database,
+compared with what mongodump counted, and a sample of its files against the live ones.
+A failure is an alert (and a Telegram message). **Yedekleme → Şimdi dene** or
+`sudo footops backup trial [site]` runs it at once.
+
+### On a Mac: `mac/footops-yedek`
+
+Opens backups on a Mac without FootOps. It only reads (a read-only key, `--no-lock`); the
+account, the key and the repositories' passwords come from the Keychain (service
+`footops-yedek`: `r2-hesap`, `r2-mac-erisim`, `r2-mac-gizli`, `restic-<server>`,
+optionally `kova-<server>`). Needs `brew install restic`.
+
+```bash
+footops-yedek sunucular                       # servers in the Keychain
+footops-yedek liste h1                        # sites and their newest backups
+footops-yedek liste h1 magaza                 # one site's backups
+footops-yedek ac h1 magaza "2026-11-07 04:00" --mongo   # db.archive, files/, env → ~/Downloads, and into the local MongoDB
+footops-yedek kurtarma h1 | pbcopy            # the recovery line for the installer
+```
+
 ## Commands
 
 | Command | Purpose |
 |---|---|
-| `footops install` | Prepare the server and install FootOps (interactive, root) |
+| `footops install` | Prepare the server and install FootOps (interactive, root); also recovers a server from its backups |
+| `footops go-live` | Make a server recovered from backups the live one (root) |
 | `footops reset-password` | New panel password, lifts a lockout (root over SSH) |
 | `footops reset-2fa` | Enrol a new authenticator, new recovery codes (root over SSH) |
 | `footops rotate-mongo-root` | New MongoDB root password; verified before the secret file is replaced (root) |

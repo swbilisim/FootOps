@@ -209,3 +209,23 @@ func (s *Server) backupRuns(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, list)
 }
+
+// backupTrial starts a trial restore now: of a site, or (Site empty) of whose turn it is.
+func (s *Server) backupTrial(w http.ResponseWriter, r *http.Request) {
+	var req BackupRunRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "geçersiz istek")
+		return
+	}
+	id, err := s.Backups.StartTrial(req.Site, req.Actor)
+	switch {
+	case errors.Is(err, sites.ErrNotFound):
+		writeErr(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, errNoBackup), errors.Is(err, errRehearsal):
+		writeErr(w, http.StatusConflict, err.Error())
+	case err != nil && !errors.Is(err, ErrBusy):
+		writeErr(w, http.StatusUnprocessableEntity, err.Error())
+	default:
+		s.jobResponse(w, id, err)
+	}
+}

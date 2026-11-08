@@ -116,6 +116,9 @@ type Notifier struct {
 	// Active returns the active alerts (the Alerter's).
 	Active func() []Alert
 	Log    *log.Logger
+	// Rehearsal, while the server is one, keeps every message in: it would go out in
+	// the name of the server it is a rehearsal of.
+	Rehearsal *Rehearsal
 
 	now      func() time.Time
 	initOnce sync.Once
@@ -268,6 +271,9 @@ func (n *Notifier) Tick(ctx context.Context) {
 	n.init()
 	n.work.Lock()
 	defer n.work.Unlock()
+	if n.Rehearsal.Active() {
+		return
+	}
 	cfg, err := n.config()
 	if err != nil {
 		return // not linked (or the file is broken: the page says so)
@@ -662,12 +668,14 @@ type NotifyStatus struct {
 	Error     string    `json:"error,omitempty"` // the settings could not be read
 	// StatusFile is how writing the outside watcher's status file goes (nil: off).
 	StatusFile *StatusFileState `json:"status_file,omitempty"`
+	// Rehearsal: a server recovered from backups and not live yet sends nothing.
+	Rehearsal bool `json:"rehearsal,omitempty"`
 }
 
 // Status reports the chat and how sending goes.
-func (n *Notifier) Status() NotifyStatus {
+func (n *Notifier) Status() (out NotifyStatus) {
 	n.init()
-	var out NotifyStatus
+	defer func() { out.Rehearsal = n.Rehearsal.Active() }()
 	cfg, err := n.config()
 	switch {
 	case err == nil:
@@ -729,6 +737,9 @@ func (n *Notifier) StartLink(ctx context.Context, token string, keep bool) (Noti
 	n.init()
 	n.work.Lock()
 	defer n.work.Unlock()
+	if n.Rehearsal.Active() {
+		return NotifyLink{}, errRehearsal
+	}
 	token = strings.TrimSpace(token)
 	if keep {
 		cfg, err := n.config()
@@ -890,6 +901,9 @@ func (n *Notifier) Test(ctx context.Context) error {
 	n.init()
 	n.work.Lock()
 	defer n.work.Unlock()
+	if n.Rehearsal.Active() {
+		return errRehearsal
+	}
 	cfg, err := n.config()
 	if err != nil {
 		return err

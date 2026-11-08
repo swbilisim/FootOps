@@ -48,6 +48,9 @@ func (b *Backups) Alerts(now time.Time) []Alert {
 	if err != nil {
 		return unreadable("settings", "Yedek ayarları okunamadı", err)
 	}
+	if b.Rehearsal.Active() {
+		return nil // no repository on purpose: the rehearsal's own alert says so
+	}
 	if _, err := b.secret(); errors.Is(err, errNoBackup) {
 		return []Alert{alert("setup", "warn", "Uzak yedekleme kurulmadı",
 			"Sunucu giderse sitelerin verisi de gider: Yedekleme sayfasından bir S3 deposu (ör. Cloudflare R2) bağla.", now)}
@@ -175,6 +178,10 @@ func (b *Backups) Alerts(now time.Time) []Alert {
 	}
 	if st.CheckFailed != "" {
 		out = append(out, alert("check", "bad", "Yedek deposunun haftalık denetimi sorun buldu", st.CheckFailed, st.LastCheck))
+	}
+	if tr := st.Trial; tr != nil && !tr.OK {
+		out = append(out, alert("trial", "bad", "Aylık deneme geri yüklemesi başarısız: "+tr.Site,
+			tr.Err+" — bu sitenin yedeği geri gelmeyebilir. Yedekleme sayfasından yeniden dene; sürerse yedeğe elle bak.", tr.Time))
 	}
 	if st.RepoSize >= s.Warn() {
 		out = append(out, alert("size", "warn", fmt.Sprintf("Yedek deposu %s (uyarı eşiği %s)", humanBytes(st.RepoSize), humanBytes(s.Warn())),

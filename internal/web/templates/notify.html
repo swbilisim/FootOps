@@ -9,6 +9,7 @@
 {{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>Agent'a ulaşılamadı: {{.}}</div></div>{{end}}
 {{with $st.Error}}<div class="notice bad">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
 {{template "problems" .Data.Problems}}
+{{if $st.Rehearsal}}<div class="notice warn">{{icon "alert"}}<div><strong>Prova kipi:</strong> bu sunucu yedekten kuruldu ve canlı sunucunun adına mesaj göndermesin diye Telegram kapalı; bot burada bağlanmaz. Canlıya alınınca (<span class="mono">sudo footops go-live</span>) eski sunucunun bağlantısı yedekten gelir.</div></div>{{end}}
 
 {{if $st.Linked}}
 <div class="card stack">

@@ -23,6 +23,7 @@ const (
 	panelBinPath  = "/usr/local/bin/footops"
 	agentUnitPath = "/etc/systemd/system/footops-agent.service"
 	webUnitPath   = "/etc/systemd/system/footops-web.service"
+	provaUnitPath = "/etc/systemd/system/footops-prova.service"
 	panelStateDir = "/var/lib/footops"
 	// dockerConfigDir is the agent's DOCKER_CONFIG.
 	dockerConfigDir = panelStateDir + "/docker"
@@ -348,9 +349,10 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ReadWritePaths=/var/lib/footops/web
 # Defence in depth: even if the web process were compromised it cannot read site and
-# database files, secrets, Docker's data, the audit log, documents kept for undo or the
-# backups' records and cache (it asks the agent instead).
-InaccessiblePaths=-/srv -/etc/footops/secrets -/var/lib/docker -/var/lib/containerd -/var/lib/footops/audit.jsonl -/var/lib/footops/audit.jsonl.1 -/var/lib/footops/dbedits -/var/lib/footops/backup -/var/cache/footops -/var/run/docker.sock
+# database files, secrets, Docker's data, the audit log, documents kept for undo, the
+# backups' records and cache or what a recovery keeps for go-live (it asks the agent
+# instead).
+InaccessiblePaths=-/srv -/etc/footops/secrets -/var/lib/docker -/var/lib/containerd -/var/lib/footops/audit.jsonl -/var/lib/footops/audit.jsonl.1 -/var/lib/footops/dbedits -/var/lib/footops/backup -/var/lib/footops/recover -/var/cache/footops -/var/run/docker.sock
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
@@ -378,6 +380,25 @@ MemoryMax=256M
 WantedBy=multi-user.target
 `
 
+// provaUnit shuts a server recovered from backups (still a rehearsal) off from the
+// outside before Docker starts its sites at boot; the agent, which keeps the rule
+// afterwards, starts only after Docker. Anywhere else its condition makes it a no-op.
+const provaUnit = `# Managed by FootOps
+[Unit]
+Description=FootOps rehearsal: the sites' outside connections closed before Docker starts
+ConditionPathExists=/var/lib/footops/rehearsal.json
+Before=docker.service
+After=ufw.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/footops rehearsal-rule
+RemainAfterExit=yes
+
+[Install]
+WantedBy=docker.service
+`
+
 type panelServicesStep struct{ h Host }
 
 func (s panelServicesStep) Name() string { return "panel-services" }
@@ -385,25 +406,34 @@ func (s panelServicesStep) Describe() string {
 	return "systemd servisleri: footops-agent (root, sabit işler), footops-web (yetkisiz, sandbox)"
 }
 
+func (s panelServicesStep) units() map[string]string {
+	return map[string]string{agentUnitPath: agentUnit, webUnitPath: webUnit, provaUnitPath: provaUnit}
+}
+
 func (s panelServicesStep) Check(ctx context.Context) (bool, error) {
-	for path, want := range map[string]string{agentUnitPath: agentUnit, webUnitPath: webUnit} {
+	for path, want := range s.units() {
 		ok, err := s.h.FileEquals(path, want)
 		if err != nil || !ok {
 			return false, err
 		}
 	}
+	out, err := s.h.Run.Run(ctx, "systemctl", "is-enabled", "footops-prova")
+	if err != nil || strings.TrimSpace(out) != "enabled" {
+		return false, nil
+	}
 	return serviceActive(ctx, s.h, "footops-agent") && serviceActive(ctx, s.h, "footops-web"), nil
 }
 
 func (s panelServicesStep) Apply(ctx context.Context) error {
-	for path, content := range map[string]string{agentUnitPath: agentUnit, webUnitPath: webUnit} {
+	for path, content := range s.units() {
 		if err := s.h.WriteFile(path, content, 0o644); err != nil {
 			return err
 		}
 	}
 	for _, c := range [][]string{
 		{"systemctl", "daemon-reload"},
-		{"systemctl", "enable", "footops-agent", "footops-web"},
+		// footops-prova is only enabled: it runs at boot, before Docker, on a rehearsal.
+		{"systemctl", "enable", "footops-agent", "footops-web", "footops-prova"},
 		// restart, not start: picks up changed unit files and binaries.
 		{"systemctl", "restart", "footops-agent", "footops-web"},
 	} {

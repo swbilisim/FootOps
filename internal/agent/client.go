@@ -711,6 +711,13 @@ func (c *Client) BackupRun(ctx context.Context, site string, a Actor) (string, e
 	return r.JobID, err
 }
 
+// BackupTrial starts a trial restore: of a site, or of whose turn it is (site empty).
+func (c *Client) BackupTrial(ctx context.Context, site string, a Actor) (string, error) {
+	var r JobResponse
+	err := c.call(ctx, http.MethodPost, "/v1/backup/trial", BackupRunRequest{Site: site, Actor: a}, &r)
+	return r.JobID, err
+}
+
 // BackupRuns returns run records, newest first (site: only runs that touched it).
 func (c *Client) BackupRuns(ctx context.Context, site string, limit int) ([]BackupRun, error) {
 	q := url.Values{"limit": {strconv.Itoa(limit)}}
@@ -720,6 +727,27 @@ func (c *Client) BackupRuns(ctx context.Context, site string, limit int) ([]Back
 	var list []BackupRun
 	err := c.call(ctx, http.MethodGet, "/v1/backup/runs?"+q.Encode(), nil, &list)
 	return list, err
+}
+
+// ---- recovering a server from its backups (Faz Y5) ----
+
+// Recover starts bringing the server back from its backups (root only).
+func (c *Client) Recover(ctx context.Context, req RecoverRequest) (string, error) {
+	var r JobResponse
+	err := c.call(ctx, http.MethodPost, "/v1/recover", req, &r)
+	return r.JobID, err
+}
+
+// RecoverStatus returns the recovery's record and the rehearsal, if any.
+func (c *Client) RecoverStatus(ctx context.Context) (RecoverStatus, error) {
+	var st RecoverStatus
+	err := c.call(ctx, http.MethodGet, "/v1/recover", nil, &st)
+	return st, err
+}
+
+// EndRehearsal ends the rehearsal: the sites may reach out again (root only).
+func (c *Client) EndRehearsal(ctx context.Context, a Actor) error {
+	return c.call(ctx, http.MethodPost, "/v1/rehearsal/end", RehearsalEndRequest{Actor: a}, nil)
 }
 
 // ---- restoring from backups (Faz Y3) ----

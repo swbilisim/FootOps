@@ -77,6 +77,7 @@ func TestNewPasswordKeepsSpacesAndRequiresMatch(t *testing.T) {
 
 func TestCollectFullRun(t *testing.T) {
 	input := strings.Join([]string{
+		"",                      // not from a backup
 		"H1",                    // server code
 		"",                      // hostname -> h1
 		"",                      // timezone default
@@ -140,7 +141,7 @@ func TestCollectFullRun(t *testing.T) {
 }
 
 func TestCollectDeclinedAtSummary(t *testing.T) {
-	input := strings.Join([]string{"A", "", "", "", keyA, "", "h", "", "", "panel-a.example.com", "h", "h", ""}, "\n") + "\n"
+	input := strings.Join([]string{"", "A", "", "", "", keyA, "", "h", "", "", "panel-a.example.com", "h", "h", ""}, "\n") + "\n"
 	p, out := prompter(input)
 	_, err := Collect(p, Facts{RAM: 8 << 30, ZoneinfoOK: func(string) bool { return true }})
 	if !errors.Is(err, ErrAborted) {
@@ -149,7 +150,7 @@ func TestCollectDeclinedAtSummary(t *testing.T) {
 }
 
 func TestCollectRejectsUnknownTimezone(t *testing.T) {
-	input := strings.Join([]string{"H1", "", "Mars/Olympus", "Europe/Istanbul"}, "\n") + "\n"
+	input := strings.Join([]string{"h", "H1", "", "Mars/Olympus", "Europe/Istanbul"}, "\n") + "\n"
 	p, out := prompter(input)
 	_, _ = Collect(p, Facts{RAM: 4 << 30, ZoneinfoOK: func(tz string) bool { return tz == "Europe/Istanbul" }})
 	if !strings.Contains(out.String(), "bulunamadı") {

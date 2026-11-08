@@ -409,6 +409,17 @@ func (s *Server) backupRun(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/jobs/"+id, http.StatusSeeOther)
 }
 
+// backupTrial starts the trial restore now (whose turn it is).
+func (s *Server) backupTrial(w http.ResponseWriter, r *http.Request) {
+	id, err := s.agent.BackupTrial(r.Context(), "", s.actor(r))
+	if err != nil {
+		s.sessions.setFlash(current(r).ID, "Deneme geri yüklemesi başlatılamadı: "+err.Error())
+		http.Redirect(w, r, "/backup", http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/jobs/"+id, http.StatusSeeOther)
+}
+
 // siteBackupPage is one site's backups: its settings over the general ones, its parts'
 // last backups and its runs.
 func (s *Server) siteBackupPage(w http.ResponseWriter, r *http.Request) {

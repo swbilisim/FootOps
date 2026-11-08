@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/swbilisim/FootOps/internal/config"
 	"github.com/swbilisim/FootOps/internal/docker"
 	"github.com/swbilisim/FootOps/internal/history"
 	"github.com/swbilisim/FootOps/internal/remote"
@@ -52,6 +53,10 @@ type Server struct {
 	// file for the outside watcher (nil: no backups).
 	Notify     *Notifier
 	StatusFile *StatusWriter
+	// Recovery brings the server back from its backups; Rehearsal is the state it
+	// leaves the server in (nil in tests that do not need them).
+	Recovery  *Recovery
+	Rehearsal *Rehearsal
 	// Registries are the image registry logins docker pulls with.
 	Registries *Registries
 	// AllowedUIDs may connect; everyone else gets 403. Checked against the kernel's
@@ -179,6 +184,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/backup/settings", s.backupSettings)
 	mux.HandleFunc("POST /v1/backup/settings", s.setBackupSettings)
 	mux.HandleFunc("POST /v1/backup/run", s.backupRun)
+	mux.HandleFunc("POST /v1/backup/trial", s.backupTrial)
 	mux.HandleFunc("GET /v1/backup/runs", s.backupRuns)
 	mux.HandleFunc("POST /v1/backup/list", s.backupList)
 	mux.HandleFunc("GET /v1/sites/{name}/backups", s.siteBackups)
@@ -193,6 +199,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/sites/{name}/views/{id}/db", s.inView(s.dbCollections))
 	mux.HandleFunc("GET /v1/sites/{name}/views/{id}/db/find", s.inView(s.dbFind))
 	mux.HandleFunc("GET /v1/sites/{name}/views/{id}/db/doc", s.inView(s.dbDoc))
+	mux.HandleFunc("GET /v1/recover", s.recoverStatus)
+	mux.HandleFunc("POST /v1/recover", s.recoverStart)
+	mux.HandleFunc("POST /v1/rehearsal/end", s.rehearsalEnd)
 	mux.HandleFunc("GET /v1/notify", s.notifyStatus)
 	mux.HandleFunc("POST /v1/notify/telegram", s.notifyStart)
 	mux.HandleFunc("POST /v1/notify/telegram/link", s.notifyLink)
@@ -434,6 +443,10 @@ type Config struct {
 	NotifySecret string
 	NotifyState  string
 	NotifyAPI    string
+	// RehearsalPath marks a server recovered from its backups and not yet live;
+	// RecoverDir keeps the recovery's record and what go-live puts in place (Faz Y5).
+	RehearsalPath string
+	RecoverDir    string
 }
 
 // Main runs the agent until ctx is done.
@@ -472,7 +485,7 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 		RecoveryDir: cfg.RecoveryDir, Sites: ops, MigrationsDir: cfg.MigrationsDir, DBEditsDir: cfg.DBEditsDir}
 	// Made at start so the web process, which starts after the agent, has them hidden
 	// (InaccessiblePaths only covers paths that exist when a service starts).
-	for _, dir := range []string{cfg.DBEditsDir, cfg.BackupDir, cfg.ResticCache} {
+	for _, dir := range []string{cfg.DBEditsDir, cfg.BackupDir, cfg.ResticCache, cfg.RecoverDir} {
 		if dir == "" {
 			continue
 		}
@@ -493,8 +506,8 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 		jobs = j
 		for _, job := range interrupted {
 			logger.Printf("yarıda kalan iş: %s %s (%s)", job.Kind, job.Target, job.ID)
-			// Both check archives in a temporary database first.
-			tempDBs = tempDBs || job.Kind == "import.check" || job.Kind == "migrate.copy"
+			// These restore into a temporary database (the trial restore too).
+			tempDBs = tempDBs || job.Kind == "import.check" || job.Kind == "migrate.copy" || job.Kind == "backup.trial"
 			_ = audit.Record(AuditEntry{Actor: job.Actor, Action: job.Kind, Target: job.Target, Detail: job.Err})
 			// Its staging may hold a connection file with a password (rule K5), a move's
 			// staging the site's database as fetched from the source.
@@ -518,6 +531,12 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 	for _, x := range data.SweepSnapshots(true) {
 		logger.Printf("yarım kalan veritabanı kopyası silindi: %s", x)
 	}
+	var rehearsal *Rehearsal
+	if cfg.RehearsalPath != "" {
+		rehearsal = &Rehearsal{Path: cfg.RehearsalPath, Run: run.Exec{KillOnCancel: true}, Log: logger}
+		// Before any site gets a chance to reach out: Docker may have rebuilt its chains.
+		rehearsal.Ensure(ctx, true)
+	}
 	var backups *Backups
 	if cfg.BackupDir != "" {
 		code := cfg.ServerCode
@@ -525,7 +544,7 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 			code = host
 		}
 		backups = &Backups{Data: data, Jobs: jobs, Audit: audit, Dir: cfg.BackupDir, SecretPath: cfg.BackupSecret,
-			ToolsDir: cfg.ToolsDir, CacheDir: cfg.ResticCache, Server: code, Log: logger}
+			ToolsDir: cfg.ToolsDir, CacheDir: cfg.ResticCache, Server: code, Log: logger, Rehearsal: rehearsal}
 		// A site a cut-off backup froze is unpaused before anything else.
 		backups.Recover(ctx)
 		backups.StartViews(ctx)
@@ -551,7 +570,7 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 			code = host
 		}
 		notify = &Notifier{SecretPath: cfg.NotifySecret, StatePath: cfg.NotifyState, Server: code, PanelHost: cfg.PanelHost,
-			API: cfg.NotifyAPI, Active: sampler.Alerts.Active, Log: logger}
+			API: cfg.NotifyAPI, Active: sampler.Alerts.Active, Log: logger, Rehearsal: rehearsal}
 		sampler.Alerts.Extra = append(sampler.Alerts.Extra, notify.Alerts)
 		go notify.Run(ctx)
 	}
@@ -561,6 +580,28 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 			Containers: func(ctx context.Context) []ContainerInfo { return sampler.Latest(ctx).Containers }}
 		sampler.Alerts.Extra = append(sampler.Alerts.Extra, statusFile.Alerts)
 		go statusFile.Run(ctx)
+	}
+	if rehearsal != nil {
+		// Its own ticker: Reconcile waits behind a site being made (a recovery's restore).
+		go func() {
+			t := time.NewTicker(10 * time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					rehearsal.Ensure(ctx, false)
+				}
+			}
+		}()
+	}
+	var recovery *Recovery
+	if backups != nil && rehearsal != nil && cfg.RecoverDir != "" {
+		recovery = &Recovery{Backups: backups, Ops: ops, Rehearsal: rehearsal, Dir: cfg.RecoverDir,
+			AuthPath: config.AuthPath, DockerConfig: cfg.DockerConfig, RegistriesPath: cfg.RegistriesPath,
+			SourcesDir: cfg.SourcesDir, PanelUID: int(uid), PanelGID: gid}
+		sampler.Alerts.Extra = append(sampler.Alerts.Extra, rehearsal.Alerts)
 	}
 	if cfg.HistoryPath != "" {
 		h, err := history.Load(cfg.HistoryPath, time.Now())
@@ -614,6 +655,8 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 		Backups:     backups,
 		Notify:      notify,
 		StatusFile:  statusFile,
+		Recovery:    recovery,
+		Rehearsal:   rehearsal,
 		Registries:  regs,
 		AllowedUIDs: map[uint32]bool{0: true, uint32(uid): true},
 		Log:         logger,

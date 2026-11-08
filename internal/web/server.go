@@ -107,6 +107,7 @@ type AgentAPI interface {
 	BackupSettings(ctx context.Context) (agent.BackupSettings, error)
 	SetBackupSettings(ctx context.Context, s agent.BackupSettings, a agent.Actor) error
 	BackupRun(ctx context.Context, site string, a agent.Actor) (string, error)
+	BackupTrial(ctx context.Context, site string, a agent.Actor) (string, error)
 	BackupRuns(ctx context.Context, site string, limit int) ([]agent.BackupRun, error)
 	ListBackups(ctx context.Context, site string, a agent.Actor) (string, error)
 	SiteBackups(ctx context.Context, site string) (agent.BackupList, error)
@@ -291,6 +292,7 @@ func (s *Server) Handler(via string) http.Handler {
 	mux.Handle("POST /backup/settings", s.requireSession(s.backupSettings))
 	mux.Handle("POST /backup/pause", s.requireSession(s.backupPause))
 	mux.Handle("POST /backup/run", s.requireSession(s.backupRun))
+	mux.Handle("POST /backup/trial", s.requireSession(s.backupTrial))
 	mux.Handle("GET /sites/{name}/backup", s.requireSession(s.siteBackupPage))
 	mux.Handle("POST /sites/{name}/backup", s.requireSession(s.siteBackupSave))
 	mux.Handle("POST /sites/{name}/backups/list", s.requireSession(s.backupListRefresh))

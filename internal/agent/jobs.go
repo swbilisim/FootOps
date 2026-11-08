@@ -89,6 +89,9 @@ var (
 		"backup.export":  time.Hour,
 		"backup.list":    15 * time.Minute,
 		"site.purge":     time.Hour, // the database's last copy first
+		"backup.trial":   time.Hour, // a database into a temporary one, a few files
+		// Every site of a server from the bucket, its images from their registries.
+		"server.recover": 6 * time.Hour,
 	}
 )
 
@@ -313,7 +316,8 @@ func (j *Jobs) Hold(site string) (release func(), err error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	for _, id := range j.order {
-		if job := j.m[id]; !job.Done && (job.Target == site || job.Kind == "db.recover") {
+		// A recovery (server.recover) makes sites and fills their folders: any of them.
+		if job := j.m[id]; !job.Done && (job.Target == site || job.Kind == "db.recover" || job.Kind == "server.recover") {
 			return nil, ErrBusy
 		}
 	}

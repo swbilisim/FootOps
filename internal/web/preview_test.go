@@ -422,6 +422,8 @@ func (p *previewAgent) BackupStatus(context.Context) (agent.BackupStatus, error)
 	switch previewBackup {
 	case "setup":
 		return agent.BackupStatus{Settings: s}, nil
+	case "rehearsal":
+		return agent.BackupStatus{Settings: s, Rehearsal: true}, nil
 	case "key":
 		return agent.BackupStatus{Configured: true, Repository: "footops-h1", Settings: s}, nil
 	}
@@ -455,6 +457,11 @@ func (p *previewAgent) BackupStatus(context.Context) (agent.BackupStatus, error)
 	st.Failed = map[string]agent.BackupFailure{
 		"kurumsal/db": {Time: night, Err: "mongodump başarısız, yedek alınmadı: Failed: can't create session: connection refused"},
 		"blog/files":  {Time: night, Err: "bazı dosyalar okunamadı: open /footops/blog/files/cache/oturum-1: permission denied", Warning: true},
+	}
+	st.Trial = &agent.BackupTrial{Time: night.Add(-3*24*time.Hour + 6*time.Minute), Site: "buyuksehir-belediyesi-kultur-mrk", OK: true,
+		Detail: "veritabanı 14 koleksiyon / 128455 belge aynı · 20 dosyanın 17 tanesi aynı (3 tanesi yedekten beri değiştiği için yalnız boyutu)"}
+	if previewBackup == "trialfail" {
+		st.Trial = &agent.BackupTrial{Time: night.Add(6 * time.Minute), Site: "kurumsal", Err: "veritabanı: sayımlar yedek alınırken sayılanla tutmuyor: siparisler: kayıtta 18342, yüklenen 18341"}
 	}
 	if previewBackup == "running" {
 		st.Running = &agent.Job{ID: "running", Kind: "backup.run", Target: "saatlik yedek: magaza", Started: now.Add(-6 * time.Second)}
@@ -590,6 +597,8 @@ func (p *previewAgent) NotifyStatus(context.Context) (agent.NotifyStatus, error)
 	switch previewNotify {
 	case "none":
 		return agent.NotifyStatus{StatusFile: &agent.StatusFileState{}}, nil
+	case "rehearsal":
+		return agent.NotifyStatus{StatusFile: &agent.StatusFileState{}, Rehearsal: true}, nil
 	case "link":
 		return agent.NotifyStatus{Link: &agent.NotifyLink{Bot: "OrnekBot", Code: "K7Q2M9XDRA", URL: "https://t.me/OrnekBot?start=K7Q2M9XDRA",
 			Expires: now.Add(29 * time.Minute)}, StatusFile: file}, nil
@@ -663,7 +672,7 @@ func TestPreview(t *testing.T) {
 		previewNotify = r.URL.Query().Get("s")
 		http.Redirect(w, r, "/notify", http.StatusSeeOther)
 	})
-	// /dev-backup?s=setup|key|ready|running switches the backup page's state.
+	// /dev-backup?s=setup|key|ready|running|rehearsal|trialfail switches the backup page's state.
 	mux.HandleFunc("/dev-backup", func(w http.ResponseWriter, r *http.Request) {
 		previewBackup = r.URL.Query().Get("s")
 		if previewBackup == "key" {

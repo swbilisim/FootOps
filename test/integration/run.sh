@@ -20,8 +20,8 @@ WORK=${TMPDIR:-/tmp}/footops-it
 mkdir -p "$WORK" && chmod 700 "$WORK"
 
 if [ "${1:-}" = clean ]; then
-	docker rm -f "$NAME" >/dev/null 2>&1 || true
-	docker volume rm footops-it-docker footops-it-containerd >/dev/null 2>&1 || true
+	docker rm -f "$NAME" "$NAME-dr" >/dev/null 2>&1 || true
+	docker volume rm footops-it-docker footops-it-containerd footops-it-dr-docker footops-it-dr-containerd >/dev/null 2>&1 || true
 	rm -rf "$WORK"
 	echo "temizlendi"
 	exit 0
@@ -53,6 +53,6 @@ until docker exec "$NAME" systemctl is-system-running 2>/dev/null | grep -Eq 'ru
 docker cp "$WORK/footops" "$NAME:/root/footops"
 python3 install.py "$NAME" "$WORK/id_it.pub" "$WORK/login"
 docker exec "$NAME" rm -f /root/footops
-for s in ${*:-f0 f2 f2b f3 f4 f5 f6 y1 y2 y3 y4}; do
+for s in ${*:-f0 f2 f2b f3 f4 f5 f6 y1 y2 y3 y4 y5}; do
 	python3 "$s.py" "$NAME" "$WORK/login"
 done

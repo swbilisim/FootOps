@@ -133,16 +133,41 @@ func (o *SiteOps) Check(spec sites.Spec, env map[string]string) (sites.Spec, err
 
 // Create builds a site end to end. If any step fails, every earlier step is undone, so
 // a failed attempt leaves nothing behind.
-func (o *SiteOps) Create(ctx context.Context, spec sites.Spec, env map[string]string, progress Progress) (err error) {
+func (o *SiteOps) Create(ctx context.Context, spec sites.Spec, env map[string]string, progress Progress) error {
+	_, err := o.CreateWith(ctx, spec, env, progress, CreateOptions{})
+	return err
+}
+
+// CreateOptions change how a site is built; a recovery from backups uses them.
+type CreateOptions struct {
+	// Fill puts the site's data in place once its directory, database user and data
+	// directory are made, before its container first starts: an app never meets an
+	// empty database it might seed. Its database is dropped again if the site is undone.
+	Fill func(ctx context.Context, spec sites.Spec) error
+	// Keep leaves CreatedAt and UpdatedAt as the spec has them (a site brought back).
+	Keep bool
+	// Lenient: once the container has started, an app that does not answer, or HTTPS
+	// that does not, is a warning rather than a reason to undo a site whose data are
+	// in place (it may need what is shut off for now).
+	Lenient bool
+}
+
+// CreateWith is Create with options; warnings are what a lenient create let pass.
+func (o *SiteOps) CreateWith(ctx context.Context, spec sites.Spec, env map[string]string, progress Progress, opt CreateOptions) (warnings []string, err error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.init()
+	keep := spec
 	spec, err = o.Check(spec, env)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	env = copyEnv(env)
 	userKeys := sites.SortedKeys(env)
+	warn := func(msg string) {
+		warnings = append(warnings, msg)
+		progress("⚠ " + msg)
+	}
 
 	var undo []func()
 	defer func() {
@@ -162,63 +187,74 @@ func (o *SiteOps) Create(ctx context.Context, spec sites.Spec, env map[string]st
 
 	dir := o.path(spec.Dir())
 	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
-		return err
+		return nil, err
 	}
 	if err := os.Mkdir(dir, 0o750); err != nil {
-		return err
+		return nil, err
 	}
 	undo = append(undo, func() { _ = os.RemoveAll(dir) })
 	done("Klasör: " + spec.Dir())
 
 	if err := o.Docker.CreateNetwork(ctx, spec.Network(), map[string]string{"footops.site": spec.Name}); err != nil {
-		return fmt.Errorf("ağ oluşturulamadı: %w", err)
+		return nil, fmt.Errorf("ağ oluşturulamadı: %w", err)
 	}
 	undo = append(undo, func() { _ = o.Docker.RemoveNetwork(bg(), spec.Network()) })
 	if err := o.Docker.Connect(ctx, spec.Network(), caddyContainer); err != nil {
-		return fmt.Errorf("Caddy ağa bağlanamadı: %w", err)
+		return nil, fmt.Errorf("Caddy ağa bağlanamadı: %w", err)
 	}
 	undo = append(undo, func() { _ = o.Docker.Disconnect(bg(), spec.Network(), caddyContainer) })
 	done("Docker ağı: " + spec.Network())
 
 	if spec.Database {
 		if err := o.Docker.Connect(ctx, spec.Network(), mongoContainer, mongoAlias); err != nil {
-			return fmt.Errorf("MongoDB ağa bağlanamadı: %w", err)
+			return nil, fmt.Errorf("MongoDB ağa bağlanamadı: %w", err)
 		}
 		undo = append(undo, func() { _ = o.Docker.Disconnect(bg(), spec.Network(), mongoContainer) })
 		pw, err := randomSecret(32)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if err := o.mongoUser(ctx, spec, pw); err != nil {
-			return err
+			return nil, err
 		}
 		undo = append(undo, func() { _ = o.dropMongoUser(bg(), spec) })
+		if opt.Fill != nil {
+			// What Fill loaded goes with the site; a plain create's database is still empty.
+			undo = append(undo, func() {
+				if p, ok := o.mongoOps().(dbPurger); ok {
+					_ = p.DropSiteDB(bg(), spec.DBName())
+				}
+			})
+		}
 		env[spec.DBVar] = fmt.Sprintf("mongodb://%s:%s@%s:27017/%s?authSource=%s", spec.DBUser(), pw, mongoAlias, spec.DBName(), spec.DBName())
 		done(fmt.Sprintf("MongoDB: veritabanı %s, kullanıcı %s (%s değişkeninde)", spec.DBName(), spec.DBUser(), spec.DBVar))
 	}
 
 	now := o.now().UTC()
 	spec.EnvKeys, spec.CreatedAt, spec.UpdatedAt = userKeys, now, now
+	if opt.Keep && !keep.CreatedAt.IsZero() {
+		spec.CreatedAt, spec.UpdatedAt = keep.CreatedAt.UTC(), keep.UpdatedAt.UTC()
+	}
 	if err := o.Store.WriteCompose(spec, env); err != nil {
-		return err
+		return nil, err
 	}
 	if err := o.Store.WriteMeta(spec); err != nil {
-		return err
+		return nil, err
 	}
 	done("compose.yaml ve footops.json yazıldı")
 
 	if err := o.compose(ctx, spec, "pull", "--quiet"); err != nil {
-		return fmt.Errorf("imaj indirilemedi: %w", explainPull(err))
+		return nil, fmt.Errorf("imaj indirilemedi: %w", explainPull(err))
 	}
 	if err := o.checkPlatform(ctx, spec.Image); err != nil {
-		return err
+		return nil, err
 	}
 	done("İmaj indirildi: " + spec.Image)
 
 	if spec.DataMount != "" {
 		uid, err := o.prepareDataDir(ctx, spec)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		done(fmt.Sprintf("Kalıcı klasör: %s/%s → %s", spec.Dir(), sites.DataDir, spec.DataMount))
 		if a := o.loginAccount(uid); a != "" {
@@ -226,17 +262,27 @@ func (o *SiteOps) Create(ctx context.Context, spec sites.Spec, env map[string]st
 		}
 	}
 
+	if opt.Fill != nil {
+		if err := opt.Fill(ctx, spec); err != nil {
+			return nil, err
+		}
+	}
+
 	if err := o.compose(ctx, spec, "up", "--detach"); err != nil {
-		return fmt.Errorf("container başlatılamadı: %w", err)
+		return nil, fmt.Errorf("container başlatılamadı: %w", err)
 	}
 	undo = append(undo, func() { _ = o.compose(bg(), spec, "down", "--remove-orphans") })
 	if err := o.waitListening(ctx, spec, restartBase{}); err != nil {
-		return err
+		if !opt.Lenient || ctx.Err() != nil {
+			return nil, err
+		}
+		warn("Uygulama cevap vermedi: " + err.Error())
+	} else {
+		done(fmt.Sprintf("Uygulama %d portunda cevap veriyor", spec.Port))
 	}
-	done(fmt.Sprintf("Uygulama %d portunda cevap veriyor", spec.Port))
 
 	if err := o.writeCaddy(ctx, spec); err != nil {
-		return err
+		return nil, err
 	}
 	undo = append(undo, func() {
 		_ = os.Remove(o.path(caddyFile(spec)))
@@ -244,11 +290,53 @@ func (o *SiteOps) Create(ctx context.Context, spec sites.Spec, env map[string]st
 	})
 	done("Caddy: " + strings.Join(spec.Domains, ", "))
 
+	if len(warnings) > 0 {
+		// HTTPS reaches the app through Caddy: it cannot answer either.
+		return warnings, nil
+	}
 	if err := o.checkHTTPS(ctx, spec.Domains[0]); err != nil {
-		return err
+		if !opt.Lenient || ctx.Err() != nil {
+			return nil, err
+		}
+		warn("HTTPS üzerinden cevap alınamadı: " + err.Error())
+		return warnings, nil
 	}
 	done("HTTPS üzerinden cevap alındı. Site hazır; DNS kaydı Cloudflare'de bu sunucuyu göstermeli.")
-	return nil
+	return warnings, nil
+}
+
+// discard takes a half-made site away entirely: container, Caddy block, network,
+// database with its users, directory. Only for what a recovery left half-made when the
+// agent stopped in the middle of making it (Create's own undo never ran): none of it is
+// worth keeping, the backup it came from is still there.
+func (o *SiteOps) discard(ctx context.Context, s sites.Spec) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.init()
+	dir := o.path(s.Dir())
+	if _, err := os.Stat(filepath.Join(dir, sites.ComposeFile)); err == nil {
+		if err := o.compose(ctx, s, "down", "--remove-orphans"); err != nil {
+			return fmt.Errorf("container durdurulamadı: %w", err)
+		}
+	}
+	if err := os.Remove(o.path(caddyFile(s))); err == nil {
+		if err := o.caddy(ctx, "reload"); err != nil {
+			return fmt.Errorf("Caddy yeniden yüklenemedi: %w", err)
+		}
+	}
+	_ = o.Docker.Disconnect(ctx, s.Network(), caddyContainer)
+	_ = o.Docker.Disconnect(ctx, s.Network(), mongoContainer)
+	_ = o.Docker.RemoveNetwork(ctx, s.Network())
+	if s.Database {
+		if p, ok := o.mongoOps().(dbPurger); ok {
+			if err := p.DropSiteDB(ctx, s.DBName()); err != nil {
+				return fmt.Errorf("veritabanı silinemedi: %w", err)
+			}
+		} else if err := o.dropMongoUser(ctx, s); err != nil {
+			return err
+		}
+	}
+	return os.RemoveAll(dir)
 }
 
 // Redeploy pulls the image again and recreates the container if it changed.

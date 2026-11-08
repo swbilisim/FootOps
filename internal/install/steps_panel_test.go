@@ -180,11 +180,18 @@ func TestPanelBinary(t *testing.T) {
 
 func TestPanelServices(t *testing.T) {
 	noSleep(t)
-	active := false
+	active, enabled := false, false
 	h, f := newTestHost(t, func(cmd string) (string, error) {
 		switch {
 		case strings.HasPrefix(cmd, "systemctl restart"):
 			active = true
+		case strings.HasPrefix(cmd, "systemctl enable"):
+			enabled = true
+		case strings.HasPrefix(cmd, "systemctl is-enabled"):
+			if enabled {
+				return "enabled\n", nil
+			}
+			return "disabled\n", errExit
 		case strings.HasPrefix(cmd, "systemctl is-active"):
 			if active {
 				return "active\n", nil
@@ -194,10 +201,17 @@ func TestPanelServices(t *testing.T) {
 		return "", nil
 	})
 	s := panelServicesStep{h}
+	if done, _ := s.Check(ctx); done {
+		t.Error("done before apply")
+	}
 	if err := s.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"systemctl daemon-reload", "systemctl enable footops-agent footops-web", "systemctl restart footops-agent footops-web"} {
+	if u := read(t, h, provaUnitPath); !strings.Contains(u, "ConditionPathExists=/var/lib/footops/rehearsal.json") ||
+		!strings.Contains(u, "Before=docker.service") || !strings.Contains(u, "footops rehearsal-rule") {
+		t.Errorf("rehearsal unit:\n%s", u)
+	}
+	for _, want := range []string{"systemctl daemon-reload", "systemctl enable footops-agent footops-web footops-prova", "systemctl restart footops-agent footops-web"} {
 		if !f.ran(want) {
 			t.Errorf("missing %q", want)
 		}

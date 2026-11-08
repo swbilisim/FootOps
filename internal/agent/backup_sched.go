@@ -60,7 +60,7 @@ func (b *Backups) location() *time.Location {
 // paused.
 func (b *Backups) active() (BackupSettings, bool) {
 	s, err := b.Settings()
-	if err != nil || s.Confirmed.IsZero() || s.Paused {
+	if err != nil || s.Confirmed.IsZero() || s.Paused || b.Rehearsal.Active() {
 		return s, false
 	}
 	if _, err := b.secret(); err != nil {
@@ -171,6 +171,9 @@ func (b *Backups) Tick(now time.Time) (string, error) {
 // Start runs a plan as a job.
 func (b *Backups) Start(p runPlan, actor Actor) (string, error) {
 	b.init()
+	if b.Rehearsal.Active() {
+		return "", errRehearsal
+	}
 	if p.empty() {
 		return "", errors.New("yedeklenecek bir şey yok (site ayarlarında yedekleme kapalı olabilir)")
 	}
@@ -190,6 +193,9 @@ func (b *Backups) Start(p runPlan, actor Actor) (string, error) {
 			}
 			if j.Err != "" {
 				b.logf("yedek başarısız (%s): %s", j.Target, j.Err)
+			}
+			if p.Kind == RunDaily {
+				b.afterNight(j)
 			}
 		})
 }

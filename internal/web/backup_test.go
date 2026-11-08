@@ -25,6 +25,7 @@ type fakeBackup struct {
 	runSites  []string
 	runErr    error
 	runsAsked []string
+	trials    int
 }
 
 func (f *fakeAgent) BackupStatus(context.Context) (agent.BackupStatus, error) {
@@ -81,6 +82,13 @@ func (f *fakeAgent) SetBackupSettings(_ context.Context, s agent.BackupSettings,
 	s.Confirmed = f.bk.status.Settings.Confirmed
 	f.bk.status.Settings = s
 	return nil
+}
+
+func (f *fakeAgent) BackupTrial(_ context.Context, site string, _ agent.Actor) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.bk.trials++
+	return "jobtrial", nil
 }
 
 func (f *fakeAgent) BackupRun(_ context.Context, site string, _ agent.Actor) (string, error) {
@@ -521,5 +529,44 @@ func TestJobPageShowsError(t *testing.T) {
 	e.agent.job = &agent.Job{ID: "j1", Kind: "backup.run", Target: "gece yedeği", Done: true, Cancelled: true, Err: "iptal edildi"}
 	if _, body := c.do("GET", "/jobs/j1", nil); strings.Contains(body, "Neden:") {
 		t.Error("a cancel is shown as a failure")
+	}
+}
+
+func TestRehearsalPages(t *testing.T) {
+	e := newEnv(t)
+	c := e.client(t, true)
+	e.login(t, c)
+	e.agent.bk.status = agent.BackupStatus{Settings: agent.DefaultBackupSettings(), Rehearsal: true}
+	resp, body := c.do("GET", "/backup", nil)
+	if resp.StatusCode != 200 || !strings.Contains(body, "Prova kipi") || !strings.Contains(body, "sudo footops go-live") ||
+		strings.Contains(body, "Depoyu bağla") || strings.Contains(body, `action="/backup/setup"`) {
+		t.Errorf("backup page in rehearsal: %d\n%s", resp.StatusCode, body)
+	}
+	e.agent.nt.status = agent.NotifyStatus{Rehearsal: true}
+	if _, body := c.do("GET", "/notify", nil); !strings.Contains(body, "Prova kipi") || !strings.Contains(body, "Telegram kapalı") {
+		t.Errorf("notify page in rehearsal:\n%s", body)
+	}
+}
+
+func TestBackupTrialOnPage(t *testing.T) {
+	e := newEnv(t)
+	c := e.client(t, true)
+	tok := e.login(t, c)
+	s := agent.DefaultBackupSettings()
+	s.Confirmed = time.Now()
+	e.agent.bk.status = agent.BackupStatus{Configured: true, Repository: "footops-h1", Settings: s}
+	if _, body := c.do("GET", "/backup", nil); !strings.Contains(body, "Aylık deneme geri yüklemesi") || !strings.Contains(body, "Henüz yapılmadı") {
+		t.Errorf("no trial yet:\n%s", body)
+	}
+	e.agent.bk.status.Trial = &agent.BackupTrial{Time: time.Now().Add(-time.Hour), Site: "enisparta", OK: false, Err: "sayımlar tutmuyor"}
+	if _, body := c.do("GET", "/backup", nil); !strings.Contains(body, "enisparta") || !strings.Contains(body, "sayımlar tutmuyor") {
+		t.Errorf("failed trial:\n%s", body)
+	}
+	resp, _ := c.do("POST", "/backup/trial", url.Values{"csrf": {tok}})
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/jobs/jobtrial" || e.agent.bk.trials != 1 {
+		t.Errorf("start: %d %s %d", resp.StatusCode, resp.Header.Get("Location"), e.agent.bk.trials)
+	}
+	if resp, _ := c.do("POST", "/backup/trial", url.Values{}); resp.StatusCode == http.StatusSeeOther || e.agent.bk.trials != 1 {
+		t.Error("started without a CSRF token")
 	}
 }

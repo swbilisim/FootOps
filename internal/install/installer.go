@@ -31,6 +31,9 @@ type Options struct {
 	// changed. The CLI uses it to switch Ctrl+C from "quit now" to "stop after the
 	// running command".
 	StepsStarting func()
+	// Recover and RecoverStatus replace the agent for a recovery (tests); nil: the agent.
+	Recover       RecoverFunc
+	RecoverStatus StatusFunc
 }
 
 // Steps returns the ordered installation steps for the given answers.
@@ -65,15 +68,22 @@ func Steps(h Host, a Answers, d Deps) []Step {
 	if a.TunnelEnabled {
 		steps = append(steps, tunnelSecretStep{h, a.TunnelToken})
 	}
-	return append(steps,
+	steps = append(steps,
 		coreFilesStep{h, coreCfg, d.Notes},
 		coreStackStep{h, coreCfg},
 		panelUserStep{h},
 		panelBinaryStep{h, d.Self},
 		panelConfigStep{h, panelCfg},
-		panelAccountStep{h, a.AdminUser, "FootOps " + a.ServerCode, d.Notes, d.TOTPSetup},
-		panelServicesStep{h},
 	)
+	// A recovery brings the old panel account back (password, 2FA, recovery codes).
+	if a.Recover == nil {
+		steps = append(steps, panelAccountStep{h, a.AdminUser, "FootOps " + a.ServerCode, d.Notes, d.TOTPSetup})
+	}
+	steps = append(steps, panelServicesStep{h})
+	if a.Recover != nil {
+		steps = append(steps, recoverStep{rec: a.Recover, run: d.Recover, status: d.RecoverStatus, out: d.Out})
+	}
+	return steps
 }
 
 // Deps are the interactive and environment-specific parts of the steps.
@@ -82,6 +92,10 @@ type Deps struct {
 	TOTPSetup TOTPSetupFunc // panel 2FA enrolment
 	Notes     *Notes        // secrets to show at the end
 	Self      string        // path of the running footops binary
+	// Recover and RecoverStatus drive a recovery in the agent; Out gets its steps.
+	Recover       RecoverFunc
+	RecoverStatus StatusFunc
+	Out           io.Writer
 }
 
 // Main runs preflight, the wizard (or resumes saved answers) and the steps.
@@ -104,7 +118,12 @@ func Main(ctx context.Context, o Options) error {
 	if self, err = filepath.EvalSymlinks(self); err != nil {
 		return err
 	}
-	steps := Steps(o.Host, a, Deps{Confirm: confirmKeyLogin(o), TOTPSetup: enrolTOTP(o.Prompt), Notes: notes, Self: self})
+	recoverFn, statusFn := o.Recover, o.RecoverStatus
+	if recoverFn == nil {
+		recoverFn, statusFn = AgentRecover, AgentRecoverStatus
+	}
+	steps := Steps(o.Host, a, Deps{Confirm: confirmKeyLogin(o), TOTPSetup: enrolTOTP(o.Prompt), Notes: notes, Self: self,
+		Recover: recoverFn, RecoverStatus: statusFn, Out: o.Out})
 	if o.DryRun {
 		return Plan(ctx, steps, o.Out)
 	}
@@ -129,6 +148,11 @@ func Main(ctx context.Context, o Options) error {
 	}
 	if o.Host.Exists("/var/run/reboot-required") {
 		fmt.Fprintln(o.Out, "\nNot: güncellemeler yeniden başlatma istiyor. Kurulum bitince `sudo reboot` önerilir.")
+	}
+	if a.Recover != nil {
+		fmt.Fprintln(o.Out, "\nKurulum ve yedekten kurtarma tamamlandı.")
+		printRecovery(ctx, o, a, statusFn)
+		return nil
 	}
 	fmt.Fprintln(o.Out, "\nKurulum tamamlandı: güvenlik ayarları, Docker, Caddy, MongoDB ve panel hazır.")
 	printConnectionInfo(ctx, o, a)
@@ -222,6 +246,19 @@ func withResumedSecrets(ctx context.Context, o Options, a Answers) (Answers, err
 				return a, err
 			}
 			a.SudoPasswordValue = pw
+		}
+	}
+	if a.Recover != nil {
+		status := o.RecoverStatus
+		if status == nil {
+			status = AgentRecoverStatus
+		}
+		st, err := status(ctx)
+		running := err == nil && st.Running != ""
+		if done, _ := (recoverStep{rec: a.Recover, status: status}).Check(ctx); !done && !running {
+			if err := askRecoverSecrets(o.Prompt, a.Recover); err != nil {
+				return a, err
+			}
 		}
 	}
 	if a.TunnelEnabled {

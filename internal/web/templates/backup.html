@@ -30,7 +30,11 @@
 {{with $st.Error}}<div class="notice bad">{{icon "alert"}}<div>Yedek ayarlarında sorun var: {{.}}<br>Sunucuda düzeltmek için: <span class="mono">sudo footops backup setup</span> (depoyu yeniden bağlar).</div></div>{{end}}
 {{template "backupRunning" $st.Running}}
 
-{{if not $st.Configured}}
+{{if $st.Rehearsal}}
+{{/* ---- 0. a server recovered from backups, not live yet ---- */}}
+<div class="notice warn">{{icon "alert"}}<div><strong>Prova kipi:</strong> bu sunucu yedekten kuruldu. Canlı sunucunun deposuna yazmasın diye burada yedek deposu bağlanmaz, yedek alınmaz. Eski sunucu kapalıysa ve bu sunucu onun yerine geçecekse sunucuda <span class="mono">sudo footops go-live</span>: yedek deposu, tünel ve Telegram yedekten yerine konur.</div></div>
+{{template "backupSites" .}}
+{{else if not $st.Configured}}
 {{/* ---- 1. no repository yet ---- */}}
 <div class="card">
   <h2>Nasıl çalışır</h2>
@@ -121,6 +125,15 @@
 
 <div class="section-head"><h2>Son yedekler</h2></div>
 {{template "backupRuns" .Data}}
+
+<div class="section-head" id="deneme"><h2>Aylık deneme geri yüklemesi</h2>
+  <div class="page-actions"><form method="post" action="/backup/trial">
+    <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+    <button type="submit" class="btn sm">{{icon "check"}}Şimdi dene</button>
+  </form></div>
+</div>
+<p data-live-id="backup-trial">{{with $st.Trial}}{{if .OK}}<span class="ok">✓</span>{{else}}<span class="bad">✗</span>{{end}} <strong>{{.Site}}</strong>, {{since .Time}}: {{if .OK}}{{.Detail}}{{else}}<span class="bad">{{.Err}}</span>{{end}}{{else}}Henüz yapılmadı.{{end}}
+  <span class="muted small">Ayda bir, temiz bir gece yedeğinden sonra sıradaki site: son yedeğin veritabanı geçici bir veritabanına açılıp yedek alınırkenki sayımlarla karşılaştırılır, dosyalarından 20'si canlıdakiyle bayt bayt karşılaştırılır. Siteye dokunulmaz.</span></p>
 
 <div class="section-head" id="ayarlar"><h2>Genel ayarlar</h2></div>
 {{template "problems" .Data.SettingsProblems}}

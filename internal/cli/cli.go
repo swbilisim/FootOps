@@ -20,6 +20,7 @@ import (
 	"github.com/swbilisim/FootOps/internal/config"
 	"github.com/swbilisim/FootOps/internal/install"
 	"github.com/swbilisim/FootOps/internal/remote"
+	"github.com/swbilisim/FootOps/internal/run"
 	"github.com/swbilisim/FootOps/internal/staging"
 	"github.com/swbilisim/FootOps/internal/sysinfo"
 	"github.com/swbilisim/FootOps/internal/version"
@@ -40,6 +41,7 @@ Commands:
   reset-password   Reset the panel password (run as root over SSH)
   reset-2fa        Reset two-factor authentication (run as root over SSH)
   rotate-mongo-root  Give the MongoDB root user a new password (run as root)
+  go-live          Make a server recovered from backups the live one (run as root)
   self-update      Download, verify and install the latest release
   version          Print version information
   help             Show this help
@@ -66,6 +68,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		err = runData(args[0], args[1:], stdout, stderr)
 	case "backup": // hidden until the panel's backup pages (Faz Y2)
 		err = runBackup(args[1:], os.Stdin, stdout, stderr)
+	case "rehearsal-rule": // hidden: run by footops-prova.service before Docker starts
+		err = runRehearsalRule(stdout)
 	case "install":
 		err = runInstall(args[1:], stdout, stderr)
 		switch {
@@ -86,7 +90,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 				SourcesDir: remote.DefaultDir, MigrationsDir: agent.DefaultMigrationsDir, DBEditsDir: agent.DefaultDBEditsDir,
 				DockerConfig: os.Getenv("DOCKER_CONFIG"), RegistriesPath: agent.DefaultRegistriesPath,
 				BackupDir: agent.DefaultBackupDir, BackupSecret: agent.DefaultBackupSecret, ToolsDir: agent.DefaultToolsDir,
-				ResticCache: agent.DefaultResticCache, NotifySecret: agent.DefaultNotifySecret, NotifyState: agent.DefaultNotifyState}
+				ResticCache: agent.DefaultResticCache, NotifySecret: agent.DefaultNotifySecret, NotifyState: agent.DefaultNotifyState,
+				RehearsalPath: agent.DefaultRehearsalPath, RecoverDir: agent.DefaultRecoverDir}
 			if cfg.DockerConfig == "" {
 				cfg.DockerConfig = agent.DefaultDockerConfig
 			}
@@ -105,6 +110,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		err = runRecovery(install.Reset2FA, stdout)
 	case "rotate-mongo-root":
 		err = runRecovery(install.RotateMongoRoot, stdout)
+	case "go-live":
+		err = runGoLive(stdout)
 	case "self-update":
 		err = errNotImplemented
 	default:
@@ -215,6 +222,59 @@ func runService(run func(context.Context, *log.Logger) error) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return run(ctx, log.New(os.Stderr, "", 0))
+}
+
+// runRehearsalRule shuts a recovered server's sites off from the outside before Docker
+// starts them at boot (the agent, which keeps the rule otherwise, starts after Docker):
+// DOCKER-USER and FORWARD's jump to it are made if Docker has not made them yet — it
+// keeps both when it starts.
+func runRehearsalRule(stdout io.Writer) error {
+	if _, err := os.Stat(agent.DefaultRehearsalPath); err != nil {
+		return nil // not a rehearsal
+	}
+	r := run.Exec{}
+	ctx := context.Background()
+	ipt := func(args ...string) error {
+		_, err := r.Run(ctx, "iptables", append([]string{"-w", "10"}, args...)...)
+		return err
+	}
+	if ipt("-n", "-L", "DOCKER-USER") != nil {
+		if err := ipt("-N", "DOCKER-USER"); err != nil {
+			return err
+		}
+	}
+	if ipt("-C", "FORWARD", "-j", "DOCKER-USER") != nil {
+		if err := ipt("-I", "FORWARD", "1", "-j", "DOCKER-USER"); err != nil {
+			return err
+		}
+	}
+	if _, err := r.Run(ctx, "iptables", agent.RuleCheckArgs()...); err != nil {
+		if _, err := r.Run(ctx, "iptables", agent.RuleArgs()...); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintln(stdout, "prova kipi: sitelerin dışarıya bağlantısı kapalı")
+	return nil
+}
+
+// runGoLive makes a recovered server the live one; its commands go to the install log.
+func runGoLive(stdout io.Writer) error {
+	f, err := os.OpenFile(install.LogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("log dosyası açılamadı (root olarak çalıştır): %w", err)
+	}
+	defer f.Close()
+	var readSecret func() (string, error)
+	if fd := int(os.Stdin.Fd()); term.IsTerminal(fd) {
+		readSecret = func() (string, error) {
+			b, err := term.ReadPassword(fd)
+			return string(b), err
+		}
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	h := install.Host{Root: "/", Run: install.ExecRunner{Log: f}}
+	return install.GoLive(ctx, h, install.NewPrompter(os.Stdin, stdout, readSecret), io.MultiWriter(f, stdout), install.AgentGoLive())
 }
 
 func runRecovery(run func(context.Context, install.Host, *install.Prompter) error, stdout io.Writer) error {

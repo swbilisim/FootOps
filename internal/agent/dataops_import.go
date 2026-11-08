@@ -610,26 +610,35 @@ func (d *DataOps) restoreTemp(ctx context.Context, t *Task, creds dbCreds, path 
 	if err := d.mongoOps().SetUser(ctx, creds.DB, creds.User, creds.Password); err != nil {
 		return nil, nil, fmt.Errorf("geçici veritabanı kullanıcısı oluşturulamadı: %w", err)
 	}
-	src := restoreSource{Path: path, Sec: sec, DB: sourceDB}
-	res, err := d.mongorestore(ctx, t, creds, src, nil, true)
+	counts, views, u, err := d.restoreCounted(ctx, t, creds, restoreSource{Path: path, Sec: sec, DB: sourceDB})
 	if err != nil {
 		return nil, nil, err
 	}
+	t.Step(fmt.Sprintf("✓ Deneme yüklemesi tamam: %d koleksiyon, %d belge%s (%s)", len(counts), sum(counts),
+		viewNote(views), usageNote(u)))
+	return counts, views, nil
+}
+
+// restoreCounted restores src into creds' database (each of its collections dropped
+// first) and counts: the database must hold what mongorestore said it wrote.
+func (d *DataOps) restoreCounted(ctx context.Context, t *Task, creds dbCreds, src restoreSource) (map[string]int64, []string, run.Usage, error) {
+	res, err := d.mongorestore(ctx, t, creds, src, nil, true)
+	if err != nil {
+		return nil, nil, res.usage, err
+	}
 	counts, views, err := d.collCounts(ctx, creds)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, res.usage, err
 	}
 	for coll, n := range res.collections {
 		if contains(views, coll) {
 			continue
 		}
 		if counts[coll] != n {
-			return nil, nil, fmt.Errorf("%s: mongorestore %d belge dedi, veritabanında %d var", coll, n, counts[coll])
+			return nil, nil, res.usage, fmt.Errorf("%s: mongorestore %d belge dedi, veritabanında %d var", coll, n, counts[coll])
 		}
 	}
-	t.Step(fmt.Sprintf("✓ Deneme yüklemesi tamam: %d koleksiyon, %d belge%s (%s)", len(counts), sum(counts),
-		viewNote(views), usageNote(res.usage)))
-	return counts, views, nil
+	return counts, views, res.usage, nil
 }
 
 func viewNote(views []string) string {

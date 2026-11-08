@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/swbilisim/FootOps/internal/agent"
 	"github.com/swbilisim/FootOps/internal/config"
 	"github.com/swbilisim/FootOps/internal/sysinfo"
 )
@@ -30,7 +31,22 @@ func Collect(p *Prompter, f Facts) (Answers, error) {
 	p.Say("FootOps kurulumu — sorular. Köşeli parantezdeki değer varsayılandır, Enter ile kabul edilir.")
 	p.Say("")
 
-	if a.ServerCode, err = p.Ask("Sunucu kodu (örn. H1, A)", "", ValidateServerCode); err != nil {
+	recovering, err := p.YesNo("Bu sunucu bir yedekten mi kurulacak? (felaket kurtarma ya da prova)", false)
+	if err != nil {
+		return a, err
+	}
+	codeLabel := "Sunucu kodu (örn. H1, A)"
+	if recovering {
+		p.Say("")
+		p.Say("Yedekten kurtarma: eski sunucunun yedekleri (aynı sunucu kodu) R2'den bu sunucuya gelir: sunucu ayarları,")
+		p.Say("panel girişi, sertifikalar, siteler (tanım + veritabanı + dosyalar). Sunucu PROVA KİPİNDE açılır: tünel,")
+		p.Say("yedekleme ve Telegram kapalı, siteler dışarıya bağlanamaz; eski sunucu çalışıyorsa ona hiçbir şey olmaz.")
+		p.Say("Canlıya almak (eski sunucu kapalıyken): sudo footops go-live")
+		p.Say("")
+		codeLabel = "Eski sunucunun kodu (yedekler bu kodla alındı, örn. H1)"
+	}
+
+	if a.ServerCode, err = p.Ask(codeLabel, "", ValidateServerCode); err != nil {
 		return a, err
 	}
 	defHost := strings.ToLower(a.ServerCode)
@@ -83,7 +99,9 @@ func Collect(p *Prompter, f Facts) (Answers, error) {
 		return a, err
 	}
 	a.PanelHost = strings.ToLower(host)
-	if err := askTunnel(p, &a); err != nil {
+	if recovering {
+		p.Say("Panele erişim prova kipinde yalnız SSH tüneliyle; Cloudflare Tunnel + Access go-live'da yedekten gelir.")
+	} else if err := askTunnel(p, &a); err != nil {
 		return a, err
 	}
 
@@ -96,6 +114,12 @@ func Collect(p *Prompter, f Facts) (Answers, error) {
 	a.RebootTime = "04:00"
 	if a.AutoReboot {
 		if a.RebootTime, err = p.Ask("Yeniden başlatma saati", "04:00", ValidateClock); err != nil {
+			return a, err
+		}
+	}
+
+	if recovering {
+		if a.Recover, err = askRecover(p, a.ServerCode, a.Timezone); err != nil {
 			return a, err
 		}
 	}
@@ -282,9 +306,22 @@ func Summary(a Answers) string {
 	} else {
 		w("Otomatik reboot", "hayır")
 	}
+	if r := a.Recover; r != nil {
+		w("Kurulum türü", "yedekten kurtarma → prova kipi")
+		w("Yedek deposu", agent.RepoLabel(r.Repository)+", anahtar "+tail(r.KeyID, 4)+"…")
+		if r.At.IsZero() {
+			w("Dönülecek zaman", "en son yedek")
+		} else {
+			w("Dönülecek zaman", localTime(r.At)+" ve öncesinin en yenisi")
+		}
+	}
 	b.WriteString("\nYapılacaklar: paket güncellemeleri, swap, saat dilimi, otomatik güvenlik güncellemeleri,\n")
 	b.WriteString("yönetici kullanıcı, güvenlik duvarı (22/80/443), fail2ban, SSH sertleştirme (onayınla),\n")
-	b.WriteString("Docker, Caddy, MongoDB, panel (2FA kurulumu QR kodla).\n")
+	if a.Recover != nil {
+		b.WriteString("Docker, Caddy, MongoDB, panel; sonra yedekten sunucu ayarları (panel girişi + 2FA dahil) ve siteler.\n")
+	} else {
+		b.WriteString("Docker, Caddy, MongoDB, panel (2FA kurulumu QR kodla).\n")
+	}
 	return b.String()
 }
 

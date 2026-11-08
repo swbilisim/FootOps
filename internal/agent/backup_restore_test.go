@@ -59,6 +59,8 @@ type y3Restic struct {
 	short, unsure bool
 	// during runs inside a command (after its arguments are recorded).
 	during func(ra []string, c run.Cmd)
+	// catCode is the exit status of `cat config` (0: the repository opens).
+	catCode int
 }
 
 func (r *y3Restic) find(id string) (y3Snap, bool) {
@@ -92,6 +94,14 @@ func (r *y3Restic) answer(ra []string, c run.Cmd) error {
 	r.mu.Unlock()
 	if during != nil {
 		during(ra, c)
+	}
+	if strings.HasPrefix(ra[0], "--") { // global flags first (a setup's look at the config)
+		for i, a := range ra {
+			if !strings.HasPrefix(a, "--") {
+				ra = append([]string{a}, append(append([]string{}, ra[:i]...), ra[i+1:]...)...)
+				break
+			}
+		}
 	}
 	args := []string{}
 	for _, a := range ra[1:] {
@@ -206,11 +216,17 @@ func (r *y3Restic) answer(ra []string, c run.Cmd) error {
 			if n.Link != "" {
 				kind = "symlink"
 			}
-			if full == want || path.Dir(full) == want {
+			if full == want || path.Dir(full) == want || (contains(ra, "--recursive") && strings.HasPrefix(full, want+"/")) {
 				node(full, kind, int64(len(n.Content)))
 			}
 		}
 		return nil
+	case "cat":
+		if r.catCode != 0 {
+			return exitErr{r.catCode}
+		}
+		_, err := c.Stdout.Write([]byte(`{"version":2}`))
+		return err
 	case "unlock", "forget", "prune", "check", "stats":
 		_, err := c.Stdout.Write([]byte("[]\n"))
 		return err
@@ -294,7 +310,7 @@ func newY3(t *testing.T) *y3Env {
 	e.audit = NewAudit(filepath.Join(f.root, "audit.jsonl"))
 	e.b = &Backups{Data: f.data, Jobs: NewJobs(), Audit: e.audit, Dir: filepath.Join(f.root, "backup"),
 		SecretPath: filepath.Join(f.root, "etc/footops/secrets/backup.json"), ToolsDir: filepath.Join(f.root, "tools"),
-		CacheDir: filepath.Join(f.root, "cache"), Server: "T1", now: func() time.Time { return e.now }, loc: time.UTC}
+		CacheDir: filepath.Join(f.root, "cache"), Server: "T1", now: func() time.Time { return e.now }, loc: time.UTC, trialEvery: -1}
 	t.Cleanup(func() {
 		e.b.viewMu.Lock()
 		if e.b.viewTimer != nil {

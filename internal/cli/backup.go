@@ -32,6 +32,7 @@ const backupUsage = `Kullanım: sudo footops backup <komut>
                              --existing: var olan deponun şifresiyle bağlan)
   confirm                    şifre başka yere kaydedildi: zamanlanmış yedekler başlar
   run [site]                 şimdi yedekle (bütün siteler + sunucu ayarları ya da tek site)
+  trial [site]               deneme geri yüklemesi (aylık olanı şimdi; site boşsa sıradaki)
   runs [site]                son yedek çalıştırmaları
   set night=SS:DD | paused=on|off | warn=GB
   set defaults|<site> db=daily|6h|hourly files=daily|weekly|off keep=48h,30d,6m
@@ -69,6 +70,15 @@ func runBackup(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		}
 		var id string
 		if id, err = c.BackupRun(ctx, site, actor); err == nil {
+			err = followJob(ctx, c, id, stdout)
+		}
+	case "trial":
+		site := ""
+		if len(rest) > 0 {
+			site = rest[0]
+		}
+		var id string
+		if id, err = c.BackupTrial(ctx, site, actor); err == nil {
 			err = followJob(ctx, c, id, stdout)
 		}
 	case "runs":

@@ -12,17 +12,18 @@ import hashlib
 import hmac
 import os
 import re
-import select
 import struct
-import subprocess
 import sys
 import time
+
+from itlib import drive
 
 container, keyfile, login_out = sys.argv[1:4]
 pubkey = open(keyfile).read().strip()
 
 ANSWERS = [
     ("Bu cevaplarla devam edilsin mi?", "e"),
+    ("Bu sunucu bir yedekten mi kurulacak?", "h"),
     ("Sunucu kodu", "IT"),
     ("Hostname", "fo-it"),
     ("Saat dilimi", ""),
@@ -48,55 +49,18 @@ def totp(secret, t=None):
     return "%06d" % ((struct.unpack(">I", h[o:o + 4])[0] & 0x7FFFFFFF) % 1000000)
 
 
-p = subprocess.Popen(["docker", "exec", "-i", container, "/root/footops", "install"],
-                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-buf = ""
-# The log holds the (throwaway) panel password and 2FA secret: owner-only.
-log = os.fdopen(os.open(os.path.join(os.path.dirname(login_out), "install.log"),
-                        os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w")
 secret = None
-deadline = time.time() + 1800
-while True:
-    if time.time() > deadline:
-        p.kill()
-        sys.exit("install: timed out")
-    r, _, _ = select.select([p.stdout], [], [], 1.0)
-    if not r:
-        if p.poll() is not None:
-            break
-        continue
-    chunk = os.read(p.stdout.fileno(), 65536).decode("utf-8", "replace")
-    if not chunk:
-        break
-    log.write(chunk)
-    log.flush()
-    buf += chunk
-    m = re.search(r"anahtarı elle gir: ([A-Z2-7]+)", buf)
-    if m:
-        secret = m.group(1)
-    # A prompt is the last line ending in ":" (Ask/YesNo leave the cursor after it, Lines
-    # prints a newline).
-    tail = buf.rstrip()
-    if not tail.endswith(":"):
-        continue
-    last = tail.split("\n")[-1]
-    answer = None
-    if "6 haneli kod" in last and secret:
-        answer = totp(secret)
-    else:
-        for prompt, a in ANSWERS:
-            if prompt in last:
-                answer = a
-                break
-    if answer is None:
-        continue
-    p.stdin.write((answer + "\n").encode())
-    p.stdin.flush()
-    buf = ""
 
-code = p.wait()
-log.close()
-full = open(os.path.join(os.path.dirname(login_out), "install.log")).read()
+
+def code_answer(out):
+    global secret
+    m = re.findall(r"anahtarı elle gir: ([A-Z2-7]+)", out)
+    secret = m[-1] if m else None
+    return totp(secret)
+
+
+code, full = drive(container, ["/root/footops", "install"], [("6 haneli kod", code_answer)] + ANSWERS,
+                   os.path.join(os.path.dirname(login_out), "install.log"))
 m = re.search(r"Panel girişi — kullanıcı: (\S+)\s+şifre: (\S+)", full)
 if m and secret:
     with open(login_out, "w") as f:

@@ -294,6 +294,8 @@ type backupState struct {
 	// RepoSize is what the snapshots take in the repository (packed), measured nightly.
 	RepoSize  int64     `json:"repo_size,omitempty"`
 	RepoSized time.Time `json:"repo_sized,omitempty"`
+	// Trial is the last monthly trial restore (backup_trial.go).
+	Trial *BackupTrial `json:"trial,omitempty"`
 }
 
 // Backups owns the repository settings, the timetable and the runs. Its heavy work
@@ -311,6 +313,8 @@ type Backups struct {
 	// snapshot through it.
 	Server string
 	Log    *log.Logger
+	// Rehearsal, while the server is one, keeps the repository and the timetable off.
+	Rehearsal *Rehearsal
 
 	now      func() time.Time
 	loc      *time.Location // the night time's time zone (default: the server's)
@@ -327,6 +331,11 @@ type Backups struct {
 	unlocked bool
 	// lastAlerts are the alerts last worked out, kept while a file cannot be read.
 	lastAlerts []Alert
+	// trialPick orders a trial's candidate files (tests make it predictable); trialEvery
+	// replaces how often the trial runs (0: trialEvery; below 0: never — tests whose
+	// night runs must not be followed by one).
+	trialPick  func(n int) []int
+	trialEvery time.Duration
 
 	// viewMu guards viewUse (opened backups in use: opening, or a restore reads them —
 	// no sweep or close takes them), viewClosing (being closed: no restore takes them),
@@ -527,6 +536,12 @@ var (
 	reS3Secret = regexp.MustCompile(`^[A-Za-z0-9/+=_-]{8,256}$`)
 )
 
+// CheckRepository is checkRepository for the installer (a recovery's repository).
+func CheckRepository(repo string) error { return checkRepository(repo) }
+
+// RepoLabel names a repository without its account (the bucket and any folder).
+func RepoLabel(repo string) string { return repoLabel(repo) }
+
 // checkRepository accepts an S3 address restic can use: s3:https://host/bucket with an
 // optional folder below it (plain http only for a test server on a private address).
 func checkRepository(repo string) error {
@@ -666,6 +681,10 @@ type resticEnv struct {
 	repo   string
 	// relocked: a stale lock was removed in this job already (once is enough).
 	relocked bool
+	// readOnly: the repository is someone else's (a recovery reads the old server's)
+	// or only read here (a trial): every command must be a read without a lock, and no
+	// lock is ever removed.
+	readOnly bool
 }
 
 // prepare readies a job to run restic: binary, cache, credentials. done removes the
@@ -866,6 +885,9 @@ func refusedLine(line string) bool {
 // access error from the bucket stops it at once.
 func (b *Backups) restic(ctx context.Context, t *Task, env *resticEnv, o resticOpts, args ...string) (resticResult, error) {
 	var res resticResult
+	if env.readOnly && !readCommand(args) {
+		return res, fmt.Errorf("yalnız okunan bir depoda restic %s çalıştırılmaz", strings.Join(args, " "))
+	}
 	rctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	cmd, _ := b.resticCmd(rctx, t, env, o, args...)
@@ -964,7 +986,7 @@ func (b *Backups) restic(ctx context.Context, t *Task, env *resticEnv, o resticO
 		re.Msg = "bazı dosyalar okunamadı: " + strings.Join(res.Errors, "; ")
 	case res.Code == 10:
 		re.Fatal, re.Msg = true, "yedek deposu bulunamadı ("+repoLabel(env.repo)+"): kurulmamış ya da silinmiş"
-	case res.Code == 11 && !env.relocked && ctx.Err() == nil:
+	case res.Code == 11 && !env.relocked && !env.readOnly && ctx.Err() == nil:
 		// A lock left by a restic that was stopped (cancel, timeout, an agent restart).
 		// Nothing else writes this repository and only one job runs at a time, so every
 		// lock there is stale: removed, and the command tried once more.
@@ -985,6 +1007,25 @@ func (b *Backups) restic(ctx context.Context, t *Task, env *resticEnv, o resticO
 			strings.Contains(l, "connection refused") || strings.Contains(l, "i/o timeout")
 	}
 	return res, re
+}
+
+// readCommand reports whether a restic command line only reads, taking no lock: one of
+// the reading commands, with --no-lock.
+func readCommand(args []string) bool {
+	if !contains(args, "--no-lock") {
+		return false
+	}
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			continue
+		}
+		switch a {
+		case "cat", "snapshots", "dump", "restore", "ls", "find", "stats":
+			return true
+		}
+		return false
+	}
+	return false
 }
 
 func exitCode(err error) int {
@@ -1105,6 +1146,9 @@ type BackupSetup struct {
 	// address, for the same repository. It needs no Current: the repository there has to
 	// open with that password, which whoever does not know it cannot arrange elsewhere.
 	Keep bool `json:"keep,omitempty"`
+	// GoLive is `footops go-live` putting a recovered server's repository back: the one
+	// setup a rehearsal allows, and only to root.
+	GoLive bool `json:"go_live,omitempty"`
 }
 
 // Check validates the request (no network).
@@ -1269,6 +1313,9 @@ var errReplace = errors.New("bu sunucuda kurulu bir yedek deposu var: değiştir
 // password was never confirmed, the same repository is kept, or the current
 // repository's password is given.
 func (b *Backups) MayReplace(req BackupSetup, root bool) error {
+	if b.Rehearsal.Active() && !(root && req.GoLive) {
+		return errRehearsal
+	}
 	sec, err := b.secret()
 	switch {
 	case req.Keep && errors.Is(err, errNoBackup):
@@ -1320,9 +1367,14 @@ type BackupStatus struct {
 	PruneFailed  *BackupFailure           `json:"prune_failed,omitempty"`
 	RepoSize     int64                    `json:"repo_size,omitempty"`
 	RepoSized    time.Time                `json:"repo_sized,omitempty"`
+	// Trial is the last monthly trial restore.
+	Trial *BackupTrial `json:"trial,omitempty"`
 	// Running is the backup job under way, if one is (without its steps).
 	Running *Job   `json:"running,omitempty"`
 	Error   string `json:"error,omitempty"`
+	// Rehearsal: the server was recovered from backups and is not live yet; no
+	// repository can be set up until `footops go-live`.
+	Rehearsal bool `json:"rehearsal,omitempty"`
 }
 
 // Status summarises the backups.
@@ -1330,7 +1382,7 @@ func (b *Backups) Status() BackupStatus {
 	b.init()
 	var st BackupStatus
 	s, err := b.Settings()
-	st.Settings = s
+	st.Settings, st.Rehearsal = s, b.Rehearsal.Active()
 	if err != nil {
 		st.Error = err.Error()
 	}
@@ -1343,7 +1395,7 @@ func (b *Backups) Status() BackupStatus {
 	st.Last, st.NightDone, st.LastPrune, st.LastCheck = state.Last, state.NightDone, state.LastPrune, state.LastCheck
 	st.CheckFailed, st.Failed, st.RunFailed = state.CheckFailed, state.Failed, state.RunFailed
 	st.ForgetFailed, st.PruneFailed = state.ForgetFailed, state.PruneFailed
-	st.RepoSize, st.RepoSized = state.RepoSize, state.RepoSized
+	st.RepoSize, st.RepoSized, st.Trial = state.RepoSize, state.RepoSized, state.Trial
 	if b.Jobs != nil {
 		// A backup or a setup; restoring, exporting and listing are not "backing up".
 		if j, ok := b.Jobs.Running(); ok && (j.Kind == "backup.run" || j.Kind == "backup.setup") {
