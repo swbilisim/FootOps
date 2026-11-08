@@ -198,6 +198,20 @@ func (e *backupEnv) configure(t *testing.T) {
 	}
 }
 
+// night sets the night run's time: the timetable tests are written around 04:00 (the
+// default until 2026-11-08), not around whatever the default is.
+func (e *backupEnv) night(t *testing.T, at string) {
+	t.Helper()
+	s, err := e.b.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Night = at
+	if err := e.b.SetSettings(s); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (e *backupEnv) task(id string) *Task { return &Task{j: NewJobs(), job: &Job{ID: id}} }
 
 func TestBackupSettings(t *testing.T) {
@@ -866,6 +880,7 @@ func TestBackupPlan(t *testing.T) {
 		}
 	}
 	s, _ := e.b.Settings()
+	s.Night = "04:00" // the times below are around it
 	s.Sites = map[string]BackupPolicy{"pos": {DB: DBHourly}, "ofis": {DB: DB6h, Files: FilesWeekly}, "kapali": {Off: true}}
 	if err := e.b.SetSettings(s); err != nil {
 		t.Fatal(err)
@@ -925,6 +940,7 @@ func TestBackupTimetable(t *testing.T) {
 	}
 	e.configure(t)
 	s, _ := e.b.Settings()
+	s.Night = "04:00" // the times below are around it
 	s.Sites = map[string]BackupPolicy{"magaza": {DB: DBHourly}}
 	e.b.SetSettings(s)
 	// 01:30 → the 02:00 slot (no night owed: nothing ran yesterday, but that is over 22 h ago).
@@ -1003,6 +1019,7 @@ func TestBackupTimetable(t *testing.T) {
 	e3 := newBackups(t)
 	e3.now = time.Date(2026, 11, 7, 3, 30, 0, 0, time.UTC)
 	e3.configure(t)
+	e3.night(t, "04:00")
 	if d := e3.b.nextWake(e3.now.Add(startGrace)); d != 28*time.Minute {
 		t.Errorf("03:30: %s", d)
 	}
@@ -1237,6 +1254,7 @@ func TestBackupNightBookkeeping(t *testing.T) {
 		e := newBackups(t)
 		e.now = time.Date(2026, 11, 7, 0, 30, 0, 0, time.UTC) // yesterday's 04:00 run never ran
 		e.configure(t)
+		e.night(t, "04:00")
 		e.b.started = e.now.Add(-time.Hour)
 		if k, err := e.b.Tick(e.now); k != RunDaily || err != nil {
 			t.Fatalf("%s %v", k, err)
@@ -1248,7 +1266,8 @@ func TestBackupNightBookkeeping(t *testing.T) {
 			t.Fatalf("recorded as %q", st.NightDone)
 		}
 		// Today's 04:00 run is still owed.
-		if _, owed := e.b.nightOwed(DefaultBackupSettings(), time.Date(2026, 11, 7, 4, 0, 0, 0, time.UTC)); !owed {
+		set, _ := e.b.Settings()
+		if _, owed := e.b.nightOwed(set, time.Date(2026, 11, 7, 4, 0, 0, 0, time.UTC)); !owed {
 			t.Error("today's night skipped")
 		}
 	})

@@ -122,9 +122,11 @@ type BackupSettings struct {
 // DefaultWarnGB leaves room below R2's free 10 GB for the account's other buckets.
 const DefaultWarnGB = 8
 
-// DefaultBackupSettings are the operator's choices of 2026-11-06 (§27.3).
+// DefaultBackupSettings are the operator's choices of 2026-11-06 (§27.3). The night is at
+// 03:00, an hour before the installer's default reboot time (04:00): a reboot after an
+// update would cut the night run short.
 func DefaultBackupSettings() BackupSettings {
-	return BackupSettings{Night: "04:00", Defaults: BackupPolicy{DB: DBDaily, Files: FilesDaily,
+	return BackupSettings{Night: "03:00", Defaults: BackupPolicy{DB: DBDaily, Files: FilesDaily,
 		KeepHours: 48, KeepDays: 30, KeepMonths: 6}, WarnGB: DefaultWarnGB}
 }
 

@@ -22,6 +22,10 @@ type Facts struct {
 // ErrAborted means the operator declined to continue.
 var ErrAborted = errors.New("kullanıcı tarafından iptal edildi")
 
+// DefaultRebootTime is when an update that needs it reboots the server: an hour after the
+// night backup (agent.DefaultBackupSettings), which a reboot would cut short.
+const DefaultRebootTime = "04:00"
+
 // Collect runs the interactive wizard and returns confirmed answers.
 func Collect(p *Prompter, f Facts) (Answers, error) {
 	var a Answers
@@ -111,9 +115,9 @@ func Collect(p *Prompter, f Facts) (Answers, error) {
 	if a.AutoReboot, err = p.YesNo("Gerekirse sunucu otomatik yeniden başlatılsın mı?", true); err != nil {
 		return a, err
 	}
-	a.RebootTime = "04:00"
+	a.RebootTime = DefaultRebootTime
 	if a.AutoReboot {
-		if a.RebootTime, err = p.Ask("Yeniden başlatma saati", "04:00", ValidateClock); err != nil {
+		if a.RebootTime, err = p.Ask("Yeniden başlatma saati", DefaultRebootTime, ValidateClock); err != nil {
 			return a, err
 		}
 	}

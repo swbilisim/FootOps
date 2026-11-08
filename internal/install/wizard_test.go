@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/swbilisim/FootOps/internal/agent"
 	"github.com/swbilisim/FootOps/internal/auth"
 
 	"github.com/swbilisim/FootOps/internal/sysinfo"
@@ -15,6 +16,14 @@ import (
 func prompter(input string) (*Prompter, *bytes.Buffer) {
 	var out bytes.Buffer
 	return NewPrompter(strings.NewReader(input), &out, nil), &out
+}
+
+// The night backup is not when an update reboots the server: the reboot would cut it
+// short (both defaults were 04:00 until 2026-11-08).
+func TestNightBackupIsNotAtTheRebootTime(t *testing.T) {
+	if night := agent.DefaultBackupSettings().Night; night == DefaultRebootTime {
+		t.Errorf("night backup and reboot both at %s", night)
+	}
 }
 
 func TestAskUsesDefaultAndRetriesInvalid(t *testing.T) {
