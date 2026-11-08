@@ -17,6 +17,15 @@
   <p><span class="mono">@{{$st.Bot}}</span> → <strong>{{$st.Chat}}</strong> · {{ts $st.Since}} bağlandı{{with $st.By}} ({{.}}){{end}}</p>
   {{if $st.LastErr}}{{if not $st.Failing.IsZero}}<div class="notice warn">{{icon "alert"}}<div>Mesajlar gönderilemiyor ({{since $st.Failing}} başladı): {{$st.LastErr}}{{if not $st.RetryAt.IsZero}} · yeniden deneme {{tsTime $st.RetryAt}}{{end}}</div></div>{{end}}{{end}}
   <p class="muted small">{{if $st.LastSent.IsZero}}Henüz uyarı gönderilmedi.{{else}}Son mesaj {{since $st.LastSent}}.{{end}} Sohbetin bildiği açık uyarı: {{$st.Told}}.</p>
+  {{with $st.Commands}}{{$c := .}}
+  <h3>Komutlar</h3>
+  {{if $c.Off}}<div class="notice warn">{{icon "alert"}}<div>Telegram'dan komut kapalı: {{$c.Off}}.</div></div>
+  {{else}}
+  <p>Sohbete <span class="mono">/durum</span> yaz: işlemci, bellek, disk, siteler, son yedek ve açık uyarılar gelir; altındaki <strong>Yenile</strong> mesajı yerinde günceller. Komutu yalnız <strong>{{$c.User}}</strong> verebilir, başkasına bot hiç cevap vermez. Telegram'dan hiçbir şey silinemez.</p>
+  <p class="muted small">{{if $c.Paused}}Sohbet bağlanırken bot okunmuyor.{{else if $c.Reading}}Bot dinleniyor · son okuma {{since $c.LastOK}}.{{else if not $c.LastErr}}Bot henüz okunmadı (agent açılınca başlar).{{end}}{{if $c.LastCommand}} Son komut: <span class="mono">{{$c.LastCommand}}</span> · {{since $c.LastCommandAt}}.{{end}}</p>
+  {{if $c.LastErr}}<div class="notice warn">{{icon "alert"}}<div>Komutlar okunamıyor ({{since $c.Failing}} başladı): {{$c.LastErr}}</div></div>{{end}}
+  {{end}}
+  {{end}}
   <div class="form-actions">
     <form method="post" action="/notify/test">
       <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
@@ -28,6 +37,17 @@
       <button type="submit" class="btn">{{icon "link"}}Başka sohbete bağla</button>
     </form>
   </div>
+  <details class="more">
+    <summary>Başka bir bota geç…</summary>
+    <form method="post" action="/notify/telegram" class="stack">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <p>Her sunucunun kendi botu olmalı: Telegram bir botun mesajlarını aynı anda yalnız bir sunucuya okutur, komutlar ve düğmeler buna dayanır. Yeni botun token'ını yapıştır; yeni sohbet bağlanana kadar uyarılar şimdiki sohbete gitmeye devam eder.</p>
+      <label class="field"><span>Yeni botun token'ı</span>
+        <input type="password" name="token" required class="mono" autocomplete="new-password" spellcheck="false" placeholder="BotFather'ın verdiği API Token">
+      </label>
+      <div class="form-actions"><button type="submit" class="btn">{{icon "next"}}Devam</button></div>
+    </form>
+  </details>
   <details class="more">
     <summary>Bağlantıyı kaldır…</summary>
     <form method="post" action="/notify/remove" class="stack">
@@ -41,7 +61,7 @@
 
 {{with $st.Link}}
 <div class="card stack" id="bagla">
-  <div class="card-head"><h2>{{if $st.Linked}}Başka sohbete bağla{{else}}Telegram'ı bağla{{end}}</h2><span class="badge info">2. adım</span></div>
+  <div class="card-head"><h2>{{if not $st.Linked}}Telegram'ı bağla{{else if eq .Bot $st.Bot}}Başka sohbete bağla{{else}}Yeni bota bağla{{end}}</h2><span class="badge info">2. adım</span></div>
   <p><span class="mono">@{{.Bot}}</span> bulundu. Telegram'ın açık olduğu cihazda bu bağlantıyı aç ve <strong>Başlat</strong>'a bas (sohbet açıksa bağlantı kodu gönderir):</p>
   <p><a class="btn" href="{{.URL}}" rel="noreferrer" target="_blank">{{icon "external"}}t.me/{{.Bot}}</a></p>
   <p class="hint">Bağlantı açılmazsa bota şu kodu yaz: <strong class="mono">{{.Code}}</strong> · kod {{tsTime .Expires}}'e kadar geçerli. Grup sohbetinde: botu gruba ekle, kodu <span class="mono">/start@{{.Bot}} {{.Code}}</span> diye yaz.</p>
@@ -67,7 +87,7 @@
   </ol>
   <label class="field"><span>Bot token'ı</span>
     <input type="password" name="token" required class="mono" autocomplete="new-password" spellcheck="false" placeholder="123456789:AA…">
-    <span class="hint">Sunucuda yalnız root'un okuyabildiği bir dosyada durur, panelde bir daha gösterilmez. Birden çok sunucu aynı botu kullanabilir; mesajlar <span class="mono">[{{.Server}}]</span> ile başlar.</span>
+    <span class="hint">Sunucuda yalnız root'un okuyabildiği bir dosyada durur, panelde bir daha gösterilmez. Her sunucuya ayrı bot aç: Telegram bir botun mesajlarını aynı anda yalnız bir sunucuya okutur (komutlar buna dayanır). Mesajlar <span class="mono">[{{.Server}}]</span> ile başlar.</span>
   </label>
   <div class="form-actions"><button type="submit" class="btn primary">{{icon "next"}}Devam</button></div>
 </form>
@@ -75,7 +95,7 @@
 
 <div class="section-head"><h2>Ne gönderilir</h2></div>
 <div class="card stack">
-  <p><strong>Gönderilir:</strong> yedekler (alınamadı, gecikti, depo uyarı eşiğini geçti, haftalık denetim sorun buldu, saklama ya da temizlik yapılamadı, duraklatıldı), disk doluluğu, sertifikaların ve imaj girişi token'larının süresi (ya da sertifikaların okunamaması), MongoDB · Caddy · tünel container'ları, Docker'a ulaşılamaması, kritik RAM ya da swap, bir container'ın belleği doldurması (OOM) ya da sık yeniden başlaması, durum dosyasının yazılamaması, dış nöbetçinin 30 dakika susması.</p>
+  <p><strong>Gönderilir:</strong> yedekler (alınamadı, gecikti, depo uyarı eşiğini geçti, haftalık denetim sorun buldu, saklama ya da temizlik yapılamadı, duraklatıldı), disk doluluğu, sertifikaların ve imaj girişi token'larının süresi (ya da sertifikaların okunamaması), MongoDB · Caddy · tünel container'ları, Docker'a ulaşılamaması, kritik RAM ya da swap, bir container'ın belleği doldurması (OOM) ya da sık yeniden başlaması, durum dosyasının yazılamaması, dış nöbetçinin 30 dakika susması, Telegram komutlarının 10 dakika okunamaması (ör. aynı bot başka bir sunucuya da bağlı).</p>
   <p><strong>Gönderilmez</strong> (yalnız panelde): CPU, bir container'ın bellek sınırına yaklaşması, RAM ve swap'ın uyarı düzeyi; bir sitenin çalışmaması — bunu dış nöbetçi, ziyaretçinin gördüğü gibi bildirir.</p>
   <p class="muted small">Düzelen bir uyarı 5 dakika kapalı kalınca "Düzeldi" mesajı gelir; arada yeniden açılırsa hiçbir şey gönderilmez. Telegram'a ulaşılamazsa mesajlar bekletilir ve yeniden denenir.</p>
 </div>

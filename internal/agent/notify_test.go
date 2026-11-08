@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -31,6 +32,22 @@ type fakeTelegram struct {
 	failFrom int    // with fail: only once this many messages went (0: at once)
 	migrate  int64  // migrate_to_chat_id with a failure
 	calls    []string
+	// The reader's side (P1a): lastID numbers the updates; reads holds every
+	// getUpdates form but the link's; readFail answers the reader's getUpdates with an
+	// error; edits, answers and menus are editMessageText, answerCallbackQuery and
+	// setMyCommands as asked.
+	lastID   int
+	reads    []url.Values
+	readFail int
+	readDesc string
+	edits    []url.Values
+	answers  []url.Values
+	menus    []url.Values
+	nextMsg  int
+	// linkReads are the link's getUpdates forms; ignoreOffset plays a server that gives
+	// read updates again.
+	linkReads    []url.Values
+	ignoreOffset bool
 }
 
 func (f *fakeTelegram) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -49,17 +66,45 @@ func (f *fakeTelegram) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "getMe":
 		fmt.Fprint(w, `{"ok":true,"result":{"id":42,"is_bot":true,"first_name":"FootOps","username":"OrnekBot"}}`)
 	case "getUpdates":
-		// Only the newest hundred are asked for (offset -100).
-		if r.PostForm.Get("offset") != "-100" {
-			http.Error(w, `{"ok":false,"error_code":400,"description":"expected offset -100"}`, http.StatusBadRequest)
+		if r.PostForm.Get("offset") == "-100" {
+			// The link: only the newest hundred.
+			f.linkReads = append(f.linkReads, r.PostForm)
+			ups := f.updates
+			if len(ups) > 100 {
+				ups = ups[len(ups)-100:]
+			}
+			b, _ := json.Marshal(map[string]any{"ok": true, "result": ups})
+			w.Write(b)
 			return
 		}
-		ups := f.updates
-		if len(ups) > 100 {
-			ups = ups[len(ups)-100:]
+		// The reader: what is past the offset; an offset forgets what is before it.
+		f.reads = append(f.reads, r.PostForm)
+		if f.readFail != 0 {
+			w.WriteHeader(f.readFail)
+			b, _ := json.Marshal(map[string]any{"ok": false, "error_code": f.readFail, "description": f.readDesc})
+			w.Write(b)
+			return
 		}
-		b, _ := json.Marshal(map[string]any{"ok": true, "result": ups})
+		if off, err := strconv.Atoi(r.PostForm.Get("offset")); err == nil && off > 0 && !f.ignoreOffset {
+			keep := f.updates[:0]
+			for _, u := range f.updates {
+				if u["update_id"].(int) >= off {
+					keep = append(keep, u)
+				}
+			}
+			f.updates = keep
+		}
+		b, _ := json.Marshal(map[string]any{"ok": true, "result": f.updates})
 		w.Write(b)
+	case "editMessageText":
+		f.edits = append(f.edits, r.PostForm)
+		fmt.Fprint(w, `{"ok":true,"result":{"message_id":1}}`)
+	case "answerCallbackQuery":
+		f.answers = append(f.answers, r.PostForm)
+		fmt.Fprint(w, `{"ok":true,"result":true}`)
+	case "setMyCommands":
+		f.menus = append(f.menus, r.PostForm)
+		fmt.Fprint(w, `{"ok":true,"result":true}`)
 	case "sendMessage":
 		if f.fail != 0 && len(f.sent) >= f.failFrom && (f.migrate == 0 || r.PostForm.Get("chat_id") != fmt.Sprint(f.migrate)) {
 			w.WriteHeader(f.fail)
@@ -72,7 +117,8 @@ func (f *fakeTelegram) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		f.sent = append(f.sent, r.PostForm)
-		fmt.Fprint(w, `{"ok":true,"result":{"message_id":7}}`)
+		f.nextMsg++
+		fmt.Fprintf(w, `{"ok":true,"result":{"message_id":%d}}`, 100+f.nextMsg)
 	default:
 		w.WriteHeader(http.StatusNotFound)
 		fmt.Fprint(w, `{"ok":false,"error_code":404,"description":"Not Found"}`)
@@ -86,8 +132,34 @@ func (f *fakeTelegram) message(chat int64, text string, extra map[string]any) {
 	for k, v := range extra {
 		c[k] = v
 	}
-	f.updates = append(f.updates, map[string]any{"update_id": len(f.updates) + 1,
-		"message": map[string]any{"message_id": 1, "date": 1, "text": text, "chat": c}})
+	f.lastID++
+	m := map[string]any{"message_id": 1, "date": 1, "text": text, "chat": c}
+	if chat > 0 {
+		m["from"] = map[string]any{"id": chat, "is_bot": false, "first_name": c["first_name"]}
+	}
+	f.updates = append(f.updates, map[string]any{"update_id": f.lastID, "message": m})
+}
+
+// say is a message from the person from in the chat, dated at.
+func (f *fakeTelegram) say(chat, from int64, chatType, text string, at time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lastID++
+	f.updates = append(f.updates, map[string]any{"update_id": f.lastID, "message": map[string]any{
+		"message_id": 1000 + f.lastID, "date": at.Unix(), "text": text,
+		"chat": map[string]any{"id": chat, "type": chatType, "first_name": "Ayşe"},
+		"from": map[string]any{"id": from, "is_bot": false, "first_name": "Ayşe", "username": "ayse"}}})
+}
+
+// press is from pressing a button with data under the message msg of the chat.
+func (f *fakeTelegram) press(chat, from, msg int64, data string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lastID++
+	f.updates = append(f.updates, map[string]any{"update_id": f.lastID, "callback_query": map[string]any{
+		"id": fmt.Sprintf("cb%d", f.lastID), "data": data,
+		"from":    map[string]any{"id": from, "is_bot": false, "first_name": "Ayşe"},
+		"message": map[string]any{"message_id": msg, "date": 1, "chat": map[string]any{"id": chat, "type": "private"}}}})
 }
 
 func (f *fakeTelegram) texts() []string {

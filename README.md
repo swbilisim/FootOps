@@ -143,10 +143,19 @@ What the panel shows:
   limit, restarts within 15 minutes, certificates expiring within 30 days. Short spikes
   (under 30 seconds) are ignored. Alerts show as a count in the menu and a list on the
   dashboard.
+- **Telegram (optional, Bildirimler):** alerts go to a linked chat when they open, get
+  worse and clear. In that chat the person who linked it can ask **`/durum`** — CPU,
+  load, memory, swap, disk, uptime, the sites, the last backup and the open alerts,
+  with a **Yenile** button that brings the message up to date. Nobody else gets an
+  answer, commands are rate-limited and audited, and nothing can be deleted from
+  Telegram. **Give every server a bot of its own:** Telegram lets one reader at a time
+  read a bot's messages; a second one is refused, and the panel says so after 10
+  minutes. Reading costs one long-poll request about once a minute when idle.
 - **Outside watcher (optional):** a Cloudflare Worker ([`worker/`](worker/README.md))
   visits the sites as a visitor would and reads the status file each server keeps next
-  to its backups; it tells the same Telegram chat when a site stops answering or a
-  server falls silent. The panel shows what it sees, and alerts when it goes quiet.
+  to its backups; it tells a Telegram chat (with a bot of its own, which only writes)
+  when a site stops answering or a server falls silent. The panel shows what it sees,
+  and alerts when it goes quiet.
 - **Logs:** last 200-2000 lines, search (highlighted), warning/error filter, live follow.
 
 Every login, logout, restart and recovery command is written to

@@ -74,6 +74,9 @@ func (s *Server) notifyLink(w http.ResponseWriter, r *http.Request) {
 	target := "Telegram"
 	if err == nil {
 		target = "Telegram @" + st.Bot + " → " + st.Chat
+		if c := st.Commands; c != nil && c.User != "" {
+			target += " · komut: " + c.User
+		}
 	}
 	s.record(AuditEntry{Actor: req.Actor, Action: "notify.link", Target: target}, err)
 	if err != nil {

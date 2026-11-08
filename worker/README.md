@@ -3,7 +3,8 @@
 A Cloudflare Worker that watches FootOps servers from outside, the way a visitor would.
 FootOps tells its Telegram chat about what goes wrong inside a server (backups, disk,
 certificates, MongoDB…); it cannot say that the server itself is gone, or that a site no
-longer opens from the internet. The watcher does, in the same chat:
+longer opens from the internet. The watcher does, in a Telegram chat of its own (or the
+same one):
 
 | Message | When |
 |---|---|
@@ -49,8 +50,9 @@ their backups on R2 in that account.
 1. Create the watcher's bucket: `npx wrangler@4.152.0 r2 bucket create footops-izleme`
 2. `cp wrangler.example.toml wrangler.toml` (git ignores it) and list one
    `SERVER_<code>` binding per server, its backup bucket as `bucket_name`.
-3. Secrets: `npx wrangler@4.152.0 secret put TELEGRAM_TOKEN` (the servers' bot) and
-   `… secret put TELEGRAM_CHAT` (the chat's id).
+3. Secrets: `npx wrangler@4.152.0 secret put TELEGRAM_TOKEN` (a bot of the watcher's
+   own: it only writes, while each server reads its own bot for commands — Telegram
+   lets one reader at a time read a bot) and `… secret put TELEGRAM_CHAT` (the chat's id).
 4. `npx wrangler@4.152.0 deploy`. To try it first, deploy with `DRY_RUN = "1"`: messages
    go to the log (`npx wrangler@4.152.0 tail`) instead of Telegram. Turning it off later
    starts afresh, with the greeting.

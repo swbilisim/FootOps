@@ -32,7 +32,8 @@ binding = "STATE"
 bucket_name = "footops-izleme"
 
 # Secrets, set with `npx wrangler@4.152.0 secret put <name>`:
-#   TELEGRAM_TOKEN  the bot's token (the same bot the servers use)
+#   TELEGRAM_TOKEN  the bot's token (the watcher's own bot: it only writes; a server's
+#                   bot is read by that server, for its commands)
 #   TELEGRAM_CHAT   the chat's id
 [vars]
 CHECK_EVERY_MIN = "2"     # minutes between visits of a working domain (1-60)

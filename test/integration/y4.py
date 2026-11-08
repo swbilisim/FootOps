@@ -4,7 +4,8 @@ after f0.py (y2.py's S3 server and repository are set up here when missing): a s
 Telegram (tgfake.py, the agent pointed at it with a systemd drop-in) is linked through
 the real panel — the code is looked for, another chat's message does not count —, a
 test message, an alert that goes out once and not again after an agent restart, a
-Telegram that cannot be reached; the status file appears next to the repository in the
+Telegram that cannot be reached, /durum answered to the person who linked the chat only
+(with a button that brings it up to date in place); the status file appears next to the repository in the
 S3 server, without secrets, and follows a site's removal; a removed site is listed and
 removed for good (last copy of its database first, the database and its user gone, the
 image of a site still running kept). The bot token never reaches a page, a log or the
@@ -66,7 +67,7 @@ def agent_up():
 
 def token_nowhere():
     hay = sh("journalctl -u footops-web -u footops-agent --no-pager -q 2>/dev/null; cat /var/lib/footops/audit.jsonl; "
-             "cat /var/lib/footops/jobs/*.json /var/lib/footops/notify.json 2>/dev/null || true")
+             "cat /var/lib/footops/jobs/*.json /var/lib/footops/notify.json /var/lib/footops/telegram-buttons.json 2>/dev/null || true")
     if TOKEN in hay or TOKEN.split(":")[1] in hay:
         fail("the bot token reached a log, a job or the audit log")
 
@@ -101,6 +102,9 @@ sh("mkdir -p /etc/systemd/system/footops-agent.service.d && printf '[Service]\\n
 restarted = time.time()
 agent_up()
 api("POST", "/v1/notify/telegram/remove", {"actor": ACTOR})
+# A link left by a run cut short was read until removed just now (its command menu set):
+# that is not this run's.
+sh(": > /tmp/tg-sent.jsonl")
 ok("sahte Telegram 127.0.0.1:%d, agent ona yönlendirildi (systemd drop-in)" % TG_PORT)
 
 # ---- a repository (y2's S3 server), if y2 / y3 did not leave one ----
@@ -149,7 +153,8 @@ if code != 409 or "henüz bota ulaşmadı" not in page:
 # Someone else writes to the bot first: not linked to them.
 updates = [{"update_id": 1, "message": {"message_id": 1, "date": 1, "text": "/start", "chat": {"id": 999, "type": "private", "first_name": "Yabanci"}}},
            {"update_id": 2, "message": {"message_id": 2, "date": 2, "text": "/start " + link_code,
-                                        "chat": {"id": 555, "type": "private", "first_name": "Deneme", "username": "deneme"}}}]
+                                        "chat": {"id": 555, "type": "private", "first_name": "Deneme", "username": "deneme"},
+                                        "from": {"id": 555, "is_bot": False, "first_name": "Deneme", "username": "deneme"}}}]
 sh("cat > /tmp/tg-updates.json", stdin=json.dumps(updates[:1]).encode())
 if web("/notify/link", {"csrf": tok})[0] != 409:
     fail("linked to another chat")
@@ -162,11 +167,13 @@ if code != 303:
 _, _, page = web("/notify")
 if "Telegram bağlandı: @OrnekBot → Deneme (@deneme)" not in page or "Deneme mesajı gönder" not in page:
     fail("linked page")
-msgs = sent()
-if len(msgs) < 1 or msgs[0].get("chat_id") != "555" or "%s FootOps bu sohbete bağlandı" % PREFIX not in msgs[0].get("text", ""):
+msgs = [m for m in sent() if m.get("_method") == "sendMessage"]
+if len(msgs) < 1 or msgs[0].get("chat_id") != "555" or "%s FootOps bu sohbete bağlandı" % PREFIX not in msgs[0].get("text", "") or \
+        "/durum" not in msgs[0].get("text", ""):
     fail("welcome: %s" % msgs[:1])
 cfg = json.loads(sh("cat /etc/footops/secrets/notify/telegram.json"))
-if cfg["token"] != TOKEN or cfg["chat_id"] != 555 or sh("stat -c '%a %U' /etc/footops/secrets/notify/telegram.json").strip() != "600 root":
+if cfg["token"] != TOKEN or cfg["chat_id"] != 555 or cfg.get("user_id") != 555 or \
+        sh("stat -c '%a %U' /etc/footops/secrets/notify/telegram.json").strip() != "600 root":
     fail("saved settings")
 ok("panelden bağlandı (%d ms): kod gösterildi, önce yazan başka sohbet sayılmadı, karşılama 555'e gitti; ayar 600 root" % measure["link_ms"])
 
@@ -200,6 +207,60 @@ if "Deneme mesajı gönderilemedi: Telegram&#39;a ulaşılamadı" not in page or
     fail("unreachable Telegram not said (or the token shown)")
 sh("systemd-run --unit it-tgfake --property PrivateTmp=no python3 /root/tgfake.py %d %s >/dev/null" % (TG_PORT, TOKEN))
 ok("Telegram'a ulaşılamayınca nedeni token'sız gösterildi")
+
+
+# ---- commands from the chat (P1a): only the person who linked it, answered with a button ----
+def tg_add(*ups):
+    """Appends updates to the stand-in's queue, numbered after the last one."""
+    cur = json.loads(sh("cat /tmp/tg-updates.json"))
+    last = max([u["update_id"] for u in cur] or [0])
+    for i, u in enumerate(ups):
+        u["update_id"] = last + 1 + i
+    sh("cat > /tmp/tg-updates.new && mv /tmp/tg-updates.new /tmp/tg-updates.json", stdin=json.dumps(cur + list(ups)).encode())
+
+
+def tg_msg(chat, sender, text):
+    return {"message": {"message_id": 50, "date": int(time.time()), "text": text,
+                        "chat": {"id": chat, "type": "private", "first_name": "Deneme"},
+                        "from": {"id": sender, "is_bot": False, "first_name": "Deneme"}}}
+
+
+def calls(method, since):
+    return [m for m in sent()[since:] if m.get("_method") == method]
+
+
+rss_before = rss("footops agent")
+mark = len(sent())
+tg_add(tg_msg(999, 999, "/durum"), tg_msg(555, 777, "/durum"), tg_msg(555, 555, "/durum"))
+t0 = time.time()
+wait(lambda: any("Sunucu durumu" in m.get("text", "") for m in calls("sendMessage", mark)), "the /durum answer", timeout=60)
+measure["durum_answer_s"] = round(time.time() - t0, 1)
+time.sleep(2)  # anything the strangers' messages would have brought
+answers = calls("sendMessage", mark)
+report = answers[0]["text"]
+if len(answers) != 1 or answers[0]["chat_id"] != "555" or not report.startswith("🖥 %s Sunucu durumu · " % PREFIX) or \
+        "Siteler: " not in report or "Disk: " not in report or "Yedek: " not in report:
+    fail("/durum answers: %s" % answers)
+button = json.loads(answers[0]["reply_markup"])["inline_keyboard"][0][0]["callback_data"]
+mark = len(sent())
+tg_add({"callback_query": {"id": "cb-it", "data": button, "from": {"id": 555, "is_bot": False, "first_name": "Deneme"},
+                           "message": {"message_id": answers[0]["_message_id"], "date": 1, "chat": {"id": 555, "type": "private"}}}})
+wait(lambda: calls("answerCallbackQuery", mark), "the button's answer", timeout=30)
+edits, pressed = calls("editMessageText", mark), calls("answerCallbackQuery", mark)
+if len(edits) != 1 or edits[0]["message_id"] != str(answers[0]["_message_id"]) or "Sunucu durumu" not in edits[0]["text"] or \
+        pressed[0].get("text") != "Güncellendi":
+    fail("refresh: %s %s" % (edits, pressed))
+if not calls("setMyCommands", 0) or '"telegram.command"' not in sh("tail -n 5 /var/lib/footops/audit.jsonl"):
+    fail("no command menu, or the command not audited")
+if sh("stat -c '%a %U' /var/lib/footops/telegram-buttons.json").strip() != "600 root":
+    fail("buttons file")
+st = api("GET", "/v1/notify")[1]
+cmds = st.get("commands") or {}
+if not cmds.get("reading") or cmds.get("user") != "Deneme (@deneme)" or cmds.get("last_command") != "Yenile":
+    fail("commands status: %s" % cmds)
+measure["agent_rss_reading_kb"] = round((rss("footops agent") - rss_before) / 1024)
+ok("komutlar: /durum yalnız bağlayana cevaplandı (%.1f sn; iki yabancıya cevap yok), Yenile mesajı yerinde güncelledi, "
+   "komut denetimde, menü ayarlandı" % measure["durum_answer_s"])
 
 # ---- the status file next to the repository ----
 def status_file():

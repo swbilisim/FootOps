@@ -54,7 +54,8 @@ func (f *fakeAgent) NotifyLink(context.Context, agent.Actor) (agent.NotifyStatus
 	if f.nt.linkErr != nil {
 		return agent.NotifyStatus{}, f.nt.linkErr
 	}
-	f.nt.status = agent.NotifyStatus{Linked: true, Bot: "OrnekBot", Chat: "Ayşe", Since: time.Now()}
+	f.nt.status = agent.NotifyStatus{Linked: true, Bot: "OrnekBot", Chat: "Ayşe", Since: time.Now(),
+		Commands: &agent.CommandsStatus{User: "Ayşe (@ayse)", Reading: true, LastOK: time.Now(), LastCommand: "/durum", LastCommandAt: time.Now()}}
 	return f.nt.status, nil
 }
 
@@ -135,8 +136,28 @@ func TestNotifyPageFlow(t *testing.T) {
 		t.Fatalf("link: %d", resp.StatusCode)
 	}
 	_, body = c.do("GET", "/notify", nil)
-	if !strings.Contains(body, "Telegram bağlandı: @OrnekBot → Ayşe") || !strings.Contains(body, "Deneme mesajı gönder") || strings.Contains(body, `name="token"`) {
+	// Linked: the first form is gone; a token field is there only to move to another bot.
+	if !strings.Contains(body, "Telegram bağlandı: @OrnekBot → Ayşe") || !strings.Contains(body, "Deneme mesajı gönder") ||
+		strings.Contains(body, "Bot token'ı</span>") || strings.Count(body, `name="token"`) != 1 || !strings.Contains(body, "Başka bir bota geç") {
 		t.Fatalf("linked:\n%s", body)
+	}
+	for _, want := range []string{"Komutu yalnız <strong>Ayşe (@ayse)</strong> verebilir", "Bot dinleniyor", `Son komut: <span class="mono">/durum</span>`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("commands: no %q\n%s", want, body)
+		}
+	}
+	// Reading fails; then commands are off in this chat.
+	e.agent.mu.Lock()
+	e.agent.nt.status.Commands = &agent.CommandsStatus{User: "Ayşe", LastErr: "bu botun mesajlarını başka bir yer de okuyor", Failing: time.Now().Add(-time.Hour)}
+	e.agent.mu.Unlock()
+	if _, body = c.do("GET", "/notify", nil); !strings.Contains(body, "Komutlar okunamıyor (1 sa önce başladı): bu botun mesajlarını başka bir yer de okuyor") || strings.Contains(body, "Bot dinleniyor") {
+		t.Fatalf("read failing:\n%s", body)
+	}
+	e.agent.mu.Lock()
+	e.agent.nt.status.Commands = &agent.CommandsStatus{Off: "sohbeti kimin bağladığı bilinmiyor"}
+	e.agent.mu.Unlock()
+	if _, body = c.do("GET", "/notify", nil); !strings.Contains(body, "Telegram'dan komut kapalı: sohbeti kimin bağladığı bilinmiyor.") || strings.Contains(body, "Komutu yalnız") {
+		t.Fatalf("commands off:\n%s", body)
 	}
 
 	// Test message, its failure, another chat, removal.

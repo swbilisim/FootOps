@@ -564,15 +564,22 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 		sampler.Alerts.Backups = backups.Alerts
 	}
 	var notify *Notifier
+	var readDone chan struct{}
 	if cfg.NotifySecret != "" {
 		code := cfg.ServerCode
 		if code == "" {
 			code = host
 		}
 		notify = &Notifier{SecretPath: cfg.NotifySecret, StatePath: cfg.NotifyState, Server: code, PanelHost: cfg.PanelHost,
-			API: cfg.NotifyAPI, Active: sampler.Alerts.Active, Log: logger, Rehearsal: rehearsal}
+			API: cfg.NotifyAPI, Active: sampler.Alerts.Active, Log: logger, Rehearsal: rehearsal,
+			Report: NewReport(sampler, ops.Store.List, backups), Audit: audit}
 		sampler.Alerts.Extra = append(sampler.Alerts.Extra, notify.Alerts)
 		go notify.Run(ctx)
+		readDone = make(chan struct{})
+		go func() {
+			notify.Read(ctx)
+			close(readDone)
+		}()
 	}
 	var statusFile *StatusWriter
 	if backups != nil {
@@ -663,6 +670,14 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 	}
 	logger.Printf("agent listening on %s (uid %d allowed)", cfg.Socket, uid)
 	err = s.Serve(ctx, l)
+	if readDone != nil {
+		// The reader tells Telegram what it handled before the process goes (a restart
+		// would answer it again).
+		select {
+		case <-readDone:
+		case <-time.After(4 * time.Second):
+		}
+	}
 	if backups != nil {
 		// The jobs die with the process: a site paused for its copy must not stay so.
 		stop, cancel := context.WithTimeout(context.Background(), 30*time.Second)

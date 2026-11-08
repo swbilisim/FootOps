@@ -70,6 +70,11 @@ type telegramConfig struct {
 	Chat   string    `json:"chat"` // the chat's name, for the panel
 	Linked time.Time `json:"linked"`
 	By     string    `json:"by,omitempty"`
+	// UserID is the Telegram user who sent the code: the only one whose commands and
+	// buttons count (P1a). User is their name, for the panel. Links made before P1a
+	// have none (see commander).
+	UserID int64  `json:"user_id,omitempty"`
+	User   string `json:"user,omitempty"`
 }
 
 // sentAlert is an alert the chat was told about and not yet told it cleared.
@@ -117,8 +122,13 @@ type Notifier struct {
 	Active func() []Alert
 	Log    *log.Logger
 	// Rehearsal, while the server is one, keeps every message in: it would go out in
-	// the name of the server it is a rehearsal of.
+	// the name of the server it is a rehearsal of. It keeps the chat unread too: the
+	// live server reads it.
 	Rehearsal *Rehearsal
+	// Report puts together what /durum tells (nil: the command says it cannot).
+	Report func(ctx context.Context) ServerReport
+	// Audit records the commands and buttons that came from Telegram (nil: not recorded).
+	Audit *Audit
 
 	now      func() time.Time
 	initOnce sync.Once
@@ -139,6 +149,14 @@ type Notifier struct {
 	st       notifyState
 	stLoaded bool
 	saveErr  string
+	// rd is how reading the chat goes (notify_read.go), guarded by mu; readWake wakes
+	// the reader out of a wait.
+	rd       readState
+	readWake chan struct{}
+	// btnMu guards the buttons file (buttons, btnLoaded).
+	btnMu     sync.Mutex
+	buttons   map[string]tgButton
+	btnLoaded bool
 }
 
 func (n *Notifier) init() {
@@ -150,10 +168,12 @@ func (n *Notifier) init() {
 			n.API = TelegramAPI
 		}
 		if n.HTTP == nil {
-			n.HTTP = &http.Client{Timeout: 20 * time.Second}
+			// No overall timeout: every call sets its own (a getUpdates waits ~50 s).
+			n.HTTP = &http.Client{}
 		}
 		n.missing = map[string]time.Time{}
 		n.wake = make(chan struct{}, 1)
+		n.readWake = make(chan struct{}, 1)
 		n.started = n.now()
 	})
 }
@@ -564,8 +584,10 @@ func (e *telegramError) Error() string {
 		return "bot bu sohbete yazamıyor (sohbetten çıkarılmış olabilir): yeniden bağla"
 	case e.code == 400 && strings.Contains(low, "chat not found"):
 		return "sohbet bulunamadı: yeniden bağla"
-	case e.code == 409:
+	case e.code == 409 && strings.Contains(low, "webhook"):
 		return "botun bir webhook'u var, mesajları okunamıyor: başka bir uygulama bu botu kullanıyor olabilir (ayrı bir bot aç)"
+	case e.code == 409:
+		return "bu botun mesajlarını başka bir yer de okuyor: aynı bot başka bir sunucuya da bağlı olabilir (her sunucuya ayrı bot aç)"
 	}
 	return fmt.Sprintf("Telegram hatası %d: %s", e.code, clipMsg(e.desc, 200))
 }
@@ -573,8 +595,14 @@ func (e *telegramError) Error() string {
 // call runs one Bot API method. The token sits in the address, so no error that comes
 // back carries the address: Go's client errors would show it.
 func (n *Notifier) call(ctx context.Context, token, method string, params url.Values, out any) error {
+	return n.callFor(ctx, 20*time.Second, token, method, params, out)
+}
+
+// callFor is call with its own time limit (a getUpdates is answered only after it has
+// waited for updates).
+func (n *Notifier) callFor(ctx context.Context, limit time.Duration, token, method string, params url.Values, out any) error {
 	n.init()
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, n.API+"/bot"+token+"/"+method, strings.NewReader(params.Encode()))
 	if err != nil {
@@ -611,7 +639,7 @@ func (n *Notifier) call(ctx context.Context, token, method string, params url.Va
 		return &telegramError{code: code, desc: scrubToken(r.Description, token), retryAfter: r.Parameters.RetryAfter,
 			migrateTo: r.Parameters.MigrateTo}
 	}
-	if out != nil {
+	if out != nil && len(r.Result) > 0 {
 		if err := json.Unmarshal(r.Result, out); err != nil {
 			return errors.New("Telegram'ın cevabı beklenen biçimde değil")
 		}
@@ -633,11 +661,31 @@ func scrubToken(s, token string) string {
 }
 
 func (n *Notifier) send(ctx context.Context, cfg telegramConfig, text string) error {
-	return n.call(ctx, cfg.Token, "sendMessage", url.Values{
+	_, err := n.sendMarkup(ctx, cfg, text, "")
+	return err
+}
+
+// sendMarkup sends text with buttons under it (markup: Telegram's reply_markup JSON,
+// empty: none) and returns the message's id (0 if Telegram did not say).
+func (n *Notifier) sendMarkup(ctx context.Context, cfg telegramConfig, text, markup string) (int64, error) {
+	params := url.Values{
 		"chat_id":              {strconv.FormatInt(cfg.ChatID, 10)},
 		"text":                 {text},
 		"link_preview_options": {`{"is_disabled":true}`},
-	}, nil)
+	}
+	if markup != "" {
+		params.Set("reply_markup", markup)
+	}
+	var raw json.RawMessage
+	if err := n.call(ctx, cfg.Token, "sendMessage", params, &raw); err != nil {
+		return 0, err
+	}
+	// The message went: an answer that does not say its id is no failure.
+	var m struct {
+		MessageID int64 `json:"message_id"`
+	}
+	_ = json.Unmarshal(raw, &m)
+	return m.MessageID, nil
 }
 
 // ---- linking a chat (the panel's Bildirimler page) ----
@@ -670,6 +718,8 @@ type NotifyStatus struct {
 	StatusFile *StatusFileState `json:"status_file,omitempty"`
 	// Rehearsal: a server recovered from backups and not live yet sends nothing.
 	Rehearsal bool `json:"rehearsal,omitempty"`
+	// Commands is how the chat's commands are read (P1a; nil: not linked).
+	Commands *CommandsStatus `json:"commands,omitempty"`
 }
 
 // Status reports the chat and how sending goes.
@@ -684,6 +734,7 @@ func (n *Notifier) Status() (out NotifyStatus) {
 		if st.Chat == cfg.ChatID {
 			out.Told, out.LastSent, out.LastErr, out.LastErrAt, out.Failing = len(st.Sent), st.LastSent, st.LastErr, st.LastErrAt, st.Failing
 		}
+		out.Commands = n.commandsStatus(cfg)
 	case !errors.Is(err, errNoNotify):
 		out.Error = err.Error()
 	}
@@ -705,8 +756,11 @@ func (l *telegramLink) view() *NotifyLink {
 // linkAlphabet leaves out look-alikes (0/O, 1/I/L), for typing the code by hand.
 const linkAlphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 
-func newLinkCode() (string, error) {
-	b := make([]byte, 10)
+func newLinkCode() (string, error) { return randomCode(10) }
+
+// randomCode is n characters of linkAlphabet, evenly drawn.
+func randomCode(n int) (string, error) {
+	b := make([]byte, n)
 	r := make([]byte, 64)
 	if _, err := randRead(r); err != nil {
 		return "", err
@@ -771,6 +825,12 @@ func (n *Notifier) StartLink(ctx context.Context, token string, keep bool) (Noti
 	l := &telegramLink{token: token, bot: me.Username, code: code, expires: n.now().Add(linkTTL)}
 	n.mu.Lock()
 	n.link = l
+	// The reader stands aside while linking: FinishLink reads the bot itself, and two
+	// reads of one bot at a time cut each other off. What waits meanwhile is a backlog.
+	if n.rd.cancel != nil {
+		n.rd.cancel()
+	}
+	n.rd.live = false
 	n.mu.Unlock()
 	return *l.view(), nil
 }
@@ -791,10 +851,18 @@ func writableDir(dir string) error {
 	return os.Remove(f.Name())
 }
 
-// tgMessage is the part of a Telegram message the link looks at.
+// tgMessage is the part of a Telegram message the link and the commands look at.
 type tgMessage struct {
-	Text string `json:"text"`
-	Chat struct {
+	MessageID int64  `json:"message_id"`
+	Date      int64  `json:"date"` // Unix time
+	Text      string `json:"text"`
+	// From is who wrote it (none in a channel).
+	From *tgUser `json:"from"`
+	// A forwarded message says where it came from (forward_origin; forward_date in
+	// older answers).
+	ForwardOrigin json.RawMessage `json:"forward_origin"`
+	ForwardDate   int64           `json:"forward_date"`
+	Chat          struct {
 		ID        int64  `json:"id"`
 		Type      string `json:"type"`
 		Title     string `json:"title"`
@@ -802,6 +870,34 @@ type tgMessage struct {
 		FirstName string `json:"first_name"`
 		LastName  string `json:"last_name"`
 	} `json:"chat"`
+}
+
+// forwarded tells a message passed on from elsewhere: not typed by its sender.
+func (m *tgMessage) forwarded() bool {
+	return m.ForwardDate != 0 || (len(m.ForwardOrigin) > 0 && string(m.ForwardOrigin) != "null")
+}
+
+// tgUser is a Telegram user.
+type tgUser struct {
+	ID        int64  `json:"id"`
+	IsBot     bool   `json:"is_bot"`
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	Username  string `json:"username"`
+}
+
+func (u tgUser) name() string {
+	name := strings.TrimSpace(u.FirstName + " " + u.LastName)
+	if u.Username != "" {
+		if name == "" {
+			return "@" + u.Username
+		}
+		name += " (@" + u.Username + ")"
+	}
+	if name == "" {
+		name = strconv.FormatInt(u.ID, 10)
+	}
+	return clipMsg(name, 80)
 }
 
 func (m tgMessage) chatName() string {
@@ -828,8 +924,8 @@ var errCodeNotSeen = errors.New("kod henüz bota ulaşmadı: Telegram'da bağlan
 // FinishLink looks for the code among the bot's latest updates and, once found, greets
 // the chat and saves it. A new chat then hears every open alert afresh; the same chat
 // linked again keeps what it was told. offset=-100 asks for the newest hundred (and
-// drops older ones nobody reads: the bot is only read while linking; another server
-// linking at the same time finds its own code among the newest).
+// drops older ones: the reader stands aside while a link is made). The person who
+// typed the code is the one whose commands will count.
 func (n *Notifier) FinishLink(ctx context.Context, by string) (NotifyStatus, error) {
 	n.init()
 	n.work.Lock()
@@ -845,25 +941,55 @@ func (n *Notifier) FinishLink(ctx context.Context, by string) (NotifyStatus, err
 		Message     *tgMessage `json:"message"`
 		ChannelPost *tgMessage `json:"channel_post"`
 	}
-	if err := n.call(ctx, l.token, "getUpdates", url.Values{"offset": {"-100"}, "timeout": {"0"}, "limit": {"100"}}, &updates); err != nil {
+	// allowed_updates as the reader asks: Telegram keeps the last list it was given.
+	if err := n.call(ctx, l.token, "getUpdates", url.Values{"offset": {"-100"}, "timeout": {"0"}, "limit": {"100"},
+		"allowed_updates": {allowedUpdates}}, &updates); err != nil {
 		n.work.Unlock()
 		return NotifyStatus{}, err
 	}
+	sort.Slice(updates, func(i, j int) bool { return updates[i].UpdateID < updates[j].UpdateID })
+	// The code's first sending counts, typed (not forwarded) by a person. A code that came
+	// from more than one chat or person — posted again in a group, forwarded elsewhere —
+	// is spent: whoever sent it decides who may give commands.
 	var found *tgMessage
-	for i := len(updates) - 1; i >= 0 && found == nil; i-- {
-		for _, m := range []*tgMessage{updates[i].Message, updates[i].ChannelPost} {
-			if m != nil && m.Chat.ID != 0 && strings.Contains(strings.ToUpper(m.Text), l.code) {
-				found = m
-				break
+	var lastID int64
+	chats, people := map[int64]bool{}, map[int64]bool{}
+	for _, u := range updates {
+		for _, m := range []*tgMessage{u.Message, u.ChannelPost} {
+			if m == nil || m.Chat.ID == 0 || m.forwarded() || (m.From != nil && m.From.IsBot) ||
+				!strings.Contains(strings.ToUpper(m.Text), l.code) {
+				continue
 			}
+			chats[m.Chat.ID] = true
+			if m.From != nil {
+				people[m.From.ID] = true
+			}
+			if found == nil {
+				found = m
+			}
+			lastID = max(lastID, u.UpdateID)
 		}
 	}
 	if found == nil {
 		n.work.Unlock()
 		return NotifyStatus{}, errCodeNotSeen
 	}
+	if len(chats) > 1 || len(people) > 1 {
+		n.mu.Lock()
+		n.link = nil
+		n.mu.Unlock()
+		n.work.Unlock()
+		n.wakeReader()
+		return NotifyStatus{}, errors.New("bağlantı kodu birden çok sohbetten ya da kişiden geldi (bir grupta yeniden gönderilmiş ya da iletilmiş olabilir): güvenlik için bağlanmadı, yeniden başla")
+	}
 	cfg := telegramConfig{Token: l.token, Bot: l.bot, ChatID: found.Chat.ID, Chat: found.chatName(), Linked: n.now().UTC(), By: by}
+	if u := found.From; u != nil && !u.IsBot && u.ID != 0 {
+		cfg.UserID, cfg.User = u.ID, u.name()
+	}
 	welcome := fmt.Sprintf("✅ %s FootOps bu sohbete bağlandı. Sunucunun uyarıları (yedek, disk, sertifika, MongoDB…) buraya gelecek: açılınca, kötüleşince ve düzelince.", n.prefix())
+	if _, off := cfg.commander(); off == "" {
+		welcome += fmt.Sprintf(" Sunucunun durumu için /durum yaz; komutları yalnız %s verebilir.", cfg.commanderName())
+	}
 	if err := n.send(ctx, cfg, welcome); err != nil {
 		n.work.Unlock()
 		return NotifyStatus{}, fmt.Errorf("sohbet bulundu ama mesaj gönderilemedi: %w", err)
@@ -874,17 +1000,28 @@ func (n *Notifier) FinishLink(ctx context.Context, by string) (NotifyStatus, err
 		return NotifyStatus{}, err
 	}
 	st := n.state()
-	if old.ChatID != cfg.ChatID || st.Chat != cfg.ChatID {
+	// Another bot is another chat on the screen, even where Telegram keeps its id (a
+	// private chat's id is the person's): it hears every open alert afresh.
+	if old.ChatID != cfg.ChatID || !strings.EqualFold(old.Bot, cfg.Bot) || st.Chat != cfg.ChatID {
 		st = notifyState{Chat: cfg.ChatID, Sent: map[string]sentAlert{}}
+		n.clearButtons()
 	}
 	st.LastSent, st.Failing, st.LastErr, st.LastErrAt = n.now(), time.Time{}, "", time.Time{}
 	n.saveState(st)
 	n.mu.Lock()
 	n.link, n.retryAt, n.backoff = nil, time.Time{}, 0
 	n.missing = map[string]time.Time{}
+	// The reader takes over from the code on: the code itself, and what came before
+	// it, are not commands.
+	if n.rd.token != cfg.Token {
+		n.rd = readState{token: cfg.Token}
+	}
+	n.rd.offset = max(n.rd.offset, lastID+1)
+	n.rd.retryAt, n.rd.backoff, n.rd.menuSet = time.Time{}, 0, ""
 	n.mu.Unlock()
 	n.work.Unlock()
 	n.poke() // the open alerts go out right away
+	n.wakeReader()
 	return n.Status(), nil
 }
 
@@ -894,6 +1031,7 @@ func (n *Notifier) CancelLink() {
 	n.mu.Lock()
 	n.link = nil
 	n.mu.Unlock()
+	n.wakeReader()
 }
 
 // Test sends a test message to the linked chat.
@@ -936,11 +1074,17 @@ func (n *Notifier) Remove() error {
 	if err := os.Remove(n.StatePath); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		n.logf("bildirim durumu silinemedi: %v", err)
 	}
+	n.clearButtons()
 	n.mu.Lock()
 	n.link, n.retryAt, n.backoff = nil, time.Time{}, 0
 	n.missing = map[string]time.Time{}
 	n.st, n.stLoaded = notifyState{}, true
+	if n.rd.cancel != nil {
+		n.rd.cancel()
+	}
+	n.rd = readState{}
 	n.mu.Unlock()
+	n.wakeReader()
 	return nil
 }
 
@@ -955,10 +1099,10 @@ func (n *Notifier) Alerts(now time.Time) []Alert {
 	if err != nil {
 		return []Alert{{Key: "notify:telegram", Level: "warn", Title: "Telegram ayarları okunamadı", Detail: err.Error(), Link: "/notify", Since: now}}
 	}
-	st := n.state()
-	if st.Chat != cfg.ChatID || st.Failing.IsZero() || now.Sub(st.Failing) < 10*time.Minute {
-		return nil
+	var out []Alert
+	if st := n.state(); st.Chat == cfg.ChatID && !st.Failing.IsZero() && now.Sub(st.Failing) >= 10*time.Minute {
+		out = append(out, Alert{Key: "notify:telegram", Level: "warn", Title: "Bildirimler Telegram'a gönderilemiyor",
+			Detail: st.LastErr, Link: "/notify", Since: st.Failing})
 	}
-	return []Alert{{Key: "notify:telegram", Level: "warn", Title: "Bildirimler Telegram'a gönderilemiyor",
-		Detail: st.LastErr, Link: "/notify", Since: st.Failing}}
+	return append(out, n.readAlerts(cfg, now)...)
 }
