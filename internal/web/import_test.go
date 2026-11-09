@@ -189,7 +189,7 @@ func TestImportPreviewAndApply(t *testing.T) {
 	}
 
 	e.agent.check = &agent.ImportCheck{Upload: testUpload, Site: "enisparta", Format: agent.FormatFootOps, SHA256: "ab12", HasDB: true,
-		Manifest: &agent.ExportManifest{Site: "eski", Created: time.Now()}, Databases: []string{"eski"}, SourceDB: "eski", Target: "enisparta",
+		Manifest: &archive.Manifest{Site: "eski", Created: time.Now()}, Databases: []string{"eski"}, SourceDB: "eski", Target: "enisparta",
 		Archive: map[string]int64{"users": 5, "pages": 2}, ArchiveDocs: 7, Views: []string{"ucuz"},
 		Current: map[string]int64{"users": 5, "logs": 40}, CurrentDocs: 45, Checked: time.Now(), Skipped: []string{"system.js"}}
 	_, body = c.do("GET", path, nil)

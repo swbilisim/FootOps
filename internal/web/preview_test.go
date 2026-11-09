@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/swbilisim/FootOps/internal/agent"
+	"github.com/swbilisim/FootOps/internal/archive"
 	"github.com/swbilisim/FootOps/internal/auth"
 	"github.com/swbilisim/FootOps/internal/config"
 	"github.com/swbilisim/FootOps/internal/datafs"
@@ -297,7 +298,7 @@ func (p *previewAgent) FinishUpload(_ context.Context, id string, a agent.Actor)
 func (p *previewAgent) Import(context.Context, string, string) (agent.ImportCheck, error) {
 	return agent.ImportCheck{Upload: testUpload, Site: "magaza", Format: agent.FormatFootOps,
 		SHA256:        "9f2c4e0b7d1a5c3e8f6b2a4d0c9e7f1b3a5d8c2e6f0b4a7d9c1e3f5a8b2d6c0e",
-		Manifest:      &agent.ExportManifest{Site: "magaza", Created: time.Now().Add(-26 * time.Hour)},
+		Manifest:      &archive.Manifest{Site: "magaza", Created: time.Now().Add(-26 * time.Hour)},
 		ServerVersion: "7.0.45", ToolVersion: "100.10.0", Databases: []string{"magaza"}, SourceDB: "magaza", Target: "magaza",
 		Archive: map[string]int64{"urunler": 412, "kategoriler": 18, "siparisler": 2210, "ayarlar": 1}, ArchiveDocs: 2641, Views: []string{"ucuz_urunler"},
 		Current: map[string]int64{"urunler": 415, "kategoriler": 18, "siparisler": 2230, "oturumlar": 96}, CurrentDocs: 2759,

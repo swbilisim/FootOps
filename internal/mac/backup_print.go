@@ -126,10 +126,30 @@ func printOpenStart(w io.Writer, res OpenResult, req openReq, loc *time.Location
 	fmt.Fprintf(w, "  %s\n", strings.Join(parts, " · "))
 }
 
+// origin is where something opened came from: a server's backup ("h1 / magaza"), or an
+// archive ("magaza-….footops.tar (magaza)").
+func origin(server, site, archive string) string {
+	if archive == "" {
+		return server + " / " + site
+	}
+	if site == "" {
+		return "arşiv " + archive
+	}
+	return "arşiv " + archive + " (" + site + ")"
+}
+
+// whenTaken is the time of what was opened: a backup's, an archive's.
+func whenTaken(archive string, t time.Time, loc *time.Location) string {
+	if archive == "" {
+		return "yedek " + stamp(t, loc)
+	}
+	return stamp(t, loc)
+}
+
 func printOpened(w io.Writer, v OpenedView) {
 	now := v.Time
 	if len(v.Folders) == 0 {
-		fmt.Fprintln(w, "Açılmış yedek klasörü yok.")
+		fmt.Fprintln(w, "Açılmış yedek ya da arşiv klasörü yok.")
 	} else {
 		fmt.Fprintln(w, "KLASÖRLER (sırlar içerebilir; işin bitince sil: footops-mac yedek sil <klasör>)")
 		for _, f := range v.Folders {
@@ -143,11 +163,11 @@ func printOpened(w io.Writer, v OpenedView) {
 				note = "  ⚠ bir haftadan eski"
 			}
 			if f.Error != "" {
-				fmt.Fprintf(w, "  %s\n    %s / %s · %s%s\n", f.Path, f.Server, f.Site, f.Error, note)
+				fmt.Fprintf(w, "  %s\n    %s · %s%s\n", f.Path, origin(f.Server, f.Site, f.Archive), f.Error, note)
 				continue
 			}
-			fmt.Fprintf(w, "  %s\n    %s / %s · yedek %s · açıldı %s · %d dosya, %s%s\n", f.Path, f.Server, f.Site,
-				stamp(f.Time, now.Location()), ago(f.At, now), f.Files, bytesTR(f.Bytes), note)
+			fmt.Fprintf(w, "  %s\n    %s · %s · açıldı %s · %d dosya, %s%s\n", f.Path, origin(f.Server, f.Site, f.Archive),
+				whenTaken(f.Archive, f.Time, now.Location()), ago(f.At, now), f.Files, bytesTR(f.Bytes), note)
 		}
 	}
 	fmt.Fprintln(w)
@@ -155,13 +175,13 @@ func printOpened(w io.Writer, v OpenedView) {
 	case v.MongoError != "":
 		fmt.Fprintf(w, "MongoDB: %s\n", v.MongoError)
 	case len(v.Databases) == 0:
-		fmt.Fprintln(w, "Mac'teki MongoDB'de yedekten yüklenmiş veritabanı (*_yedek_*) yok.")
+		fmt.Fprintln(w, "Mac'teki MongoDB'de yedekten ya da arşivden yüklenmiş veritabanı yok.")
 	default:
 		fmt.Fprintln(w, "MONGODB (silmek: footops-mac yedek sil <veritabanı>)")
 		for _, d := range v.Databases {
 			text := fmt.Sprintf("  %s · %s", d.Name, bytesTR(d.Bytes))
 			if d.Registered {
-				text += fmt.Sprintf(" · %s / %s, yedek %s · yüklendi %s", d.Server, d.Site, stamp(d.Time, now.Location()), ago(d.At, now))
+				text += fmt.Sprintf(" · %s, %s · yüklendi %s", origin(d.Server, d.Site, d.Archive), whenTaken(d.Archive, d.Time, now.Location()), ago(d.At, now))
 			} else {
 				text += " · footops-mac'in listesinde değil"
 			}

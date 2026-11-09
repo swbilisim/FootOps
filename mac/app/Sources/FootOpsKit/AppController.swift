@@ -21,10 +21,17 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
     private var settingsModel: SettingsModel?
     private var backupsWindow: NSWindow?
     private var backupsModel: BackupsModel?
+    private var archivesWindow: NSWindow?
+    private var archivesModel: ArchivesModel?
+    /// What was opened on this Mac: one list for both windows while either is open.
+    private var openedList: OpenedList?
     /// The recovery line's minute on the pasteboard runs out with the window closed too.
     private let clipboard = RecoveryClipboard()
-    /// The Backups window opens at launch (FootOps --yedekler).
+    /// The Backups / Archives window opens at launch (FootOps --yedekler, --arsivler).
     public var openBackupsAtLaunch = false
+    public var openArchivesAtLaunch = false
+    /// The archive the Archives window checks at launch (FootOps --arsivler <dosya>).
+    public var archiveAtLaunch: String?
     private var observers: [NSObjectProtocol] = []
     private var terminate: DispatchSourceSignal?
     private let log = Logger(subsystem: "io.github.swbilisim.footops", category: "app")
@@ -75,17 +82,24 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
         if openBackupsAtLaunch {
             showBackups()
         }
+        if openArchivesAtLaunch {
+            showArchives()
+        }
         log.info("açıldı: \(self.version, privacy: .public), çekirdek \(self.core?.executable.path ?? "yok", privacy: .public)")
     }
 
-    /// Quitting (the menu's Çık, ⌘Q, make mac-install's SIGTERM) with a backup being
-    /// opened: it is stopped and the core given time to remove what it began (at most
-    /// 30 seconds) before the app goes.
+    /// Quitting (the menu's Çık, ⌘Q, make mac-install's SIGTERM) with a backup or an
+    /// archive being opened (or one made): it is stopped and the core given time to
+    /// remove what it began (at most 30 seconds) before the app goes.
     public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let model = backupsModel, model.isBusy else { return .terminateNow }
-        log.info("kapanıyor: süren yedek açma durduruluyor")
+        let backups = backupsModel?.isBusy == true ? backupsModel : nil
+        let archives = archivesModel?.isBusy == true ? archivesModel : nil
+        guard backups != nil || archives != nil else { return .terminateNow }
+        log.info("kapanıyor: süren iş durduruluyor")
         Task { @MainActor in
-            await model.stopAndWait(limit: .seconds(30))
+            async let b: Void = backups?.stopAndWait(limit: .seconds(30)) ?? ()
+            async let a: Void = archives?.stopAndWait(limit: .seconds(30)) ?? ()
+            _ = await (b, a)
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
@@ -94,6 +108,7 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
     public func applicationWillTerminate(_ notification: Notification) {
         monitor.stop()
         backupsModel?.stop()
+        archivesModel?.stop()
         // A recovery line still on the pasteboard goes with the app.
         clipboard.takeOff()
         log.info("kapandı")
@@ -118,6 +133,10 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
             backups: { [weak self] in
                 self?.menu?.close()
                 self?.showBackups()
+            },
+            archives: { [weak self] in
+                self?.menu?.close()
+                self?.showArchives()
             },
             settings: { [weak self] in
                 self?.menu?.close()
@@ -203,9 +222,19 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
 
     // MARK: Backups
 
+    /// The list of what was opened, made when the first of the two windows opens.
+    private func sharedOpened() -> OpenedList {
+        if let openedList {
+            return openedList
+        }
+        let list = OpenedList(core: core)
+        openedList = list
+        return list
+    }
+
     private func showBackups() {
         if backupsWindow == nil {
-            let model = BackupsModel(core: core, clipboard: clipboard)
+            let model = BackupsModel(core: core, clipboard: clipboard, opened: sharedOpened())
             let actions = BackupsActions(reveal: { path in
                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
             })
@@ -226,29 +255,122 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
         NSApp.activate()
     }
 
+    // MARK: Archives
+
+    private func showArchives() {
+        if archivesWindow == nil {
+            let model = ArchivesModel(core: core, opened: sharedOpened(), targets: panelTargets())
+            let window = NSWindow(contentViewController: NSHostingController(rootView: ArchivesWindow(model: model, actions: archivesActions(model))))
+            window.title = "FootOps Arşivleri"
+            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+            window.setContentSize(ArchivesWindow.size)
+            window.contentMinSize = NSSize(width: 760, height: 560)
+            window.isReleasedWhenClosed = false
+            window.delegate = self
+            window.center()
+            archivesWindow = window
+            archivesModel = model
+            trackTargets()
+            Task { await model.load() }
+            if let file = archiveAtLaunch {
+                archiveAtLaunch = nil
+                model.choose(file: file)
+            }
+        }
+        NSApp.setActivationPolicy(.regular)
+        archivesWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+    }
+
+    /// The Archives window's panels follow the menu's reads while it is open (it may open
+    /// before the first).
+    private func trackTargets() {
+        guard let model = archivesModel else { return }
+        let targets = withObservationTracking {
+            panelTargets()
+        } onChange: { [weak self] in
+            Task { @MainActor in self?.trackTargets() }
+        }
+        model.update(targets: targets)
+    }
+
+    /// The servers whose panel the settings know, with their sites as the menu last read
+    /// them.
+    private func panelTargets() -> [PanelTarget] {
+        (monitor.status?.servers ?? []).compactMap { s in
+            guard let panel = s.panel, !panel.isEmpty else { return nil }
+            return PanelTarget(code: s.code, name: s.name, panel: panel, sites: s.sites.map(\.name).sorted())
+        }
+    }
+
+    private func archivesActions(_ model: ArchivesModel) -> ArchivesActions {
+        ArchivesActions(
+            reveal: { path in
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+            },
+            open: { url in
+                NSWorkspace.shared.open(url)
+            },
+            chooseFile: { [weak self, weak model] in
+                self?.ask(folders: false) { model?.choose(file: $0) }
+            },
+            chooseFolder: { [weak self, weak model] in
+                self?.ask(folders: true) { model?.makeFolder = $0 }
+            })
+    }
+
+    /// The open panel, as a sheet of the Archives window: an archive, or a folder.
+    private func ask(folders: Bool, then: @escaping (String) -> Void) {
+        guard let window = archivesWindow else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = !folders
+        panel.canChooseDirectories = folders
+        panel.allowsMultipleSelection = false
+        panel.prompt = folders ? "Seç" : "Denetle"
+        panel.message = folders ? "Sitenin kalıcı klasörü olacak klasör (gizli dosyalar ve bağlantılar alınmaz)"
+            : "FootOps arşivi (.footops.tar), mongodump arşivi ya da dosya arşivi (zip, tar.gz)"
+        panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+        panel.beginSheetModal(for: window) { response in
+            guard response == .OK, let url = panel.url else { return }
+            then(url.path)
+        }
+    }
+
     public func windowWillClose(_ notification: Notification) {
         let window = notification.object as? NSWindow
         if window === backupsWindow {
             // An open under way stops with it (the core removes what it began).
             backupsModel?.stop()
         }
-        guard window === settingsWindow || window === backupsWindow else { return }
+        if window === archivesWindow {
+            archivesModel?.stop()
+        }
+        guard window === settingsWindow || window === backupsWindow || window === archivesWindow else { return }
         // Opened seldom, read anew each time: nothing of them is kept once they close
         // (after the close has run its course); the Dock icon goes with the last.
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            if self.settingsWindow?.isVisible != true {
+            // Closed, not just in the Dock: a minimized window is not visible either.
+            let gone = { (w: NSWindow?) in w.map { !$0.isVisible && !$0.isMiniaturized } ?? true }
+            if gone(self.settingsWindow) {
                 self.settingsWindow = nil
                 self.settingsModel = nil
             }
-            if self.backupsWindow?.isVisible != true {
+            if gone(self.backupsWindow) {
                 self.backupsWindow = nil
                 self.backupsModel = nil
             }
-            if self.settingsWindow == nil && self.backupsWindow == nil {
+            if gone(self.archivesWindow) {
+                self.archivesWindow = nil
+                self.archivesModel = nil
+            }
+            if self.backupsWindow == nil && self.archivesWindow == nil {
+                self.openedList = nil
+            }
+            if self.settingsWindow == nil && self.backupsWindow == nil && self.archivesWindow == nil {
                 NSApp.setActivationPolicy(.accessory)
             }
-            if window === self.backupsWindow || self.backupsWindow == nil {
+            if window === self.backupsWindow || window === self.archivesWindow || self.openedList == nil {
                 self.monitor.refresh() // the menu's reminder of what was opened
             }
         }

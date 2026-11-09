@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -173,5 +174,32 @@ func TestRunUsage(t *testing.T) {
 		if code := e.run(ctx, c.args); code != c.code || !strings.Contains(out.String()+errb.String(), c.in) {
 			t.Errorf("%v: %d\n%s%s", c.args, code, out, errb)
 		}
+	}
+}
+
+// The folder's attribute is Time Machine's sticky exclusion, as tmutil sees it.
+func TestTimeMachineExclude(t *testing.T) {
+	const tmutil = "/usr/bin/tmutil"
+	if _, err := os.Stat(tmutil); err != nil {
+		t.Skip("tmutil yok")
+	}
+	if len(tmExcluded) != 61 {
+		t.Fatalf("%d bytes", len(tmExcluded))
+	}
+	// In the home folder: the system's temporary folders are left out of Time Machine
+	// whatever their attributes.
+	home, err := os.MkdirTemp(os.Getenv("HOME"), ".footops-tm-test-")
+	if err != nil {
+		t.Skip(err)
+	}
+	defer os.RemoveAll(home)
+	dir, other := filepath.Join(home, "acilan"), filepath.Join(home, "baska")
+	os.Mkdir(dir, 0o700)
+	os.Mkdir(other, 0o700)
+	timeMachineExclude(dir)
+	out, err := exec.Command(tmutil, "isexcluded", dir, other).Output()
+	if err != nil || !strings.Contains(string(out), "[Excluded]") || !strings.Contains(string(out), "[Included]") ||
+		strings.Index(string(out), "[Excluded]") > strings.Index(string(out), "[Included]") {
+		t.Errorf("%v %s", err, out)
 	}
 }

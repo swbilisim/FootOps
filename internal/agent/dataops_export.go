@@ -1,9 +1,7 @@
 package agent
 
 import (
-	"archive/tar"
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -19,60 +17,21 @@ import (
 	"strings"
 	"time"
 
+	"github.com/swbilisim/FootOps/internal/archive"
 	"github.com/swbilisim/FootOps/internal/core"
 	"github.com/swbilisim/FootOps/internal/datafs"
 	"github.com/swbilisim/FootOps/internal/run"
 	"github.com/swbilisim/FootOps/internal/version"
 )
 
-// A FootOps archive (v1) is an uncompressed tar, so its members can be read in place:
-//
-//	db.archive.gz   mongodump --archive --gzip of the site's database (if it has one)
-//	files.tar.gz    the site's data directory, gzip level 1 (if it has one)
-//	manifest.json   what the archive holds, with every member's size and SHA-256
-//
-// The manifest comes last because it describes the members before it; each member is
-// written straight into the tar (its header is filled in once the size is known), so an
-// export needs no second copy on disk.
+// A site's export is a FootOps archive (internal/archive): its database and its data
+// directory, whichever it has, written into the staging area for a day's download.
 const (
-	exportFormat = 1
 	exportPrefix = "exp-"
 	exportInfo   = "export.json"
 )
 
 var reJobID = regexp.MustCompile(`^[A-Za-z0-9]{1,64}$`)
-
-// ExportMember is one member of a FootOps archive.
-type ExportMember struct {
-	Size   int64  `json:"size"`
-	SHA256 string `json:"sha256"`
-}
-
-// ExportManifest is manifest.json.
-type ExportManifest struct {
-	Format      int                     `json:"format"`
-	FootOps     string                  `json:"footops"`
-	Site        string                  `json:"site"`
-	Group       string                  `json:"group"`
-	Created     time.Time               `json:"created"`
-	DB          string                  `json:"db"`
-	MongoServer string                  `json:"mongo_server"`
-	MongoTool   string                  `json:"mongo_tool"`
-	Collections map[string]int64        `json:"collections"`
-	Documents   int64                   `json:"documents"`
-	Files       *ExportFiles            `json:"files,omitempty"`
-	Members     map[string]ExportMember `json:"members"`
-	// Backup is set when the archive was made from a backup (Created is then the backup's
-	// time, when the data was read).
-	Backup *ExportBackupInfo `json:"backup,omitempty"`
-}
-
-// ExportFiles summarises the files member.
-type ExportFiles struct {
-	Files int   `json:"files"`
-	Dirs  int   `json:"dirs"`
-	Bytes int64 `json:"bytes"`
-}
 
 // ExportInfo describes an archive waiting to be downloaded.
 type ExportInfo struct {
@@ -149,8 +108,8 @@ func (d *DataOps) Export(ctx context.Context, t *Task, site string) (info Export
 		return info, err
 	}
 	defer f.Close()
-	man := ExportManifest{Format: exportFormat, FootOps: version.Version, Site: spec.Name, Group: spec.Group, Created: now,
-		Members: map[string]ExportMember{}}
+	aw := archive.NewWriter(f)
+	man := archive.Manifest{FootOps: version.Version, Site: spec.Name, Group: spec.Group, Created: now}
 
 	if spec.Database {
 		cfgDir, err := d.toolConfig(t.ID(), creds)
@@ -160,8 +119,7 @@ func (d *DataOps) Export(ctx context.Context, t *Task, site string) (info Export
 		defer func() { _ = d.Staging.Remove(t.ID()) }()
 		counts := map[string]int64{}
 		var u run.Usage
-		m, err := writeMember(f, memberDB, now, func(w io.Writer, cw *countingWriter) error {
-			cw.report = func(n int64) { t.SetBytes(n, 0) }
+		m, err := aw.Add(archive.MemberDB, now, func(n int64) { t.SetBytes(n, 0) }, func(w io.Writer) error {
 			t.Step("… mongodump çalışıyor (sınır: " + limitText(d.Limits) + ")")
 			cmd := d.toolCmd(ctx, t.ID(), cfgDir, "mongodump", "--config=/run/footops/mongo.yaml",
 				"--db="+creds.DB, "--archive", "--gzip", "--numParallelCollections=1")
@@ -188,7 +146,7 @@ func (d *DataOps) Export(ctx context.Context, t *Task, site string) (info Export
 		}
 		t.Step(fmt.Sprintf("✓ mongodump bitti: %d koleksiyon, %d belge → %s (%s)", len(counts), sum(counts), humanBytes(m.Size), usageNote(u)))
 		// Rule K2 for our own output: the member reads back as an intact mongodump archive.
-		p, _, err := readMongoSection(ctxReader{ctx, io.NewSectionReader(f, m.offset, m.Size)}, true, sha256.New())
+		p, _, err := archive.ReadMongo(ctxReader{ctx, io.NewSectionReader(f, m.Offset, m.Size)}, true, sha256.New())
 		if err != nil {
 			return info, fmt.Errorf("arşiv doğrulanamadı: %w", err)
 		}
@@ -203,7 +161,6 @@ func (d *DataOps) Export(ctx context.Context, t *Task, site string) (info Export
 				man.Documents += n
 			}
 		}
-		man.Members[memberDB] = m.ExportMember
 	}
 
 	if spec.DataMount != "" {
@@ -214,7 +171,7 @@ func (d *DataOps) Export(ctx context.Context, t *Task, site string) (info Export
 		defer src.Close()
 		var hs helperStats
 		var u run.Usage
-		m, err := writeMember(f, memberFiles, now, func(w io.Writer, _ *countingWriter) error {
+		m, err := aw.Add(archive.MemberFiles, now, nil, func(w io.Writer) error {
 			t.Step("… Dosyalar paketleniyor (site kullanıcısı " + strconv.Itoa(sf.UID) + ", sınır: " + limitText(helperLimits) + ")")
 			cmd := d.helper(ctx, t.ID(), []*os.File{src}, "data-pack", "--uid="+strconv.Itoa(sf.UID), "--gid="+strconv.Itoa(sf.GID))
 			cmd.Stdout = w
@@ -237,7 +194,7 @@ func (d *DataOps) Export(ctx context.Context, t *Task, site string) (info Export
 			return info, err
 		}
 		// Read our own output back like an upload: names, sizes, gzip checksum.
-		s, err := checkFilesMember(ctxReader{ctx, io.NewSectionReader(f, m.offset, m.Size)}, m.Size)
+		s, err := archive.CheckFilesMember(ctxReader{ctx, io.NewSectionReader(f, m.Offset, m.Size)}, m.Size)
 		if err != nil {
 			return info, fmt.Errorf("dosya arşivi doğrulanamadı: %w", err)
 		}
@@ -246,15 +203,10 @@ func (d *DataOps) Export(ctx context.Context, t *Task, site string) (info Export
 		}
 		t.Step(fmt.Sprintf("✓ Dosyalar paketlendi: %d dosya, %d klasör, %s → %s (%s)", hs.Result.Files, hs.Result.Dirs,
 			humanBytes(hs.Result.Bytes), humanBytes(m.Size), usageNote(u)))
-		man.Files = &ExportFiles{Files: hs.Result.Files, Dirs: hs.Result.Dirs, Bytes: hs.Result.Bytes}
-		man.Members[memberFiles] = m.ExportMember
+		man.Files = &archive.ManifestFiles{Files: hs.Result.Files, Dirs: hs.Result.Dirs, Bytes: hs.Result.Bytes}
 	}
 
-	b, err := json.MarshalIndent(man, "", "  ")
-	if err != nil {
-		return info, err
-	}
-	if err := writeTail(f, b, now); err != nil {
+	if err := aw.Finish(man, now); err != nil {
 		return info, err
 	}
 	if err := f.Sync(); err != nil {
@@ -290,83 +242,6 @@ func (d *DataOps) Export(ctx context.Context, t *Task, site string) (info Export
 	t.SetResult(info.ID)
 	t.Step(fmt.Sprintf("✓ Arşiv hazır: %s (%s); sunucuda %d saat indirilebilir", name, humanBytes(total), int(stagingKeep().Hours())))
 	return info, nil
-}
-
-// member is a written tar member: where its body starts, its size and checksum.
-type member struct {
-	ExportMember
-	offset int64
-}
-
-// writeMember writes a tar member whose size is known only afterwards, at the file's
-// current end: a placeholder header, the body from fill, padding, then the real header.
-// Nothing is buffered or written twice.
-func writeMember(f *os.File, name string, mod time.Time, fill func(w io.Writer, cw *countingWriter) error) (member, error) {
-	start, err := f.Seek(0, io.SeekEnd)
-	if err != nil {
-		return member{}, err
-	}
-	if _, err := f.Write(make([]byte, 512)); err != nil {
-		return member{}, err
-	}
-	h := sha256.New()
-	cw := &countingWriter{w: io.MultiWriter(f, h)}
-	bw := bufio.NewWriterSize(cw, 256<<10)
-	if err := fill(bw, cw); err != nil {
-		return member{}, err
-	}
-	if err := bw.Flush(); err != nil {
-		return member{}, err
-	}
-	size := cw.n
-	if pad := (512 - size%512) % 512; pad > 0 {
-		if _, err := f.Write(make([]byte, pad)); err != nil {
-			return member{}, err
-		}
-	}
-	hdr, err := tarHeader(name, size, mod)
-	if err != nil {
-		return member{}, err
-	}
-	if _, err := f.WriteAt(hdr, start); err != nil {
-		return member{}, err
-	}
-	return member{ExportMember: ExportMember{Size: size, SHA256: hex.EncodeToString(h.Sum(nil))}, offset: start + 512}, nil
-}
-
-// writeTail adds the manifest and the tar end marker at the file's end.
-func writeTail(f *os.File, manifest []byte, now time.Time) error {
-	if _, err := f.Seek(0, io.SeekEnd); err != nil {
-		return err
-	}
-	tw := tar.NewWriter(f)
-	if err := tw.WriteHeader(&tar.Header{Name: memberManifest, Size: int64(len(manifest)), Mode: 0o644, ModTime: now,
-		Typeflag: tar.TypeReg, Format: tar.FormatUSTAR}); err != nil {
-		return err
-	}
-	if _, err := tw.Write(manifest); err != nil {
-		return err
-	}
-	return tw.Close()
-}
-
-// tarHeader renders the 512-byte header of a regular file.
-func tarHeader(name string, size int64, mod time.Time) ([]byte, error) {
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
-	// USTAR stores sizes below 8 GiB; GNU stores larger ones in the same single block.
-	format := tar.FormatUSTAR
-	if size >= 8<<30 {
-		format = tar.FormatGNU
-	}
-	if err := tw.WriteHeader(&tar.Header{Name: name, Size: size, Mode: 0o644, ModTime: mod,
-		Typeflag: tar.TypeReg, Format: format}); err != nil {
-		return nil, fmt.Errorf("tar başlığı: %w", err)
-	}
-	if buf.Len() != 512 {
-		return nil, errors.New("tar başlığı beklenmeyen uzunlukta")
-	}
-	return buf.Bytes(), nil
 }
 
 func stagingKeep() time.Duration { return 24 * time.Hour }

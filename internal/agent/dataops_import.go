@@ -1,16 +1,13 @@
 package agent
 
 import (
-	"archive/tar"
 	"bufio"
-	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hash"
 	"io"
 	"io/fs"
 	"os"
@@ -60,14 +57,14 @@ type dbSection struct {
 // ImportCheck is what checking an upload found. It is kept next to the upload and is
 // the preview the operator confirms.
 type ImportCheck struct {
-	Upload   string          `json:"upload"`
-	Job      string          `json:"job"`
-	Site     string          `json:"site"`
-	File     string          `json:"file"`
-	Size     int64           `json:"size"`
-	SHA256   string          `json:"sha256"`
-	Format   string          `json:"format"`
-	Manifest *ExportManifest `json:"manifest,omitempty"`
+	Upload   string            `json:"upload"`
+	Job      string            `json:"job"`
+	Site     string            `json:"site"`
+	File     string            `json:"file"`
+	Size     int64             `json:"size"`
+	SHA256   string            `json:"sha256"`
+	Format   string            `json:"format"`
+	Manifest *archive.Manifest `json:"manifest,omitempty"`
 	// HasDB: the upload holds a mongodump archive (Section, DataSize describe it).
 	HasDB    bool      `json:"has_db"`
 	Section  dbSection `json:"section"`
@@ -325,7 +322,7 @@ func (d *DataOps) inspect(ctx context.Context, t *Task, path string, ic *ImportC
 		ic.Format = FormatMongodump
 		h := sha256.New()
 		pr := &progressReader{r: ctxReader{ctx, f}, report: progress}
-		p, size, err := readMongoSection(pr, kind == archive.MongoArchiveGz, h)
+		p, size, err := archive.ReadMongo(pr, kind == archive.MongoArchiveGz, h)
 		if err != nil {
 			return p, err
 		}
@@ -336,7 +333,7 @@ func (d *DataOps) inspect(ctx context.Context, t *Task, path string, ic *ImportC
 	case archive.Tar:
 		ic.Format = FormatFootOps
 		p, err := inspectFootOps(ctx, f, ic, progress)
-		if errors.Is(err, errPlainTar) {
+		if errors.Is(err, archive.ErrNotFootOps) {
 			*ic = ImportCheck{Upload: ic.Upload, Job: ic.Job, Site: ic.Site, File: ic.File, Size: ic.Size}
 			return p, d.inspectFiles(ctx, path, "tar", ic)
 		}
@@ -350,205 +347,31 @@ func (d *DataOps) inspect(ctx context.Context, t *Task, path string, ic *ImportC
 		"mongodump arşivi (mongodump --archive=dosya.gz --gzip) ve dosya arşivi (zip, tar.gz)", orDash(string(kind)))
 }
 
-// readMongoSection reads a mongodump archive (gzip'd or not) to its end through h,
-// returning its prelude and its uncompressed size. Reading to the end verifies the gzip
-// checksum; a decompression bomb is refused like in archive.Check.
-func readMongoSection(r io.Reader, gz bool, h hash.Hash) (archive.MongoPrelude, int64, error) {
-	in := &progressReader{r: r}
-	br := bufio.NewReaderSize(io.TeeReader(in, h), 256<<10)
-	var plain io.Reader = br
-	if gz {
-		zr, err := gzip.NewReader(br)
-		if err != nil {
-			return archive.MongoPrelude{}, 0, fmt.Errorf("gzip başlığı bozuk: %w", err)
-		}
-		plain = zr
-	}
-	l := archive.DefaultLimits
-	lim := &io.LimitedReader{R: plain, N: l.MaxTotal + 1}
-	p, err := archive.ReadMongoPrelude(lim)
-	if err != nil {
-		return p, 0, err
-	}
-	if _, err := io.Copy(io.Discard, lim); err != nil {
-		return p, 0, fmt.Errorf("arşiv bozuk: %w", err)
-	}
-	size := l.MaxTotal + 1 - lim.N
-	if lim.N <= 0 {
-		return p, size, fmt.Errorf("arşivin açılmış hali %s sınırını aşıyor", humanBytes(l.MaxTotal))
-	}
-	if _, err := io.Copy(io.Discard, br); err != nil { // anything after the gzip stream
-		return p, size, err
-	}
-	if gz && size > 64<<20 && size > in.n*l.MaxRatio {
-		return p, size, fmt.Errorf("sıkıştırma oranı şüpheli (%d:1, sınır %d:1) — sıkıştırma bombası olabilir", size/max(in.n, 1), l.MaxRatio)
-	}
-	return p, size, nil
-}
-
-// FootOps archive members.
-const (
-	memberManifest = "manifest.json"
-	memberDB       = "db.archive.gz"
-	memberFiles    = "files.tar.gz"
-	maxManifest    = 1 << 20
-)
-
-type tarMember struct {
-	offset, size int64
-	sha256       string
-}
-
-// inspectFootOps walks a FootOps archive (an uncompressed tar). Member offsets are
-// counted as the tar reader consumes the file, so the database member can later be
-// streamed in place.
+// inspectFootOps reads a FootOps archive once (internal/archive: every member checked
+// against the manifest); the database and files members are later streamed from where
+// they lie in the file.
 func inspectFootOps(ctx context.Context, f *os.File, ic *ImportCheck, progress func(int64)) (archive.MongoPrelude, error) {
+	c, err := archive.ReadFootOps(&progressReader{r: ctxReader{ctx, f}, report: progress})
+	if err != nil {
+		return archive.MongoPrelude{}, err
+	}
+	ic.SHA256, ic.Manifest = c.SHA256, &c.Manifest
+	if c.Env {
+		ic.Notes = append(ic.Notes, fmt.Sprintf("Arşivde sitenin ortam değişkenleri de var (%d değişken): içe aktarma onlara dokunmaz; "+
+			"gerekirse site ayarlarında elle girilir.", c.EnvVars))
+	}
 	var p archive.MongoPrelude
-	total := sha256.New()
-	pos := &progressReader{r: ctxReader{ctx, f}, report: progress}
-	tr := tar.NewReader(io.TeeReader(pos, total))
-	members := map[string]tarMember{}
-	var man *ExportManifest
-	for {
-		h, err := tr.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return p, fmt.Errorf("tar bozuk: %w", err)
-		}
-		name, err := archive.CleanName(h.Name)
-		if err != nil {
-			return p, err
-		}
-		if h.Typeflag != tar.TypeReg {
-			return p, fmt.Errorf("%s: FootOps arşivinde yalnız dosya olabilir", name)
-		}
-		for k := range h.PAXRecords {
-			if strings.HasPrefix(k, "GNU.sparse") {
-				return p, fmt.Errorf("%s: seyrek (sparse) dosya kabul edilmez", name)
-			}
-		}
-		if _, dup := members[name]; dup {
-			return p, fmt.Errorf("%s: arşivde iki kez var", name)
-		}
-		if len(members) == 0 && name != memberManifest && name != memberDB && name != memberFiles {
-			return p, errPlainTar
-		}
-		m := tarMember{offset: pos.n, size: h.Size}
-		mh := sha256.New()
-		switch name {
-		case memberManifest:
-			if h.Size > maxManifest {
-				return p, errors.New("manifest.json çok büyük")
-			}
-			b, err := io.ReadAll(io.TeeReader(tr, mh))
-			if err != nil {
-				return p, err
-			}
-			man = &ExportManifest{}
-			if err := json.Unmarshal(b, man); err != nil {
-				return p, fmt.Errorf("manifest.json okunamadı: %w", err)
-			}
-		case memberDB:
-			if p, ic.DataSize, err = readMongoSection(tr, true, mh); err != nil {
-				return p, fmt.Errorf("%s: %w", memberDB, err)
-			}
-		case memberFiles:
-			s, err := checkFilesMember(io.TeeReader(tr, mh), h.Size)
-			if err != nil {
-				return p, fmt.Errorf("%s: %w", memberFiles, err)
-			}
-			ic.Files = &FilesCheck{Format: "tgz", Archive: s}
-		case memberEnv:
-			// A backup's environment (İndir): checked and counted, never applied.
-			if h.Size > maxEnvMember {
-				return p, errors.New("env çok büyük")
-			}
-			b, err := io.ReadAll(io.TeeReader(tr, mh))
-			if err != nil {
-				return p, err
-			}
-			vars, err := sites.ParseDotenv(string(b))
-			if err != nil {
-				return p, fmt.Errorf("env okunamadı: %w", err)
-			}
-			ic.Notes = append(ic.Notes, fmt.Sprintf("Arşivde sitenin ortam değişkenleri de var (%d değişken): içe aktarma onlara dokunmaz; "+
-				"gerekirse site ayarlarında elle girilir.", len(vars)))
-		default:
-			return p, fmt.Errorf("FootOps arşivinde beklenmeyen dosya: %s", name)
-		}
-		// What was checked must be exactly the bytes at the recorded place in the file, as
-		// they will be streamed from there later.
-		if pos.n-m.offset != h.Size {
-			return p, fmt.Errorf("%s: üye boyutu tutmuyor", name)
-		}
-		m.sha256 = hex.EncodeToString(mh.Sum(nil))
-		members[name] = m
+	if c.DB != nil {
+		db := c.Members[archive.MemberDB]
+		p, ic.HasDB, ic.DataSize = *c.DB, true, c.DBSize
+		ic.Section = dbSection{Offset: db.Offset, Length: db.Size, Gzip: true, SHA256: db.SHA256}
 	}
-	if _, err := io.Copy(total, pos); err != nil { // the tar's own padding after its end marker
-		return p, err
-	}
-	ic.SHA256 = hex.EncodeToString(total.Sum(nil))
-	if man == nil {
-		return p, errors.New("manifest.json yok: bu bir FootOps arşivi değil. Klasör halindeki mongodump (tar/zip) sonraki sürümde gelecek; " +
-			"şimdilik mongodump --archive=dosya.gz --gzip ile tek dosya üretebilirsin")
-	}
-	if man.Format != exportFormat {
-		return p, fmt.Errorf("FootOps arşiv biçimi %d tanınmıyor (bu sürüm %d okur)", man.Format, exportFormat)
-	}
-	for name, want := range man.Members {
-		got, ok := members[name]
-		if !ok {
-			return p, fmt.Errorf("manifest'te olan %s arşivde yok", name)
-		}
-		if got.size != want.Size || got.sha256 != want.SHA256 {
-			return p, fmt.Errorf("%s manifest'le tutmuyor (boyut ya da sha256): dosya bozulmuş", name)
-		}
-	}
-	for name := range members {
-		if _, ok := man.Members[name]; !ok && name != memberManifest {
-			return p, fmt.Errorf("%s manifest'te yok", name)
-		}
-	}
-	ic.Manifest = man
-	if db, ok := members[memberDB]; ok {
-		ic.HasDB = true
-		ic.Section = dbSection{Offset: db.offset, Length: db.size, Gzip: true, SHA256: db.sha256}
-	}
-	if fm, ok := members[memberFiles]; ok {
-		ic.Files.Section = dbSection{Offset: fm.offset, Length: fm.size, Gzip: true, SHA256: fm.sha256}
-	}
-	if !ic.HasDB && ic.Files == nil {
-		return p, errors.New("FootOps arşivinde ne veritabanı ne dosya var")
+	if c.Files != nil {
+		fm := c.Members[archive.MemberFiles]
+		ic.Files = &FilesCheck{Format: "tgz", Archive: *c.Files,
+			Section: dbSection{Offset: fm.Offset, Length: fm.Size, Gzip: true, SHA256: fm.SHA256}}
 	}
 	return p, nil
-}
-
-// errPlainTar: a tar that is not a FootOps archive (taken as an archive of files).
-var errPlainTar = errors.New("FootOps arşivi değil")
-
-// checkFilesMember checks a FootOps archive's files.tar.gz member like archive.Check
-// checks a whole file: integrity, names, limits, compression ratio.
-func checkFilesMember(r io.Reader, size int64) (archive.Summary, error) {
-	s := archive.Summary{Kind: archive.TarGz, Compressed: size}
-	zr, err := gzip.NewReader(bufio.NewReaderSize(r, 256<<10))
-	if err != nil {
-		return s, fmt.Errorf("gzip başlığı bozuk: %w", err)
-	}
-	l := archive.DefaultLimits
-	if err := archive.CheckTar(zr, l, &s); err != nil {
-		return s, err
-	}
-	// The tar's padding and the gzip checksum follow; nothing much else may.
-	n, err := io.Copy(io.Discard, io.LimitReader(zr, 1<<20+1))
-	if err != nil {
-		return s, fmt.Errorf("gzip bozuk: %w", err)
-	}
-	if n > 1<<20 {
-		return s, errors.New("tar'ın sonundan sonra beklenmeyen veri var")
-	}
-	return s, archive.CheckRatio(s.Size, size, l)
 }
 
 // inspectFiles checks a whole upload that is an archive of files (zip, tar, tar.gz).

@@ -282,6 +282,15 @@ it; kept out of Time Machine) or its database into the Mac's own MongoDB. It onl
 remove a backup. What was opened is listed with its age — a week old, the menu says so
 — and deleted from there; and it puts a server's recovery line on the pasteboard.
 
+Its **Arşivler** window takes a FootOps archive (a panel's export, a backup's download),
+a mongodump archive or an archive of files dropped on it, and checks it as a panel's
+import would (the same code: type from the content, every checksum, paths, links,
+decompression bombs) before anything is written; then opens it into a folder of the
+owner's or loads its database into the Mac's MongoDB, its count compared with the
+manifest's. The other way, it makes an archive for a panel's import of a database of the
+Mac's MongoDB and a folder that is to be the site's persistent one (a new site: its
+database from the Mac), and opens the chosen site's import page in the browser.
+
 `make mac-install` builds `FootOps.app` (SwiftUI, the Go core `footops-mac` inside, signed
 ad hoc for this Mac), puts it in Applications, links `footops-mac` into `~/.local/bin`
 and opens it; from then on it starts with the Mac (its Settings turn that off). The
@@ -298,6 +307,9 @@ footops-mac yedek ac h1 magaza "2026-11-07 04:00"   # the backup begun that minu
 footops-mac yedek mongo h1 magaza          # its database into the local MongoDB (magaza_yedek_<time>)
 footops-mac yedek acilanlar                # what was opened on this Mac; delete with yedek sil
 footops-mac yedek kurtarma h1 | pbcopy     # the recovery line for the installer
+footops-mac arsiv dogrula x.footops.tar    # check an archive as a panel's import would
+footops-mac arsiv ac x.footops.tar --mongo # into ~/Downloads/<site>-<time>, its database into MongoDB too
+footops-mac arsiv olustur --db magaza --dosyalar ./uploads   # → ~/Downloads/magaza-<time>.footops.tar
 ```
 
 The settings (no secrets) are in `~/Library/Application Support/FootOps/ayarlar.json`,

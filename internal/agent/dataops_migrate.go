@@ -551,7 +551,7 @@ func (d *DataOps) fetchDump(ctx context.Context, t *Task, src remote.Source, m M
 	t.Step(fmt.Sprintf("✓ Döküm geldi: %d koleksiyon, %d belge → %s (%s)", len(counts), sum(counts), humanBytes(size), usageNote(u)))
 
 	// Rule K2: what came is read back like an upload.
-	p, dataSize, err := readMongoSection(ctxReader{ctx, io.NewSectionReader(f, 0, size)}, true, sha256.New())
+	p, dataSize, err := archive.ReadMongo(ctxReader{ctx, io.NewSectionReader(f, 0, size)}, true, sha256.New())
 	if err != nil {
 		return restoreSource{}, fmt.Errorf("gelen döküm bozuk: %w", err)
 	}

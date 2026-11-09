@@ -131,7 +131,7 @@ final class BackupsTests: XCTestCase {
         await m.load()
         XCTAssertEqual(m.server, "h1")
         XCTAssertEqual(m.list?.snapshots, 4)
-        XCTAssertNotNil(m.opened)
+        XCTAssertNotNil(m.opened.view)
         XCTAssertEqual(Set(runs), ["yedek sunucular --json", "yedek liste h1 --json", "yedek acilanlar --json"])
         m.select(site: "magaza")
         XCTAssertEqual(m.run, "NightRun")

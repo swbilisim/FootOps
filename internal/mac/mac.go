@@ -35,6 +35,8 @@ Kullanım: footops-mac <komut> [--json]
   yokla [sunucu…]    sitelere bu Mac'ten şimdi bakar, nöbetçinin gördüğüyle yan yana gösterir
   yedek <komut>      sunucuların yedekleri: liste, klasöre / Mac'teki MongoDB'ye açma, kurtarma satırı
                      (yalnız okur; ayrıntı: footops-mac yedek yardim)
+  arsiv <komut>      FootOps arşivleri: doğrula, klasöre / Mac'teki MongoDB'ye aç, Mac'teki MongoDB'den
+                     panelin İçe aktar'ına uygun arşiv üret (ayrıntı: footops-mac arsiv yardim)
   ayar               bu Mac'in ayarları: sunucu başına panel adresi, SSH hedefi, kova
   ayar yaz           ayarları stdin'den JSON olarak alır, denetler ve yazar (FootOps.app'in Ayarlar'ı)
   surum              sürüm
@@ -135,18 +137,23 @@ func lookTool(name string) (string, error) {
 	return "", fmt.Errorf("%s bulunamadı", name)
 }
 
-// timeMachineExclude keeps a folder out of Time Machine (tmutil's sticky exclusion: it
-// goes with the folder, no root needed), so an opened backup's secrets deleted from the
-// Mac are not kept in its backups. Elsewhere (Linux), or failing, nothing.
+// timeMachineExclude keeps a folder out of Time Machine, so an opened backup's secrets
+// deleted from the Mac are not kept in its backups: the sticky exclusion (it goes with the
+// folder, no root needed) is an attribute of the folder's, written here as tmutil
+// addexclusion and NSURLIsExcludedFromBackupKey write it — tmutil itself took 11 s, each
+// time. Elsewhere (Linux), or failing, nothing.
 func timeMachineExclude(dir string) {
-	const tmutil = "/usr/bin/tmutil"
-	if _, err := os.Stat(tmutil); err != nil {
-		return
+	if runtime.GOOS == "darwin" {
+		_ = unix.Setxattr(dir, tmExcludeAttr, tmExcluded, 0)
 	}
-	cmd := exec.Command(tmutil, "addexclusion", dir)
-	cmd.Stdout, cmd.Stderr = nil, nil
-	_ = cmd.Run()
 }
+
+// tmExcludeAttr's value is a binary property list of the string "com.apple.backupd".
+const tmExcludeAttr = "com.apple.metadata:com_apple_backup_excludeItem"
+
+var tmExcluded = []byte("bplist00\x5f\x10\x11com.apple.backupd\x08" +
+	"\x00\x00\x00\x00\x00\x00\x01\x01\x00\x00\x00\x00\x00\x00\x00\x01" +
+	"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1c")
 
 // freeRoom is the room left for the owner on a folder's disk.
 func freeRoom(dir string) (uint64, error) {
@@ -202,7 +209,7 @@ func (e *env) run(ctx context.Context, args []string) int {
 		switch {
 		case a == "--json":
 			jsonOut = true
-		case strings.HasPrefix(a, "-") && cmd != "yedek": // yedek's own are its own
+		case strings.HasPrefix(a, "-") && cmd != "yedek" && cmd != "arsiv": // theirs are their own
 			fmt.Fprintf(e.errw, "bilinmeyen seçenek: %s\n\n%s", a, usage)
 			return 2
 		default:
@@ -221,6 +228,8 @@ func (e *env) run(ctx context.Context, args []string) int {
 		err = e.probeCmd(ctx, pos, jsonOut)
 	case "yedek":
 		err = e.backupCmd(ctx, pos, jsonOut)
+	case "arsiv":
+		err = e.archiveCmd(ctx, pos, jsonOut)
 	case "ayar":
 		err = e.settingsCmd(ctx, pos, jsonOut)
 	case "surum", "version", "--version", "-v":
@@ -238,9 +247,12 @@ func (e *env) run(ctx context.Context, args []string) int {
 		if err != errUsage { // said why
 			fmt.Fprintf(e.errw, "%s\n\n", strings.TrimPrefix(err.Error(), errUsage.Error()+": "))
 		}
-		if cmd == "yedek" {
+		switch cmd {
+		case "yedek":
 			fmt.Fprint(e.errw, backupUsage)
-		} else {
+		case "arsiv":
+			fmt.Fprint(e.errw, archiveUsage)
+		default:
 			fmt.Fprint(e.errw, usage)
 		}
 		return 2

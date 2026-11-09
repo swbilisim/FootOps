@@ -200,15 +200,18 @@ public struct LoadedDB: Decodable, Sendable, Equatable {
     public var documents: Int64
     public var failed: Int64
     public var replaced: Bool
+    /// The documents an archive's manifest counted (0: no count to compare with).
+    public var expected: Int64
 
-    public init(name: String, documents: Int64 = 0, failed: Int64 = 0, replaced: Bool = false) {
+    public init(name: String, documents: Int64 = 0, failed: Int64 = 0, replaced: Bool = false, expected: Int64 = 0) {
         self.name = name
         self.documents = documents
         self.failed = failed
         self.replaced = replaced
+        self.expected = expected
     }
 
-    enum CodingKeys: String, CodingKey { case name, documents, failed, replaced }
+    enum CodingKeys: String, CodingKey { case name, documents, failed, replaced, expected }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -216,13 +219,16 @@ public struct LoadedDB: Decodable, Sendable, Equatable {
         documents = try c.or(.documents, 0)
         failed = try c.or(.failed, 0)
         replaced = try c.or(.replaced, false)
+        expected = try c.or(.expected, 0)
     }
 }
 
-/// yedek ac / yedek mongo: what is opened (its start), then what was.
+/// yedek ac / yedek mongo (and arsiv ac / arsiv mongo): what is opened (its start), then
+/// what was. archive: the archive's file name (server: the backup's it was made from).
 public struct OpenResult: Decodable, Sendable, Equatable {
     public var server: String
     public var site: String
+    public var archive: String?
     /// The folder (yedek ac); none when only the database was loaded.
     public var target: String?
     public var time: Date
@@ -231,10 +237,11 @@ public struct OpenResult: Decodable, Sendable, Equatable {
     public var warnings: [String]
     public var tookMs: Int
 
-    public init(server: String, site: String, target: String? = nil, time: Date, parts: [String: OpenedPart] = [:],
+    public init(server: String, site: String, archive: String? = nil, target: String? = nil, time: Date, parts: [String: OpenedPart] = [:],
                 database: LoadedDB? = nil, warnings: [String] = [], tookMs: Int = 0) {
         self.server = server
         self.site = site
+        self.archive = archive
         self.target = target
         self.time = time
         self.parts = parts
@@ -243,12 +250,13 @@ public struct OpenResult: Decodable, Sendable, Equatable {
         self.tookMs = tookMs
     }
 
-    enum CodingKeys: String, CodingKey { case server, site, target, time, parts, database, warnings, tookMs }
+    enum CodingKeys: String, CodingKey { case server, site, archive, target, time, parts, database, warnings, tookMs }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         server = try c.or(.server, "")
         site = try c.or(.site, "")
+        archive = try c.decodeIfPresent(String.self, forKey: .archive)
         target = try c.decodeIfPresent(String.self, forKey: .target)
         time = try c.decode(Date.self, forKey: .time)
         parts = try c.or(.parts, [:])
@@ -296,12 +304,13 @@ extension OpenEvent: Decodable {
     }
 }
 
-/// A folder a backup was opened into, still there.
+/// A folder a backup (or an archive: its file's name) was opened into, still there.
 public struct OpenedFolder: Decodable, Sendable, Equatable, Identifiable {
     public var id: String { path }
     public var path: String
     public var server: String
     public var site: String
+    public var archive: String?
     public var time: Date
     public var at: Date
     public var files: Int64
@@ -314,11 +323,12 @@ public struct OpenedFolder: Decodable, Sendable, Equatable, Identifiable {
     /// It could not be looked at now (macOS privacy, a disk not mounted): its line is kept.
     public var error: String?
 
-    public init(path: String, server: String, site: String, time: Date, at: Date, files: Int64, bytes: Int64, old: Bool = false,
-                partial: Bool = false, busy: Bool = false, error: String? = nil) {
+    public init(path: String, server: String, site: String, archive: String? = nil, time: Date, at: Date, files: Int64, bytes: Int64,
+                old: Bool = false, partial: Bool = false, busy: Bool = false, error: String? = nil) {
         self.path = path
         self.server = server
         self.site = site
+        self.archive = archive
         self.time = time
         self.at = at
         self.files = files
@@ -329,13 +339,14 @@ public struct OpenedFolder: Decodable, Sendable, Equatable, Identifiable {
         self.error = error
     }
 
-    enum CodingKeys: String, CodingKey { case path, server, site, time, at, files, bytes, old, partial, busy, error }
+    enum CodingKeys: String, CodingKey { case path, server, site, archive, time, at, files, bytes, old, partial, busy, error }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         path = try c.decode(String.self, forKey: .path)
         server = try c.or(.server, "")
         site = try c.or(.site, "")
+        archive = try c.decodeIfPresent(String.self, forKey: .archive)
         time = try c.decode(Date.self, forKey: .time)
         at = try c.decode(Date.self, forKey: .at)
         files = try c.or(.files, 0)
@@ -347,24 +358,26 @@ public struct OpenedFolder: Decodable, Sendable, Equatable, Identifiable {
     }
 }
 
-/// A database of the Mac's MongoDB a backup was loaded into; registered: footops-mac
-/// loaded it (else only its name, *_yedek_*, says so).
+/// A database of the Mac's MongoDB a backup or an archive was loaded into; registered:
+/// footops-mac loaded it (else only its name, *_yedek_* or *_arsiv_*, says so).
 public struct OpenedDatabase: Decodable, Sendable, Equatable, Identifiable {
     public var id: String { name }
     public var name: String
     public var server: String?
     public var site: String?
+    public var archive: String?
     public var time: Date?
     public var at: Date?
     public var bytes: Int64
     public var registered: Bool
     public var old: Bool
 
-    public init(name: String, server: String? = nil, site: String? = nil, time: Date? = nil, at: Date? = nil, bytes: Int64 = 0,
-                registered: Bool = true, old: Bool = false) {
+    public init(name: String, server: String? = nil, site: String? = nil, archive: String? = nil, time: Date? = nil, at: Date? = nil,
+                bytes: Int64 = 0, registered: Bool = true, old: Bool = false) {
         self.name = name
         self.server = server
         self.site = site
+        self.archive = archive
         self.time = time
         self.at = at
         self.bytes = bytes
@@ -372,13 +385,14 @@ public struct OpenedDatabase: Decodable, Sendable, Equatable, Identifiable {
         self.old = old
     }
 
-    enum CodingKeys: String, CodingKey { case name, server, site, time, at, bytes, registered, old }
+    enum CodingKeys: String, CodingKey { case name, server, site, archive, time, at, bytes, registered, old }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = try c.decode(String.self, forKey: .name)
         server = try c.decodeIfPresent(String.self, forKey: .server)
         site = try c.decodeIfPresent(String.self, forKey: .site)
+        archive = try c.decodeIfPresent(String.self, forKey: .archive)
         time = try c.decodeIfPresent(Date.self, forKey: .time)
         at = try c.decodeIfPresent(Date.self, forKey: .at)
         bytes = try c.or(.bytes, 0)
@@ -489,12 +503,8 @@ public final class BackupsModel {
     public private(set) var operation: Operation = .idle
     /// The name to load the database under when the default one is taken.
     public var otherName = ""
-    public private(set) var opened: OpenedView?
-    public private(set) var openedError: String?
-    public private(set) var readingOpened = false
-    /// The item a delete is being asked for (a folder's path, a database's name).
-    public var confirmDelete: String?
-    public private(set) var deleting: String?
+    /// What was opened on this Mac (shared with the Archives window).
+    public let opened: OpenedList
     public private(set) var recovery: RecoveryState = .idle
 
     public enum ListState: Equatable, Sendable {
@@ -546,8 +556,6 @@ public final class BackupsModel {
     /// What the running open was asked: to ask again with another name or over it.
     @ObservationIgnored private var asked: (server: String, site: String, run: String)?
     @ObservationIgnored private let log = Logger(subsystem: "io.github.swbilisim.footops", category: "yedek")
-    /// A read of what was opened asked for while one was under way: once it ends.
-    @ObservationIgnored private var readOpenedAgain = false
 
     /// How long a backup may take to open before the app gives up on it (stoppable
     /// before that); stopped, how long the core has to remove what it began before it is
@@ -555,9 +563,10 @@ public final class BackupsModel {
     static let openLimit: Duration = .seconds(6 * 3600)
     static let openGrace: Duration = .seconds(60)
 
-    public init(core: Core?, clipboard: RecoveryClipboard?) {
+    public init(core: Core?, clipboard: RecoveryClipboard?, opened: OpenedList? = nil) {
         self.core = core
         self.clipboard = clipboard
+        self.opened = opened ?? OpenedList(core: core)
     }
 
     /// A model holding what it is given (the image tests').
@@ -572,7 +581,7 @@ public final class BackupsModel {
         self.site = site
         self.run = run
         self.operation = operation
-        self.opened = opened
+        self.opened = OpenedList(view: opened)
         self.recovery = recovery
         self.readingList = readingList
     }
@@ -605,7 +614,7 @@ public final class BackupsModel {
     /// Reads the servers, the chosen one's backups and what was opened (the window
     /// opens).
     public func load() async {
-        async let opened: Void = readOpened()
+        async let opened: Void = self.opened.read()
         await readServers()
         await opened
     }
@@ -709,40 +718,6 @@ public final class BackupsModel {
         }
     }
 
-    public func refreshOpened() {
-        Task { await readOpened() }
-    }
-
-    func readOpened() async {
-        guard let core else { return }
-        guard !readingOpened else {
-            readOpenedAgain = true
-            return
-        }
-        readingOpened = true
-        defer {
-            readingOpened = false
-            if readOpenedAgain {
-                readOpenedAgain = false
-                Task { await readOpened() }
-            }
-        }
-        do {
-            let out = try await core.run(["yedek", "acilanlar", "--json"], timeout: .seconds(60))
-            switch Core.decode(OpenedView.self, from: out) {
-            case .success(let v):
-                opened = v
-                openedError = nil
-            case .failure(let m):
-                openedError = m.text
-            }
-        } catch Core.Failure.stopped {
-            return
-        } catch {
-            openedError = error.localizedDescription
-        }
-    }
-
     // MARK: opening
 
     /// Opens the chosen backup's ticked parts into a folder (~/Downloads/<site>-<time>).
@@ -833,7 +808,7 @@ public final class BackupsModel {
             operation = .finished(res)
             asked = nil
             log.info("açıldı: \(res.site, privacy: .public), \(res.tookMs) ms")
-            Task { await readOpened() }
+            Task { await opened.read() }
         case .error(_, "db_exists", let name?):
             otherName = name + "_2"
             operation = .asking(name: name)
@@ -884,30 +859,6 @@ public final class BackupsModel {
         let deadline = clock.now + limit
         while self.task != nil, clock.now < deadline {
             try? await Task.sleep(for: .milliseconds(100))
-        }
-    }
-
-    // MARK: deleting
-
-    /// Deletes a folder or a database on the list (yedek sil; the core checks it is one
-    /// footops-mac opened).
-    public func delete(_ item: String) {
-        guard let core, deleting == nil else { return }
-        confirmDelete = nil
-        deleting = item
-        Task {
-            defer { deleting = nil }
-            do {
-                let out = try await core.run(["yedek", "sil", item, "--json"], timeout: .seconds(120))
-                if case .failure(let m) = Core.decode(DeleteAnswer.self, from: out) {
-                    openedError = m.text
-                } else {
-                    openedError = nil
-                }
-            } catch {
-                openedError = error.localizedDescription
-            }
-            await readOpened()
         }
     }
 

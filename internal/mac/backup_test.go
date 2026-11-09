@@ -386,6 +386,7 @@ func TestBackupListing(t *testing.T) {
 // ac opens a backup into a folder of the owner's, as the panel's İndir gives it.
 func TestBackupOpen(t *testing.T) {
 	f := newFixture(t)
+	f.e.mongoURI = "mongodb://127.0.0.1:1" // none: the list is read without one (FOOTOPS_TEST_MONGO or not)
 	if code := f.run(t, "ac", "t1", "magaza", "2026-11-07 03:00", "--json"); code != 0 {
 		t.Fatalf("%d %s %s", code, f.out, f.errb)
 	}
@@ -488,11 +489,15 @@ func TestBackupOpen(t *testing.T) {
 	if _, err := os.Lstat(target); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("still there: %v", err)
 	}
-	if code := f.run(t, "sil", "magaza_yedek_x"); code != 1 || !strings.Contains(f.errb.String(), "bağlanılamadı") {
+	if code := f.run(t, "sil", "magaza_yedek_20261107_0300"); code != 1 || !strings.Contains(f.errb.String(), "bağlanılamadı") {
 		t.Errorf("no MongoDB: %d %s", code, f.errb)
 	}
-	if code := f.run(t, "sil", "benimdb"); code != 1 || !strings.Contains(f.errb.String(), "_yedek_") {
-		t.Errorf("not a backup's: %d %s", code, f.errb)
+	// Not footops-mac's: not on its list, nor of its default name ("yedek" is an
+	// everyday word).
+	for _, name := range []string{"benimdb", "magaza_yedek_x"} {
+		if code := f.run(t, "sil", name); code != 1 || !strings.Contains(f.errb.String(), "yüklediklerinden değil") {
+			t.Errorf("not a backup's: %s %d %s", name, code, f.errb)
+		}
 	}
 	// What is gone from the disk leaves the list.
 	removeTree(target + "-2")
@@ -1125,7 +1130,7 @@ echo "2026-11-09T22:00:00.000+0300	3 document(s) restored successfully. 0 docume
 	if err != nil {
 		t.Fatal(err)
 	}
-	db, err := e.loadDB(context.Background(), mt, archive, "magaza", "magaza_yedek_x", false, nil)
+	db, err := e.loadDB(context.Background(), mt, dumpSource{path: archive}, "magaza", "magaza_yedek_x", false, nil)
 	if err != nil || db.Documents != 3 {
 		t.Fatalf("%v %+v", err, db)
 	}
@@ -1188,7 +1193,7 @@ func TestMongoWordsMasked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = e.loadDB(context.Background(), mt, archive, "magaza", "magaza_yedek_x", false, nil)
+	_, err = e.loadDB(context.Background(), mt, dumpSource{path: archive}, "magaza", "magaza_yedek_x", false, nil)
 	if err == nil || strings.Contains(err.Error(), "rev") || strings.Contains(err.Error(), "kisi") || !strings.Contains(err.Error(), "mongodb://xxxxx@") {
 		t.Errorf("%v", err)
 	}

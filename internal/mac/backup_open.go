@@ -128,19 +128,24 @@ type OpenedPart struct {
 }
 
 // LoadedDB is a database loaded into the Mac's MongoDB; Replaced: one of that name was
-// dropped first.
+// dropped first. Expected is the documents an archive's manifest counted (0: no count to
+// compare with).
 type LoadedDB struct {
 	Name      string `json:"name"`
 	Documents int64  `json:"documents"`
 	Failed    int64  `json:"failed,omitempty"`
 	Replaced  bool   `json:"replaced,omitempty"`
+	Expected  int64  `json:"expected,omitempty"`
 }
 
-// OpenResult is yedek ac's (and yedek mongo's) answer, and its start.
+// OpenResult is yedek ac's (and yedek mongo's, arsiv ac's, arsiv mongo's) answer, and its
+// start. Archive is the archive's file name (an archive opened: Server is then the server
+// of the backup it was made from, if it was).
 type OpenResult struct {
-	Server string `json:"server"`
-	Bucket string `json:"bucket"`
-	Site   string `json:"site"`
+	Server  string `json:"server"`
+	Bucket  string `json:"bucket"`
+	Site    string `json:"site"`
+	Archive string `json:"archive,omitempty"`
 	// Target is the folder (yedek ac); Time the newest part's.
 	Target   string                `json:"target,omitempty"`
 	Time     time.Time             `json:"time"`
@@ -343,7 +348,7 @@ func (e *env) openBackup(ctx context.Context, req openReq, jsonOut bool) (err er
 				text: fmt.Sprintf("Mac'teki MongoDB'de %s adlı veritabanı az önce açıldı: üzerine yazmak için --uzerine, başka ad için --ad", req.dbName)}
 		}
 		e.say(jsonOut, "  … Mac'teki MongoDB: %s → %s (%s)\n", req.site, req.dbName, mt.label())
-		db, err := e.loadDB(ctx, mt, filepath.Join(target, "db.archive"), req.site, req.dbName, exists,
+		db, err := e.loadDB(ctx, mt, dumpSource{path: filepath.Join(target, "db.archive")}, req.site, req.dbName, exists,
 			func(done, total int64) { prog.report("mongo", done, total) })
 		if err != nil {
 			return err

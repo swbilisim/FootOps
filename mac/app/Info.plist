@@ -30,8 +30,12 @@
 	<string>14.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>FootOps, Masaüstü'nden seçtiğin arşivi ya da klasörü okur (arşivi denetler, açar ya da arşiv üretir).</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>FootOps, Belgeler'den seçtiğin arşivi ya da klasörü okur (arşivi denetler, açar ya da arşiv üretir).</string>
 	<key>NSDownloadsFolderUsageDescription</key>
-	<string>FootOps, açtığın yedeği İndirilenler'de yalnız sana açık bir klasöre yazar.</string>
+	<string>FootOps, açtığın yedeği ya da arşivi İndirilenler'de yalnız sana açık bir klasöre yazar; ürettiği arşivi de oraya koyar.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 </dict>

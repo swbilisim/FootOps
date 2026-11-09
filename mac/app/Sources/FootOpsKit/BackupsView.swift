@@ -37,7 +37,7 @@ public struct BackupsWindow: View {
                 }
             }
             Divider()
-            OpenedSection(model: model, actions: actions, now: fixedNow ?? Date())
+            OpenedSection(list: model.opened, reveal: actions.reveal, now: fixedNow ?? Date())
         }
         .background(Color(nsColor: .windowBackgroundColor))
     }
@@ -326,6 +326,7 @@ enum PartText {
         case "files": "Dosyalar"
         case "def": "Ayarlar"
         case "mongo": "MongoDB'ye yükleme"
+        case "check": "Denetim"
         default: part
         }
     }
@@ -385,19 +386,28 @@ private struct OpenPanel: View {
                 .help("Veritabanı <site>_yedek_<tarih>_<saat> adıyla yüklenir; klasör bırakmaz")
                 Spacer()
             }
-            OperationView(model: model, actions: actions)
+            OperationView(operation: model.operation, otherName: $model.otherName, idle: "Yedekler yalnız okunur: hiçbir yedek değişmez ya da silinmez.",
+                          stop: model.stop, retry: model.retryLoad, dismiss: model.dismiss, reveal: actions.reveal)
         }
     }
 }
 
-private struct OperationView: View {
-    @Bindable var model: BackupsModel
-    let actions: BackupsActions
+/// An open's state (a backup's or an archive's): under way, the database's name taken,
+/// done, failed.
+struct OperationView: View {
+    let operation: BackupsModel.Operation
+    @Binding var otherName: String
+    /// What is said while nothing runs.
+    let idle: String
+    let stop: () -> Void
+    let retry: (_ name: String, _ overwrite: Bool) -> Void
+    let dismiss: () -> Void
+    let reveal: (String) -> Void
 
     var body: some View {
-        switch model.operation {
+        switch operation {
         case .idle:
-            Text("Yedekler yalnız okunur: hiçbir yedek değişmez ya da silinmez.")
+            Text(idle)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         case .running(let r):
@@ -409,7 +419,7 @@ private struct OperationView: View {
                         .truncationMode(.middle)
                     Spacer()
                     Button("Durdur") {
-                        model.stop()
+                        stop()
                     }
                     .buttonStyle(SmallButtonStyle())
                 }
@@ -423,20 +433,20 @@ private struct OperationView: View {
                 Notice(light: .yellow, text: "Mac'teki MongoDB'de \(name) adlı veritabanı var.")
                 HStack(spacing: 8) {
                     Button("Üzerine yaz") {
-                        model.retryLoad(name: name, overwrite: true)
+                        retry(name, true)
                     }
                     Text("ya da")
                         .foregroundStyle(.secondary)
-                    TextField("Başka ad", text: $model.otherName)
+                    TextField("Başka ad", text: $otherName)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 240)
-                        .onSubmit { model.retryLoad(name: model.otherName, overwrite: false) }
+                        .onSubmit { retry(otherName, false) }
                     Button("Bu adla yükle") {
-                        model.retryLoad(name: model.otherName, overwrite: false)
+                        retry(otherName, false)
                     }
-                    .disabled(model.otherName.isEmpty)
+                    .disabled(otherName.isEmpty)
                     Button("Vazgeç") {
-                        model.dismiss()
+                        dismiss()
                     }
                 }
             }
@@ -451,15 +461,15 @@ private struct OperationView: View {
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Button("Finder'da göster") {
-                            actions.reveal(target)
+                            reveal(target)
                         }
                         .buttonStyle(SmallButtonStyle())
                     }
                 }
                 if let db = res.database {
                     Label("MongoDB'ye yüklendi: \(db.name) — \(db.documents) belge" + (db.failed > 0 ? ", \(db.failed) belge yüklenemedi" : "")
-                        + (db.replaced ? " (eskisinin yerine)" : ""), systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(db.failed > 0 ? .orange : .green)
+                        + (db.replaced ? " (eskisinin yerine)" : "") + manifestNote(db), systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(db.failed > 0 || mismatch(db) ? .orange : .green)
                 }
                 Text(openedText(res))
                     .font(.caption)
@@ -476,9 +486,17 @@ private struct OperationView: View {
         }
     }
 
+    /// An archive's manifest counted the documents: the same, or not.
+    private func manifestNote(_ db: LoadedDB) -> String {
+        guard db.expected > 0 else { return "" }
+        return mismatch(db) ? " (manifestte \(db.expected))" : ", manifestle aynı"
+    }
+
+    private func mismatch(_ db: LoadedDB) -> Bool { db.expected > 0 && db.documents + db.failed != db.expected }
+
     private func runningText(_ r: BackupsModel.Running) -> String {
         guard let part = r.part else {
-            return r.mongo ? "\(r.site): yedek deposu okunuyor…" : "\(r.site): yedek deposu okunuyor…"
+            return "\(r.site): yedek deposu okunuyor…"
         }
         var text = "\(r.site) · \(PartText.name(part))"
         if r.total > 0 {
@@ -499,185 +517,6 @@ private struct OperationView: View {
             }
         }
         return (parts + [Fmt.duration(ms: res.tookMs)]).joined(separator: " · ")
-    }
-}
-
-// MARK: - what was opened on this Mac
-
-private struct OpenedSection: View {
-    @Bindable var model: BackupsModel
-    let actions: BackupsActions
-    let now: Date
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text("BU MAC'TE AÇILANLAR")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                if let v = model.opened, v.folders.contains(where: \.old) || v.databases.contains(where: \.old) {
-                    Text("bir haftadan eskiler var: gerekmiyorsa sil")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-                Spacer()
-                Button {
-                    model.refreshOpened()
-                } label: {
-                    if model.readingOpened {
-                        ProgressView().controlSize(.small)
-                            .frame(width: 16, height: 16)
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                            .frame(width: 16, height: 16)
-                    }
-                }
-                .buttonStyle(IconButtonStyle())
-                .help("Yeniden oku")
-                .disabled(model.readingOpened)
-            }
-            if let e = model.openedError {
-                Notice(light: .red, text: e, font: .caption)
-            }
-            if let v = model.opened {
-                if v.isEmpty {
-                    Text("Açılmış yedek yok. Açılanlar burada listelenir; işin bitince sil (sırlar içerebilir).")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 1) {
-                        ForEach(v.folders) { f in
-                            OpenedRow(icon: "folder", title: (f.path as NSString).lastPathComponent, detail: folderDetail(f),
-                                      help: f.path, old: f.old, note: folderNote(f), item: f.path, busy: f.busy, model: model) {
-                                Button("Göster") {
-                                    actions.reveal(f.path)
-                                }
-                                .buttonStyle(SmallButtonStyle())
-                            }
-                        }
-                        ForEach(v.databases) { d in
-                            OpenedRow(icon: "cylinder.split.1x2", title: d.name, detail: dbDetail(d), help: "Mac'teki MongoDB",
-                                      old: d.old, note: d.old ? "bir haftadan eski" : nil, item: d.name, busy: false, model: model) {
-                                EmptyView()
-                            }
-                        }
-                        if let e = v.mongoError {
-                            Notice(light: .gray, text: "MongoDB: \(e)", font: .caption)
-                                .padding(.horizontal, 8)
-                        }
-                    }
-                }
-                .frame(maxHeight: 150)
-                .fixedSize(horizontal: false, vertical: true)
-            } else if model.readingOpened {
-                Text("Okunuyor…")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-    }
-
-    private func folderDetail(_ f: OpenedFolder) -> String {
-        if let e = f.error {
-            return "\(f.server.uppercased()) / \(f.site) · \(e)"
-        }
-        return "\(f.server.uppercased()) / \(f.site) · yedek \(Fmt.dateTime(f.time)) · \(f.files) dosya, \(Fmt.bytes(f.bytes)) · açıldı \(Fmt.ago(f.at, now: now))"
-    }
-
-    private func folderNote(_ f: OpenedFolder) -> String? {
-        if f.busy {
-            return "açılıyor…"
-        }
-        if f.partial {
-            return "yarım kaldı (açma kesildi)"
-        }
-        return f.old ? "bir haftadan eski" : nil
-    }
-
-    private func dbDetail(_ d: OpenedDatabase) -> String {
-        var t = "MongoDB · \(Fmt.bytes(d.bytes))"
-        if d.registered, let server = d.server, let site = d.site {
-            t += " · \(server.uppercased()) / \(site)"
-            if let time = d.time {
-                t += ", yedek \(Fmt.dateTime(time))"
-            }
-            if let at = d.at {
-                t += " · yüklendi \(Fmt.ago(at, now: now))"
-            }
-        } else {
-            t += " · footops-mac'in listesinde değil"
-        }
-        return t
-    }
-}
-
-private struct OpenedRow<Extra: View>: View {
-    let icon: String
-    let title: String
-    let detail: String
-    let help: String
-    let old: Bool
-    /// A word beside the title: a week old, cut short, under way.
-    let note: String?
-    let item: String
-    /// Under way elsewhere (the Terminal): not deleted.
-    let busy: Bool
-    let model: BackupsModel
-    @ViewBuilder let extra: () -> Extra
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 8) {
-            Image(systemName: icon)
-                .foregroundStyle(.secondary)
-                .frame(width: 18)
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 6) {
-                    Text(title)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    if let note {
-                        Text(note)
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                    }
-                }
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            .help(help)
-            Spacer(minLength: 8)
-            if model.deleting == item {
-                ProgressView().controlSize(.small)
-            } else if model.confirmDelete == item {
-                Text("Silinsin mi?")
-                    .font(.callout)
-                Button("Evet, sil") {
-                    model.delete(item)
-                }
-                .buttonStyle(SmallButtonStyle())
-                .foregroundStyle(.red)
-                Button("Vazgeç") {
-                    model.confirmDelete = nil
-                }
-                .buttonStyle(SmallButtonStyle())
-            } else {
-                extra()
-                Button("Sil") {
-                    model.confirmDelete = item
-                }
-                .buttonStyle(SmallButtonStyle())
-                .disabled(model.deleting != nil || busy)
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(RoundedRectangle(cornerRadius: 6).fill(old ? Color.orange.opacity(0.08) : Color.clear))
     }
 }
 

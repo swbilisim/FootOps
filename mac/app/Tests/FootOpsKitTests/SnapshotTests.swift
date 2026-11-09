@@ -104,12 +104,76 @@ final class SnapshotTests: XCTestCase {
                 model.parts = Set(model.point?.parts.keys.map { $0 } ?? [])
             }
             if name == "backups" {
-                model.confirmDelete = "eski_yedek_20261020"
+                model.opened.confirmDelete = "eski_yedek_20261020"
             }
             try drawWindow(name, BackupsWindow(model: model, actions: .none, now: Samples.now), size: BackupsWindow.size)
         }
         let menu = Monitor(status: Status(time: Samples.now, color: .green, servers: Samples.green.servers, openedOld: 2), readAt: Samples.ago(1))
         try draw("menu-reminder", MenuView(monitor: menu, actions: .none, now: Samples.now, maxHeight: nil))
+    }
+
+    /// The Archives window in its states: nothing yet, an archive checked (a backup's,
+    /// with its secrets), a dump of two databases, being opened, a name taken, loaded,
+    /// refused, an archive of files; making one: chosen, under way, made (the panel's
+    /// import page to open).
+    func testArchives() throws {
+        let d = CoreJSON.decoder()
+        guard case .checked(let info) = try d.decode(ArchiveEvent.self, from: Data(ArchivesTests.checked.utf8)),
+              case .checked(let two) = try d.decode(ArchiveEvent.self, from: Data(ArchivesTests.twoDBs.utf8)),
+              case .made(let made) = try d.decode(ArchiveEvent.self, from: Data(ArchivesTests.made.utf8))
+        else { return XCTFail() }
+        let files = ArchiveInfo(path: "/Users/kisi/Downloads/uploads.zip", kind: "files", size: 8_400_000, sha256: String(repeating: "ab", count: 32),
+                                files: ArchiveFiles(files: 42, dirs: 3, bytes: 8_300_000, hidden: 2, hiddenBytes: 12_000),
+                                notes: ["2 gizli dosya (12 KB; .htaccess, .DS_Store gibi) içe aktarılmaz, klasöre de açılmaz.",
+                                        "Bütün dosyalar uploads/ klasörünün içinde: panel içe aktarırken \"üst klasörü atla\"yı önerebilir."])
+        let targets = [PanelTarget(code: "a", name: "A", panel: "https://panel-a.example", sites: ["etiket", "magaza", "yag-dukkani", "kasa-pos"]),
+                       PanelTarget(code: "h1", name: "H1", panel: "https://panel-h1.example", sites: ["blog", "defter", "ornek-sirket"])]
+        let t = { (h: Double) in Samples.now.addingTimeInterval(-h * 3600) }
+        let opened = OpenedView(folders: [
+            OpenedFolder(path: "/Users/kisi/Downloads/magaza-20261110-0136", server: "h1", site: "magaza", archive: "magaza-20261110-013610.footops.tar",
+                         time: t(10), at: Samples.ago(5), files: 4, bytes: 31_000),
+        ], databases: [
+            OpenedDatabase(name: "magaza_arsiv_20261110_0136", site: "magaza", archive: "magaza-20261110-013610.footops.tar", time: t(10),
+                           at: Samples.ago(3), bytes: 524_288),
+            OpenedDatabase(name: "blog_yedek_20261109_0300", server: "h1", site: "blog", time: t(30), at: t(20), bytes: 618_496),
+        ])
+        let loaded = OpenResult(server: "h1", site: "magaza", archive: info.name, target: "/Users/kisi/Downloads/magaza-20261110-0136", time: t(10),
+                                parts: ["db": OpenedPart(time: t(10), written: 31_375), "files": OpenedPart(time: t(10), written: 18, count: 2)],
+                                database: LoadedDB(name: "magaza_arsiv_20261110_0136", documents: 5, expected: 5), tookMs: 1300)
+        let dbs = LocalDatabases(uri: "mongodb://127.0.0.1:27017", databases: [
+            LocalDatabase(name: "dukkan", bytes: 45_178_880), LocalDatabase(name: "magaza_dev", bytes: 2_592_768),
+            LocalDatabase(name: "magaza_arsiv_20261110_0136", bytes: 524_288, opened: true), LocalDatabase(name: "ornek_sirket", bytes: 1_200_000),
+        ])
+        let cases: [(String, ArchivesModel)] = [
+            ("archives-empty", ArchivesModel(opened: OpenedView())),
+            ("archives-checked", ArchivesModel(check: .checked(info), targets: targets, panelSite: "magaza", opened: opened)),
+            ("archives-twodbs", ArchivesModel(check: .checked(two), targets: targets, opened: opened)),
+            ("archives-checking", ArchivesModel(check: .checking(path: "/Users/kisi/Downloads/buyuk-20261110-0300.footops.tar", done: 300_000_000, total: 820_000_000),
+                                                opened: opened)),
+            ("archives-opening", ArchivesModel(check: .checked(info), operation: .running(.init(mongo: false, site: "magaza", target: "/x", part: "files",
+                                                                                                  done: 12, total: 18)), opened: opened)),
+            ("archives-asking", ArchivesModel(check: .checked(info), operation: .asking(name: "magaza_arsiv_20261110_0136"), opened: opened)),
+            ("archives-loaded", ArchivesModel(check: .checked(info), operation: .finished(loaded), targets: targets, opened: opened)),
+            ("archives-failed", ArchivesModel(check: .failed(path: "/Users/kisi/Downloads/bozuk.footops.tar",
+                                                             message: "db.archive.gz manifest'le tutmuyor (boyut ya da sha256): dosya bozulmuş"), opened: opened)),
+            ("archives-files", ArchivesModel(check: .checked(files), targets: targets, opened: OpenedView())),
+            ("archives-make", ArchivesModel(tab: .make, databases: dbs, makeDB: "magaza_dev", makeFolder: "/Users/kisi/Projeler/magaza/uploads", opened: opened)),
+            ("archives-make-running", ArchivesModel(tab: .make, databases: dbs, makeDB: "magaza_dev", make: .running(part: "files", done: 3_000_000, total: 8_300_000),
+                                                    opened: opened)),
+            ("archives-made", ArchivesModel(tab: .make, databases: dbs, makeDB: "magaza_dev", makeFolder: "/Users/kisi/Projeler/magaza/uploads",
+                                            make: .finished(made), targets: targets, panelSite: "magaza", opened: opened)),
+            ("archives-nomongo", ArchivesModel(tab: .make, databases: LocalDatabases(databases: [], mongoError: "Mac'teki MongoDB'ye bağlanılamadı (mongodb://127.0.0.1:27017): çalışıyor mu? brew services start mongodb-community@7.0"),
+                                               opened: OpenedView())),
+        ]
+        for (name, model) in cases {
+            if name == "archives-twodbs" {
+                model.source = "magaza"
+            }
+            if name == "archives-made" {
+                model.makeSite = "magaza"
+            }
+            try drawWindow(name, ArchivesWindow(model: model, actions: .none, now: Samples.now), size: ArchivesWindow.size)
+        }
     }
 
     /// The four icons on a light and a dark menu bar, in one strip.

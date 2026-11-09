@@ -20,7 +20,8 @@ import (
 // secrets, a database its data — worth deleting once looked at. footops-mac keeps a list
 // of what it opened (acilanlar.json beside the settings; no secrets), shows it with its
 // age (older than a week: a reminder, in the menu too), and deletes only what is on it —
-// what it wrote into a folder still holding its mark — or a database named *_yedek_*.
+// what it wrote into a folder still holding its mark — or a database named *_yedek_* or
+// *_arsiv_*. Backups (yedek ac) and archives (arsiv ac) share the list.
 //
 // A folder is on the list from its first moment, "partial" until it is whole, its mark
 // held locked meanwhile: a footops-mac killed half-way (SIGKILL, a power cut) leaves a
@@ -44,9 +45,10 @@ type openedList struct {
 	Items  []openedEntry `json:"items"`
 }
 
-// openedEntry is one thing opened: a folder (Path) or a database (Name). Partial: the
-// folder's open has not ended (under way, or cut short); Kept: the folder was there
-// before (an empty --hedef) and stays when what was written into it goes.
+// openedEntry is one thing opened: a folder (Path) or a database (Name), of a server's
+// backup or of an archive (Archive: its file's name). Partial: the folder's open has not
+// ended (under way, or cut short); Kept: the folder was there before (an empty --hedef)
+// and stays when what was written into it goes.
 type openedEntry struct {
 	ID      string    `json:"id"`
 	Kind    string    `json:"kind"` // "folder", "database"
@@ -54,7 +56,8 @@ type openedEntry struct {
 	Name    string    `json:"name,omitempty"`
 	Server  string    `json:"server"`
 	Site    string    `json:"site"`
-	Time    time.Time `json:"time"` // the backup's
+	Archive string    `json:"archive,omitempty"`
+	Time    time.Time `json:"time"` // the backup's, the archive's
 	At      time.Time `json:"at"`   // when it was opened
 	Partial bool      `json:"partial,omitempty"`
 	Kept    bool      `json:"kept,omitempty"`
@@ -200,11 +203,11 @@ func (e *env) endOpened(it openedEntry, whole bool) error {
 	})
 }
 
-// noteDatabase puts a database a backup was loaded into on the list when it is named
-// *_yedek_* (one of another name is the owner's own to keep).
+// noteDatabase puts a database a backup or an archive was loaded into on the list when it
+// is named *_yedek_* or *_arsiv_* (one of another name is the owner's own to keep).
 func (e *env) noteDatabase(res OpenResult) error {
 	db := res.Database
-	if db == nil || !strings.Contains(db.Name, backupDBMark) {
+	if db == nil || !markedDBName(db.Name) {
 		return nil
 	}
 	now := e.now().UTC().Truncate(time.Second)
@@ -212,14 +215,14 @@ func (e *env) noteDatabase(res OpenResult) error {
 		// Loaded anew: one line.
 		l.Items = dropWhere(l.Items, func(it openedEntry) bool { return it.Kind == "database" && it.Name == db.Name })
 		l.Items = append(l.Items, openedEntry{ID: newID(), Kind: "database", Name: db.Name, Server: res.Server, Site: res.Site,
-			Time: res.Parts[partDB].Time, At: now})
+			Archive: res.Archive, Time: res.Parts[partDB].Time, At: now})
 		return true
 	})
 }
 
-// ourNames are what footops-mac writes into a folder it opens a backup into (and the
-// Finder's own file, which keeps an emptied folder from being removed).
-var ourNames = []string{"db.archive", "files", "env", "footops.json", ".DS_Store"}
+// ourNames are what footops-mac writes into a folder it opens a backup or an archive into
+// (and the Finder's own file, which keeps an emptied folder from being removed).
+var ourNames = []string{"db.archive", "files", "env", "footops.json", "manifest.json", ".DS_Store"}
 
 // removeOpened removes what footops-mac wrote into an opened folder — its parts, then
 // its mark: last, so a removal cut short leaves a folder still known as one opened —
@@ -265,6 +268,7 @@ type OpenedFolder struct {
 	Path    string    `json:"path"`
 	Server  string    `json:"server"`
 	Site    string    `json:"site"`
+	Archive string    `json:"archive,omitempty"`
 	Time    time.Time `json:"time"`
 	At      time.Time `json:"at"`
 	Files   int64     `json:"files"`
@@ -275,12 +279,14 @@ type OpenedFolder struct {
 	Error   string    `json:"error,omitempty"`
 }
 
-// OpenedDatabase is a database of the Mac's MongoDB a backup was loaded into: one on the
-// list, or one named *_yedek_* (Registered: footops-mac loaded it).
+// OpenedDatabase is a database of the Mac's MongoDB a backup or an archive was loaded
+// into: one on the list, or one of a default name (<site>_yedek_<date>_<time>, …_arsiv_…)
+// whose line is gone (Registered: on the list).
 type OpenedDatabase struct {
 	Name       string    `json:"name"`
 	Server     string    `json:"server,omitempty"`
 	Site       string    `json:"site,omitempty"`
+	Archive    string    `json:"archive,omitempty"`
 	Time       time.Time `json:"time,omitzero"`
 	At         time.Time `json:"at,omitzero"`
 	Bytes      int64     `json:"bytes"`
@@ -364,7 +370,8 @@ func (e *env) openedView(ctx context.Context) (OpenedView, error) {
 			old := now.Sub(it.At) > openedOld
 			switch it.Kind {
 			case "folder":
-				f := OpenedFolder{Path: it.Path, Server: it.Server, Site: it.Site, Time: it.Time, At: it.At, Old: old, Partial: it.Partial}
+				f := OpenedFolder{Path: it.Path, Server: it.Server, Site: it.Site, Archive: it.Archive, Time: it.Time, At: it.At, Old: old,
+					Partial: it.Partial}
 				if err := looked[it.ID]; err != nil {
 					f.Error = "bakılamadı: " + clip(err.Error(), 200)
 				} else {
@@ -374,8 +381,8 @@ func (e *env) openedView(ctx context.Context) (OpenedView, error) {
 				v.Folders = append(v.Folders, f)
 			case "database":
 				listed[it.Name] = true
-				v.Databases = append(v.Databases, OpenedDatabase{Name: it.Name, Server: it.Server, Site: it.Site, Time: it.Time, At: it.At,
-					Bytes: dbs[it.Name], Registered: true, Old: old})
+				v.Databases = append(v.Databases, OpenedDatabase{Name: it.Name, Server: it.Server, Site: it.Site, Archive: it.Archive,
+					Time: it.Time, At: it.At, Bytes: dbs[it.Name], Registered: true, Old: old})
 			}
 		}
 		return len(l.Items) != before
@@ -384,7 +391,7 @@ func (e *env) openedView(ctx context.Context) (OpenedView, error) {
 		return v, fmt.Errorf("açılanlar listesi okunamadı: %v", err)
 	}
 	for name, size := range dbs {
-		if strings.Contains(name, backupDBMark) && !listed[name] {
+		if reDefaultLoad.MatchString(name) && !listed[name] {
 			v.Databases = append(v.Databases, OpenedDatabase{Name: name, Bytes: size})
 		}
 	}
@@ -397,6 +404,18 @@ func (e *env) openedView(ctx context.Context) (OpenedView, error) {
 		return a.At.After(b.At)
 	})
 	return v, nil
+}
+
+// registeredDB tells a database is on the list of what was opened.
+func (e *env) registeredDB(name string) bool {
+	on := false
+	_ = e.withOpened(func(l *openedList) bool {
+		for _, it := range l.Items {
+			on = on || it.Kind == "database" && it.Name == name
+		}
+		return false
+	})
+	return on
 }
 
 // folderSize counts a folder's files and their size (links not followed).
@@ -456,8 +475,8 @@ func (e *env) openedCmd(ctx context.Context, jsonOut bool) error {
 	return nil
 }
 
-// deleteOpened is yedek sil: a folder on the list (still holding its mark), or a
-// database named *_yedek_*.
+// deleteOpened is yedek sil (and arsiv sil): a folder on the list (still holding its
+// mark), or a database on it or of a default name (reDefaultLoad) — no other.
 func (e *env) deleteOpened(ctx context.Context, what string, jsonOut bool) error {
 	var done string
 	if strings.Contains(what, "/") || strings.HasPrefix(what, "~") {
@@ -477,7 +496,7 @@ func (e *env) deleteOpened(ctx context.Context, what string, jsonOut bool) error
 			return fmt.Errorf("açılanlar listesi okunamadı: %v", err)
 		}
 		if entry == nil {
-			return fmt.Errorf("%s footops-mac'in açtıklarından değil: yalnız yedek ac'ın açtığı klasörler silinir (gerekirse Finder'dan sil)", p)
+			return fmt.Errorf("%s footops-mac'in açtıklarından değil: yalnız yedek ac'ın ve arsiv ac'ın açtığı klasörler silinir (gerekirse Finder'dan sil)", p)
 		}
 		there, err := folderState(*entry)
 		switch {
@@ -511,8 +530,9 @@ func (e *env) deleteOpened(ctx context.Context, what string, jsonOut bool) error
 		if err := checkDBName(what); err != nil {
 			return err
 		}
-		if !strings.Contains(what, backupDBMark) {
-			return fmt.Errorf("yalnız adında %s olan veritabanları silinir: %s", backupDBMark, what)
+		if !reDefaultLoad.MatchString(what) && !e.registeredDB(what) {
+			return fmt.Errorf("%s footops-mac'in yüklediklerinden değil: yalnız açılanlar listesindeki ya da <site>_yedek_<tarih>_<saat> / "+
+				"<site>_arsiv_<tarih>_<saat> adlı veritabanları silinir", what)
 		}
 		t, err := parseMongoURI(e.mongoURI)
 		if err != nil {

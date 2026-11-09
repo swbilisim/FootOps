@@ -5,6 +5,8 @@
 #   test/integration/run.sh            install (or update) and run all scenarios
 #   test/integration/run.sh f0 f6      install (or update) and run only these (f0 first once:
 #                                      it adds the certificate the others use)
+#   test/integration/run.sh m4         archives between this Mac and the panel (after y3; needs a
+#                                      MongoDB and its database tools on this Mac; not in the default list)
 #   test/integration/run.sh clean      remove the container and its volumes
 #   docker stop footops-it             free the memory between runs (run.sh restarts it)
 #

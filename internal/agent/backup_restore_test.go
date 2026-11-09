@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/swbilisim/FootOps/internal/archive"
 	"github.com/swbilisim/FootOps/internal/datafs"
 	"github.com/swbilisim/FootOps/internal/run"
 	"github.com/swbilisim/FootOps/internal/sites"
@@ -797,7 +798,7 @@ func TestExportBackup(t *testing.T) {
 		if err != nil {
 			break
 		}
-		if h.Name == memberEnv {
+		if h.Name == archive.MemberEnv {
 			b, _ := io.ReadAll(tr)
 			envText = string(b)
 		}
@@ -1023,7 +1024,7 @@ func TestRepack(t *testing.T) {
 	if st.Files != 2 || st.Dirs != 1 || st.Skipped != 2 || st.Bytes != 7 {
 		t.Errorf("stats %+v", st)
 	}
-	s, err := checkFilesMember(bytes.NewReader(out.Bytes()), int64(out.Len()))
+	s, err := archive.CheckFilesMember(bytes.NewReader(out.Bytes()), int64(out.Len()))
 	if err != nil || s.Files != 2 || s.Hidden != 1 {
 		t.Errorf("an import refuses it: %+v %v", s, err)
 	}
@@ -1321,7 +1322,7 @@ func TestExportEnvFirstWithoutDBURI(t *testing.T) {
 		if err != nil {
 			break
 		}
-		if h.Name == memberEnv {
+		if h.Name == archive.MemberEnv {
 			b, _ := io.ReadAll(tr)
 			text = string(b)
 		}
@@ -1360,7 +1361,7 @@ func TestPlainTarStartingWithEnv(t *testing.T) {
 	f, _ := os.Open(p)
 	defer f.Close()
 	var ic ImportCheck
-	if _, err := inspectFootOps(context.Background(), f, &ic, nil); !errors.Is(err, errPlainTar) {
+	if _, err := inspectFootOps(context.Background(), f, &ic, nil); !errors.Is(err, archive.ErrNotFootOps) {
 		t.Errorf("a plain tar whose first file is env: %v", err)
 	}
 }

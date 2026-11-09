@@ -32,12 +32,6 @@ import (
 // data-repack) on the way into the archive, which is written once and downloaded from the
 // staging area like an export.
 
-// memberEnv is a FootOps archive's .env of the site's environment (backups only).
-const (
-	memberEnv    = "env"
-	maxEnvMember = 256 << 10
-)
-
 // nobody owns nothing: the helpers that only turn one stream into another run as it.
 const nobody = 65534
 
@@ -48,15 +42,6 @@ type BackupExport struct {
 	Files bool   `json:"files"`
 	// Env adds the site's environment of the time (its secrets too).
 	Env bool `json:"env"`
-}
-
-// ExportBackupInfo is the manifest's note of the backup an archive was made from.
-type ExportBackupInfo struct {
-	Run       string            `json:"run"`
-	Kind      string            `json:"kind,omitempty"`
-	Time      time.Time         `json:"time"`
-	Server    string            `json:"server,omitempty"`
-	Snapshots map[string]string `json:"snapshots"` // part → snapshot
 }
 
 // ExportBackup writes a FootOps archive of a backup into the staging area, to download
@@ -131,16 +116,16 @@ func (b *Backups) ExportBackup(ctx context.Context, t *Task, site string, req Ba
 		return info, err
 	}
 	defer f.Close()
-	man := ExportManifest{Format: exportFormat, FootOps: version.Version, Site: spec.Name, Group: spec.Group, Created: taken,
-		Collections: map[string]int64{}, Members: map[string]ExportMember{},
-		Backup: &ExportBackupInfo{Run: pt.Run, Kind: pt.Kind, Time: taken, Server: b.Server, Snapshots: map[string]string{}}}
+	aw := archive.NewWriter(f)
+	man := archive.Manifest{FootOps: version.Version, Site: spec.Name, Group: spec.Group, Created: taken, Collections: map[string]int64{},
+		Backup: &archive.ManifestBackup{Run: pt.Run, Kind: pt.Kind, Time: taken, Server: b.Server, Snapshots: map[string]string{}}}
 	t.Step(fmt.Sprintf("ℹ Yedek: %s (%s)", localTime(pt.Time), runKindText(pt.Kind)))
 
 	if req.DB {
 		man.Backup.Snapshots[PartDB] = dbSnap.ID
 		t.Step(fmt.Sprintf("… Veritabanı yedekten alınıyor: %s döküm, sıkıştırılarak", humanBytes(dbSnap.Bytes)))
 		var hs helperStats
-		m, err := writeMember(f, memberDB, taken, func(w io.Writer, _ *countingWriter) error {
+		m, err := aw.Add(archive.MemberDB, taken, nil, func(w io.Writer) error {
 			var err error
 			hs, err = b.pipeThrough(ctx, t, env, w, dbSnap.Bytes, "db", []string{"data-gzip"},
 				"dump", "--no-lock", dbSnap.ID, partPath(site, PartDB))
@@ -153,7 +138,7 @@ func (b *Backups) ExportBackup(ctx context.Context, t *Task, site string, req Ba
 			return info, fmt.Errorf("veritabanı dökümü eksik geldi: %s, yedekte %s", humanBytes(hs.Result.Bytes), humanBytes(dbSnap.Bytes))
 		}
 		// Rule K2 for our own output: the member reads back as an intact mongodump archive.
-		p, _, err := readMongoSection(ctxReader{ctx, io.NewSectionReader(f, m.offset, m.Size)}, true, sha256.New())
+		p, _, err := archive.ReadMongo(ctxReader{ctx, io.NewSectionReader(f, m.Offset, m.Size)}, true, sha256.New())
 		if err != nil {
 			return info, fmt.Errorf("arşivdeki veritabanı doğrulanamadı: %w", err)
 		}
@@ -174,7 +159,6 @@ func (b *Backups) ExportBackup(ctx context.Context, t *Task, site string, req Ba
 				}
 			}
 		}
-		man.Members[memberDB] = m.ExportMember
 		t.Step(fmt.Sprintf("✓ Veritabanı: %s → %s sıkıştırılmış", humanBytes(hs.Result.Bytes), humanBytes(m.Size)))
 	}
 
@@ -182,7 +166,7 @@ func (b *Backups) ExportBackup(ctx context.Context, t *Task, site string, req Ba
 		man.Backup.Snapshots[PartFiles] = fileSnap.ID
 		t.Step(fmt.Sprintf("… Dosyalar yedekten alınıyor: %d dosya, %s", fileSnap.Files, humanBytes(fileSnap.Bytes)))
 		var hs helperStats
-		m, err := writeMember(f, memberFiles, taken, func(w io.Writer, _ *countingWriter) error {
+		m, err := aw.Add(archive.MemberFiles, taken, nil, func(w io.Writer) error {
 			var err error
 			hs, err = b.pipeThrough(ctx, t, env, w, fileSnap.Bytes, "files", []string{"data-repack"},
 				"dump", "--no-lock", fileSnap.ID+":"+partPath(site, PartFiles), "/")
@@ -192,7 +176,7 @@ func (b *Backups) ExportBackup(ctx context.Context, t *Task, site string, req Ba
 			return info, fmt.Errorf("dosyalar alınamadı: %w", err)
 		}
 		// Read back like an upload: names, sizes, gzip checksum.
-		s, err := checkFilesMember(ctxReader{ctx, io.NewSectionReader(f, m.offset, m.Size)}, m.Size)
+		s, err := archive.CheckFilesMember(ctxReader{ctx, io.NewSectionReader(f, m.Offset, m.Size)}, m.Size)
 		if err != nil {
 			return info, fmt.Errorf("arşivdeki dosyalar doğrulanamadı: %w", err)
 		}
@@ -205,28 +189,21 @@ func (b *Backups) ExportBackup(ctx context.Context, t *Task, site string, req Ba
 		}
 		t.Step(fmt.Sprintf("✓ Dosyalar: %d dosya, %d klasör, %s → %s%s", hs.Result.Files, hs.Result.Dirs,
 			humanBytes(hs.Result.Bytes), humanBytes(m.Size), note))
-		man.Files = &ExportFiles{Files: hs.Result.Files, Dirs: hs.Result.Dirs, Bytes: hs.Result.Bytes}
-		man.Members[memberFiles] = m.ExportMember
+		man.Files = &archive.ManifestFiles{Files: hs.Result.Files, Dirs: hs.Result.Dirs, Bytes: hs.Result.Bytes}
 	}
 
 	if req.Env {
 		man.Backup.Snapshots[PartDef] = defSnap.ID
-		m, err := writeMember(f, memberEnv, taken, func(w io.Writer, _ *countingWriter) error {
+		if _, err := aw.Add(archive.MemberEnv, taken, nil, func(w io.Writer) error {
 			_, err := io.WriteString(w, envText)
 			return err
-		})
-		if err != nil {
+		}); err != nil {
 			return info, err
 		}
-		man.Members[memberEnv] = m.ExportMember
 		t.Step(fmt.Sprintf("✓ Ortam değişkenleri: %d değişken (değerleri arşivde, sırlar dahil)", envVars))
 	}
 
-	data, err := json.MarshalIndent(man, "", "  ")
-	if err != nil {
-		return info, err
-	}
-	if err := writeTail(f, data, now); err != nil {
+	if err := aw.Finish(man, now); err != nil {
 		return info, err
 	}
 	if err := f.Sync(); err != nil {
@@ -269,7 +246,7 @@ func (b *Backups) ExportBackup(ctx context.Context, t *Task, site string, req Ba
 // another server makes its own, and the password in it opens nothing elsewhere.
 func (b *Backups) backupEnv(ctx context.Context, t *Task, env *resticEnv, spec sites.Spec, defSnap BackupSnapshot, at time.Time) (string, int, error) {
 	var compose bytes.Buffer
-	lim := &limitWriter{w: &compose, left: maxEnvMember * 4}
+	lim := &limitWriter{w: &compose, left: archive.MaxEnv * 4}
 	if _, err := b.restic(ctx, t, env, resticOpts{out: lim}, "dump", "--no-lock", defSnap.ID,
 		partPath(spec.Name, PartDef)+"/"+sites.ComposeFile); err != nil {
 		if lim.over {
@@ -290,7 +267,7 @@ func (b *Backups) backupEnv(ctx context.Context, t *Task, env *resticEnv, spec s
 		}
 	}
 	text := sites.FormatDotenv(vars, head...)
-	if len(text) > maxEnvMember {
+	if len(text) > archive.MaxEnv {
 		return "", 0, errors.New("ortam değişkenleri arşive sığmıyor")
 	}
 	return text, len(vars), nil

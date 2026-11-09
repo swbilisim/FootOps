@@ -2,9 +2,12 @@ package mac
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
@@ -39,12 +42,27 @@ var (
 	reURICreds = regexp.MustCompile(`(mongodb(?:\+srv)?://)[^@/\s]+@`)
 )
 
-// backupDBMark is in the name of every database a backup is loaded into by default; only
-// those are listed and deleted (yedek acilanlar, yedek sil).
-const backupDBMark = "_yedek_"
+// backupDBMark and archiveDBMark are in the name of every database a backup or an archive
+// is loaded into by default (<site>_yedek_<date>_<time>): one footops-mac loads under a
+// name with a mark goes on its list of what was opened.
+const (
+	backupDBMark  = "_yedek_"
+	archiveDBMark = "_arsiv_"
+)
+
+// reDefaultLoad is a default name in full: a database so named is footops-mac's even when
+// its line on the list is gone, and only such ones are listed and deleted without one —
+// "arşiv" and "yedek" are everyday words, siparis_arsiv_2024 the owner's own. (The bash
+// helper footops-mac replaced named them by the day alone.)
+var reDefaultLoad = regexp.MustCompile(`^[A-Za-z0-9_-]+_(yedek|arsiv)_[0-9]{8}(_[0-9]{4})?$`)
 
 func defaultDBName(site string, at time.Time) string {
 	return strings.ReplaceAll(site, "-", "_") + backupDBMark + at.Format("20060102_1504")
+}
+
+// markedDBName tells a name footops-mac puts on its list when it loads a database under it.
+func markedDBName(name string) bool {
+	return strings.Contains(name, backupDBMark) || strings.Contains(name, archiveDBMark)
 }
 
 func checkDBName(name string) error {
@@ -95,6 +113,53 @@ func parseMongoURI(s string) (mongoTarget, error) {
 
 // label is the URI without its password, to be shown.
 func (t mongoTarget) label() string { return redactURI(t.uri) }
+
+// toolURI is the URI the tools are given: its database (the login's, when the URI
+// names one) moved into authSource — with a database in it, mongodump's --db and
+// mongorestore's namespaces would be read against it.
+func (t mongoTarget) toolURI() string {
+	u, err := url.Parse(t.uri)
+	if err != nil || strings.Trim(u.Path, "/") == "" {
+		return t.uri
+	}
+	q := u.Query()
+	if q.Get("authSource") == "" && u.User != nil {
+		q.Set("authSource", strings.Trim(u.Path, "/"))
+	}
+	u.Path, u.RawPath, u.RawQuery = "", "", q.Encode()
+	return u.String()
+}
+
+// toolArgs gives a tool the Mac's MongoDB: on its command line when the URI has no
+// password; else in a private file the tool reads (--config) — a password is not put
+// where ps shows it. done removes the file.
+func (e *env) toolArgs(t mongoTarget) (args []string, done func(), err error) {
+	if t.cred.Password == "" {
+		return []string{"--uri=" + t.toolURI()}, func() {}, nil
+	}
+	dir, err := os.MkdirTemp(e.tmpDir(), "footops-mac-mongo-")
+	if err != nil {
+		return nil, nil, err
+	}
+	quoted, _ := json.Marshal(t.toolURI()) // a JSON string is a YAML one
+	conf := filepath.Join(dir, "mongo.yaml")
+	if err := os.WriteFile(conf, []byte("uri: "+string(quoted)+"\n"), 0o600); err != nil {
+		os.RemoveAll(dir)
+		return nil, nil, err
+	}
+	return []string{"--config=" + conf}, func() { os.RemoveAll(dir) }, nil
+}
+
+// masked is what a tool said, the Mac's MongoDB's password out of it: the tools name
+// the URI in their errors as written (encoded too), so whatever stands before its host
+// goes.
+func (t mongoTarget) masked(said string) string {
+	said = reURICreds.ReplaceAllString(said, "${1}xxxxx@")
+	if t.cred.Password != "" {
+		said = strings.ReplaceAll(said, t.cred.Password, "xxxxx")
+	}
+	return said
+}
 
 func redactURI(s string) string {
 	u, err := url.Parse(s)
@@ -189,11 +254,23 @@ func (t mongoTarget) drop(ctx context.Context, name string) error {
 	return nil
 }
 
+// dumpSource is a mongodump archive to load: a file, or a part of one (a FootOps archive's
+// database member), gzip'd or not; sha256, if set, is its checksum as checked: the bytes
+// loaded must still be the same.
+type dumpSource struct {
+	path string
+	// offset and length: where it lies in the file (length 0: the whole file).
+	offset, length int64
+	gzip           bool
+	sha256         string
+}
+
 // loadDB loads a database's dump (mongodump --archive) into the Mac's MongoDB as to: its
-// namespaces renamed from the site's database (named after the site), one of that name
-// dropped first when it was there (the owner said so). Cut short or failed, what was
-// loaded is dropped: a half database looks whole.
-func (e *env) loadDB(ctx context.Context, t mongoTarget, archive, from, to string, replace bool, onBytes func(done, total int64)) (*LoadedDB, error) {
+// namespaces renamed from the dump's database from, its system collections left out as
+// the panel leaves them out (rule K4), one of that name dropped first when it was there
+// (the owner said so). Cut short or failed, what was loaded is dropped: a half database
+// looks whole.
+func (e *env) loadDB(ctx context.Context, t mongoTarget, src dumpSource, from, to string, replace bool, onBytes func(done, total int64)) (*LoadedDB, error) {
 	tool, err := e.look("mongorestore")
 	if err != nil {
 		return nil, errors.New("mongorestore bulunamadı: brew install mongodb-database-tools")
@@ -203,48 +280,50 @@ func (e *env) loadDB(ctx context.Context, t mongoTarget, archive, from, to strin
 			return nil, err
 		}
 	}
-	f, err := os.Open(archive)
+	f, err := os.Open(src.path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	args := []string{"--archive", "--nsInclude=" + from + ".*", "--nsFrom=" + from + ".*", "--nsTo=" + to + ".*", "--drop"}
-	if t.cred.Password == "" {
-		args = append(args, "--uri="+t.uri)
+	var in io.Reader = f
+	total := src.length
+	if src.length > 0 {
+		in = io.NewSectionReader(f, src.offset, src.length)
 	} else {
-		// A password is not put where ps shows it: a private file mongorestore reads
-		// (--config), removed when it ends.
-		dir, err := os.MkdirTemp(e.tmpDir(), "footops-mac-mongo-")
+		st, err := f.Stat()
 		if err != nil {
 			return nil, err
 		}
-		defer os.RemoveAll(dir)
-		quoted, _ := json.Marshal(t.uri) // a JSON string is a YAML one
-		conf := filepath.Join(dir, "mongorestore.yaml")
-		if err := os.WriteFile(conf, []byte("uri: "+string(quoted)+"\n"), 0o600); err != nil {
-			return nil, err
-		}
-		args = append(args, "--config="+conf)
+		total = st.Size()
+	}
+	h := sha256.New()
+	in = io.TeeReader(in, h)
+	conn, done, err := e.toolArgs(t)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	args := append(conn, "--archive", "--nsInclude="+from+".*", "--nsExclude="+from+".system.*",
+		"--nsFrom="+from+".*", "--nsTo="+to+".*", "--drop")
+	if src.gzip {
+		args = append(args, "--gzip")
 	}
 	cmd := exec.CommandContext(ctx, tool, args...)
-	cmd.Stdin = &countingReader{r: f, total: st.Size(), on: onBytes}
+	cmd.Stdin = &countingReader{r: in, total: total, on: onBytes}
 	out := &tail{max: 16 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
 	cmd.WaitDelay = 10 * time.Second
 	err = cmd.Run()
-	// mongorestore names the URI in its errors, the password in it as written (encoded
-	// too): whatever stands before its host goes.
-	said := reURICreds.ReplaceAllString(out.String(), "${1}xxxxx@")
-	if t.cred.Password != "" {
-		said = strings.ReplaceAll(said, t.cred.Password, "xxxxx")
-	}
+	said := t.masked(out.String())
 	m := reRestoreTotal.FindStringSubmatch(said)
-	if ctx.Err() != nil || err != nil || m == nil {
+	changed := false
+	if err == nil && m != nil && src.sha256 != "" {
+		// What mongorestore did not read of it is read too: all of it is what was checked.
+		_, rerr := io.Copy(io.Discard, in)
+		changed = rerr != nil || hex.EncodeToString(h.Sum(nil)) != src.sha256
+	}
+	if ctx.Err() != nil || err != nil || m == nil || changed {
 		// What got in goes: with a fresh clock, the command's own may be over.
 		dctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		_ = t.drop(dctx, to)
@@ -254,6 +333,8 @@ func (e *env) loadDB(ctx context.Context, t mongoTarget, archive, from, to strin
 			return nil, errStopped
 		case err != nil:
 			return nil, fmt.Errorf("mongorestore başarısız: %s", toolWords(said, err.Error()))
+		case changed:
+			return nil, errArchiveChanged
 		}
 		return nil, errors.New("mongorestore'un sonucu okunamadı")
 	}

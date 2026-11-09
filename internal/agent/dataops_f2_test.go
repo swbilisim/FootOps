@@ -963,7 +963,7 @@ func TestExportRoundTrip(t *testing.T) {
 	// A standard tar reader sees the dump, then the manifest.
 	tr := tar.NewReader(bytes.NewReader(b))
 	var names []string
-	var man ExportManifest
+	var man archive.Manifest
 	var dump []byte
 	for {
 		h, err := tr.Next()
@@ -976,16 +976,16 @@ func TestExportRoundTrip(t *testing.T) {
 		names = append(names, h.Name)
 		body, _ := io.ReadAll(tr)
 		switch h.Name {
-		case memberManifest:
+		case archive.MemberManifest:
 			json.Unmarshal(body, &man)
-		case memberDB:
+		case archive.MemberDB:
 			dump = body
 		}
 	}
-	if sum := sha256.Sum256(dump); man.Members[memberDB].SHA256 != hex.EncodeToString(sum[:]) || man.Members[memberDB].Size != int64(len(dump)) {
+	if sum := sha256.Sum256(dump); man.Members[archive.MemberDB].SHA256 != hex.EncodeToString(sum[:]) || man.Members[archive.MemberDB].Size != int64(len(dump)) {
 		t.Errorf("manifest member %+v", man.Members)
 	}
-	if !reflect.DeepEqual(names, []string{memberDB, memberFiles, memberManifest}) || man.Format != 1 || man.Site != "magaza" ||
+	if !reflect.DeepEqual(names, []string{archive.MemberDB, archive.MemberFiles, archive.MemberManifest}) || man.Format != 1 || man.Site != "magaza" ||
 		!reflect.DeepEqual(man.Collections, map[string]int64{"urunler": 3, "sayfalar": 2, "eski": 7}) || man.Documents != 12 {
 		t.Fatalf("archive: %v %+v", names, man)
 	}

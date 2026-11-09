@@ -4,13 +4,15 @@ import SwiftUI
 public struct MenuActions {
     public var open: (URL) -> Void
     public var backups: () -> Void
+    public var archives: () -> Void
     public var settings: () -> Void
     public var quit: () -> Void
 
-    public init(open: @escaping (URL) -> Void, backups: @escaping () -> Void = {}, settings: @escaping () -> Void,
-                quit: @escaping () -> Void) {
+    public init(open: @escaping (URL) -> Void, backups: @escaping () -> Void = {}, archives: @escaping () -> Void = {},
+                settings: @escaping () -> Void, quit: @escaping () -> Void) {
         self.open = open
         self.backups = backups
+        self.archives = archives
         self.settings = settings
         self.quit = quit
     }
@@ -212,7 +214,7 @@ private struct OpenedReminder: View {
         Button {
             actions.backups()
         } label: {
-            Notice(light: .yellow, text: "Bu Mac'te bir haftadan eski \(count) açılmış yedek var (sırlar içerebilir): Yedekler'den sil",
+            Notice(light: .yellow, text: "Bu Mac'te bir haftadan eski \(count) açılmış yedek ya da arşiv var (sırlar içerebilir): Yedekler'den sil",
                    font: .subheadline)
         }
         .buttonStyle(MenuRowStyle())
@@ -224,35 +226,38 @@ private struct Footer: View {
     let actions: MenuActions
 
     var body: some View {
-        HStack(spacing: 2) {
-            Button {
-                actions.backups()
-            } label: {
-                Label("Yedekler…", systemImage: "externaldrive")
+        VStack(spacing: 0) {
+            HStack(spacing: 2) {
+                item("Yedekler…", "externaldrive", "⌘Y", actions.backups)
+                    .keyboardShortcut("y", modifiers: .command)
+                item("Arşivler…", "shippingbox", "⌘R", actions.archives)
+                    .keyboardShortcut("r", modifiers: .command)
             }
-            .buttonStyle(MenuRowStyle())
-            .keyboardShortcut("y", modifiers: .command)
-            Button {
-                actions.settings()
-            } label: {
-                Label("Ayarlar…", systemImage: "gearshape")
+            HStack(spacing: 2) {
+                item("Ayarlar…", "gearshape", "⌘,", actions.settings)
+                    .keyboardShortcut(",", modifiers: .command)
+                item("Çık", nil, "⌘Q", actions.quit)
+                    .keyboardShortcut("q", modifiers: .command)
             }
-            .buttonStyle(MenuRowStyle())
-            .keyboardShortcut(",", modifiers: .command)
-            Button {
-                actions.quit()
-            } label: {
-                HStack {
-                    Text("Çık")
-                    Spacer()
-                    Text("⌘Q").foregroundStyle(.tertiary)
-                }
-            }
-            .buttonStyle(MenuRowStyle())
-            .keyboardShortcut("q", modifiers: .command)
-            .frame(width: 90)
         }
         .padding(6)
+    }
+
+    private func item(_ title: String, _ icon: String?, _ key: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                if let icon {
+                    Label(title, systemImage: icon)
+                } else {
+                    Text(title)
+                }
+                Spacer(minLength: 4)
+                Text(key).foregroundStyle(.tertiary)
+            }
+            .lineLimit(1)
+        }
+        .buttonStyle(MenuRowStyle())
+        .frame(maxWidth: .infinity)
     }
 }
 

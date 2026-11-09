@@ -3,7 +3,8 @@ import FootOpsKit
 
 // FootOps.app (panel-tasarim §29): an item in the menu bar, no Dock icon until a window
 // opens. `FootOps --simge <dizin>` writes the icon for `make mac` and exits; `--yedekler`
-// opens the Backups window at once (to try it, to measure it).
+// and `--arsivler [dosya]` open the Backups or the Archives window at once, the latter
+// checking the archive given (to try them, to measure them).
 
 let args = CommandLine.arguments.dropFirst()
 if args.first == "--simge" {
@@ -23,6 +24,12 @@ if args.first == "--simge" {
 let app = NSApplication.shared
 let controller = AppController()
 controller.openBackupsAtLaunch = args.contains("--yedekler")
+if let i = args.firstIndex(of: "--arsivler") {
+    controller.openArchivesAtLaunch = true
+    if let file = args.dropFirst(i - args.startIndex + 1).first, !file.hasPrefix("--") {
+        controller.archiveAtLaunch = file
+    }
+}
 app.delegate = controller
 app.setActivationPolicy(.accessory)
 app.run()
