@@ -25,13 +25,19 @@ footops-mac:
 mac: footops-mac
 	mac/app/paketle.sh dist/footops-mac "$(VERSION)" dist
 
-# Into Applications (the running one quit first), footops-mac on the PATH, then opened
+LSREGISTER := /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+
+# Into Applications (every running FootOps quit first: SIGTERM is its Çık), footops-mac on
+# the PATH, then opened. The build's copy goes: Spotlight and Finder would open it as a
+# second FootOps.
 mac-install: mac
-	@if pgrep -xq FootOps; then osascript -e 'tell application id "io.github.swbilisim.footops" to quit'; fi
+	@pkill -x FootOps || true
 	@for i in 1 2 3 4 5 6 7 8 9 10; do pgrep -xq FootOps || break; sleep 0.5; done
 	@if pgrep -xq FootOps; then echo "FootOps kapanmadı: menüden Çık'ı seçip yeniden deneyin" >&2; exit 1; fi
 	rm -rf /Applications/FootOps.app
 	cp -R dist/FootOps.app /Applications/FootOps.app
+	$(LSREGISTER) -u dist/FootOps.app
+	rm -rf dist/FootOps.app
 	mkdir -p "$(HOME)/.local/bin"
 	ln -sf /Applications/FootOps.app/Contents/MacOS/footops-mac "$(HOME)/.local/bin/footops-mac"
 	open /Applications/FootOps.app

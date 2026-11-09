@@ -20,6 +20,7 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
     private var settingsWindow: NSWindow?
     private var settingsModel: SettingsModel?
     private var observers: [NSObjectProtocol] = []
+    private var terminate: DispatchSourceSignal?
     private let log = Logger(subsystem: "io.github.swbilisim.footops", category: "app")
 
     public override init() {
@@ -49,6 +50,14 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
             MainActor.assumeIsolated { self?.monitor.willSleep() }
         })
 
+        // SIGTERM (make mac-install's pkill) quits as the menu's Çık does: the core runs
+        // under way are stopped, not left behind.
+        signal(SIGTERM, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        source.setEventHandler { NSApp.terminate(nil) }
+        source.resume()
+        terminate = source
+
         startWithTheMacOnce()
         monitor.start()
         log.info("açıldı: \(self.version, privacy: .public), çekirdek \(self.core?.executable.path ?? "yok", privacy: .public)")
@@ -56,6 +65,7 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
 
     public func applicationWillTerminate(_ notification: Notification) {
         monitor.stop()
+        log.info("kapandı")
     }
 
     /// The app opened again while running (from Finder, Spotlight): the menu.

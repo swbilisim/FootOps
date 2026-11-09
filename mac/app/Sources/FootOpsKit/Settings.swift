@@ -166,10 +166,13 @@ public struct SettingsWindow: View {
                         .foregroundStyle(.secondary)
                 }
                 Section("Genel") {
+                    // A checkbox: macOS 26's switch took ~140 MB of graphics memory for a
+                    // few seconds each time it was drawn (measured; a checkbox, none).
                     Toggle("Mac açılınca FootOps'u başlat", isOn: Binding(
                         get: { model.login == .enabled || model.login == .requiresApproval },
                         set: { model.setLogin($0) }
                     ))
+                    .toggleStyle(.checkbox)
                     .disabled(isUnavailable)
                     if let note = loginNote {
                         Text(note)
