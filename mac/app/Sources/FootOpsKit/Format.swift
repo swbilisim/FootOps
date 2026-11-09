@@ -16,6 +16,33 @@ public enum Fmt {
         return number(Double(n) / Double(1 << 20), decimals: 0) + " MB"
     }
 
+    /// A size in B, KB, MB or GB (of 1024), as the core writes it: a backup's parts are
+    /// often a few hundred KB.
+    public static func bytes(_ n: Int64) -> String {
+        switch n {
+        case ..<1024: "\(n) B"
+        case ..<(1 << 20): number(Double(n) / 1024, decimals: 0) + " KB"
+        case ..<(10 << 20): number(Double(n) / Double(1 << 20), decimals: 1) + " MB"
+        case ..<(1 << 30): number(Double(n) / Double(1 << 20), decimals: 0) + " MB"
+        default: number(Double(n) / Double(1 << 30), decimals: 1) + " GB"
+        }
+    }
+
+    /// "09.11.2026 03:00" in the zone given (the Mac's).
+    public static func dateTime(_ date: Date, zone: TimeZone = .current) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "tr_TR")
+        f.timeZone = zone
+        f.dateFormat = "dd.MM.yyyy HH:mm"
+        return f.string(from: date)
+    }
+
+    /// A path with the home folder as ~.
+    public static func home(_ path: String) -> String {
+        let home = NSHomeDirectory()
+        return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
+    }
+
     public static func percent(_ used: UInt64, of total: UInt64) -> Int {
         total == 0 ? 0 : Int((100 * Double(used) / Double(total)).rounded())
     }

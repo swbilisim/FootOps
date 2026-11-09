@@ -71,6 +71,9 @@ type Status struct {
 	// Error: nothing could be read at all (the colour is gray); why.
 	Error   string         `json:"error,omitempty"`
 	Servers []ServerStatus `json:"servers"`
+	// OpenedOld: backups opened on this Mac over a week ago and still there (yedek
+	// acilanlar) — the menu's reminder; no colour of its own.
+	OpenedOld int `json:"opened_old,omitempty"`
 }
 
 // ServerStatus is one server: its colour, why it is not green, and what the two files
@@ -177,6 +180,9 @@ func (e *env) collect(ctx context.Context) Status {
 	// Whole seconds (the files' own times may carry fractions: the app's decoder takes
 	// both).
 	out := Status{Time: e.now().Truncate(time.Second), Servers: []ServerStatus{}}
+	if e.opened != "" {
+		out.OpenedOld = e.openedOldCount()
+	}
 	list, acc, err := e.servers(ctx)
 	if err != nil {
 		out.Color, out.Error = gray, err.Error()

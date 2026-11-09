@@ -19,6 +19,12 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
     private var menuHeight: CGFloat = 560
     private var settingsWindow: NSWindow?
     private var settingsModel: SettingsModel?
+    private var backupsWindow: NSWindow?
+    private var backupsModel: BackupsModel?
+    /// The recovery line's minute on the pasteboard runs out with the window closed too.
+    private let clipboard = RecoveryClipboard()
+    /// The Backups window opens at launch (FootOps --yedekler).
+    public var openBackupsAtLaunch = false
     private var observers: [NSObjectProtocol] = []
     private var terminate: DispatchSourceSignal?
     private let log = Logger(subsystem: "io.github.swbilisim.footops", category: "app")
@@ -51,20 +57,45 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
         })
 
         // SIGTERM (make mac-install's pkill) quits as the menu's Çık does: the core runs
-        // under way are stopped, not left behind.
+        // under way are stopped, not left behind. From the run loop, not inside the main
+        // queue's block: quitting may wait for an open's cleanup (terminateLater), and
+        // the task that answers runs on that queue.
         signal(SIGTERM, SIG_IGN)
         let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
-        source.setEventHandler { NSApp.terminate(nil) }
+        source.setEventHandler {
+            RunLoop.main.perform {
+                MainActor.assumeIsolated { NSApp.terminate(nil) }
+            }
+        }
         source.resume()
         terminate = source
 
         startWithTheMacOnce()
         monitor.start()
+        if openBackupsAtLaunch {
+            showBackups()
+        }
         log.info("açıldı: \(self.version, privacy: .public), çekirdek \(self.core?.executable.path ?? "yok", privacy: .public)")
+    }
+
+    /// Quitting (the menu's Çık, ⌘Q, make mac-install's SIGTERM) with a backup being
+    /// opened: it is stopped and the core given time to remove what it began (at most
+    /// 30 seconds) before the app goes.
+    public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let model = backupsModel, model.isBusy else { return .terminateNow }
+        log.info("kapanıyor: süren yedek açma durduruluyor")
+        Task { @MainActor in
+            await model.stopAndWait(limit: .seconds(30))
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     public func applicationWillTerminate(_ notification: Notification) {
         monitor.stop()
+        backupsModel?.stop()
+        // A recovery line still on the pasteboard goes with the app.
+        clipboard.takeOff()
         log.info("kapandı")
     }
 
@@ -83,6 +114,10 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
             open: { [weak self] url in
                 self?.menu?.close()
                 NSWorkspace.shared.open(url)
+            },
+            backups: { [weak self] in
+                self?.menu?.close()
+                self?.showBackups()
             },
             settings: { [weak self] in
                 self?.menu?.close()
@@ -166,15 +201,56 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
         NSApp.activate()
     }
 
+    // MARK: Backups
+
+    private func showBackups() {
+        if backupsWindow == nil {
+            let model = BackupsModel(core: core, clipboard: clipboard)
+            let actions = BackupsActions(reveal: { path in
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+            })
+            let window = NSWindow(contentViewController: NSHostingController(rootView: BackupsWindow(model: model, actions: actions)))
+            window.title = "FootOps Yedekleri"
+            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+            window.setContentSize(BackupsWindow.size)
+            window.contentMinSize = NSSize(width: 760, height: 520)
+            window.isReleasedWhenClosed = false
+            window.delegate = self
+            window.center()
+            backupsWindow = window
+            backupsModel = model
+            Task { await model.load() }
+        }
+        NSApp.setActivationPolicy(.regular)
+        backupsWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+    }
+
     public func windowWillClose(_ notification: Notification) {
-        guard (notification.object as? NSWindow) === settingsWindow else { return }
-        NSApp.setActivationPolicy(.accessory)
-        // Opened seldom, read anew each time: nothing of it is kept once it closes (after
-        // the close has run its course).
+        let window = notification.object as? NSWindow
+        if window === backupsWindow {
+            // An open under way stops with it (the core removes what it began).
+            backupsModel?.stop()
+        }
+        guard window === settingsWindow || window === backupsWindow else { return }
+        // Opened seldom, read anew each time: nothing of them is kept once they close
+        // (after the close has run its course); the Dock icon goes with the last.
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.settingsWindow?.isVisible != true else { return }
-            self.settingsWindow = nil
-            self.settingsModel = nil
+            guard let self else { return }
+            if self.settingsWindow?.isVisible != true {
+                self.settingsWindow = nil
+                self.settingsModel = nil
+            }
+            if self.backupsWindow?.isVisible != true {
+                self.backupsWindow = nil
+                self.backupsModel = nil
+            }
+            if self.settingsWindow == nil && self.backupsWindow == nil {
+                NSApp.setActivationPolicy(.accessory)
+            }
+            if window === self.backupsWindow || self.backupsWindow == nil {
+                self.monitor.refresh() // the menu's reminder of what was opened
+            }
         }
     }
 

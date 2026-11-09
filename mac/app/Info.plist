@@ -30,6 +30,8 @@
 	<string>14.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>FootOps, açtığın yedeği İndirilenler'de yalnız sana açık bir klasöre yazar.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 </dict>

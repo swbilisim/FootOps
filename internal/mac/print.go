@@ -199,6 +199,22 @@ func sizeTR(n uint64) string {
 	return trNum(float64(n)/(1<<20), 0) + " MB"
 }
 
+// bytesTR is a size in B, KB, MB or GB (of 1024; a decimal comma): a backup's parts
+// are often a few hundred KB.
+func bytesTR(n int64) string {
+	switch {
+	case n < 1<<10:
+		return strconv.FormatInt(n, 10) + " B"
+	case n < 1<<20:
+		return trNum(float64(n)/(1<<10), 0) + " KB"
+	case n < 10<<20:
+		return trNum(float64(n)/(1<<20), 1) + " MB"
+	case n < 1<<30:
+		return trNum(float64(n)/(1<<20), 0) + " MB"
+	}
+	return trNum(float64(n)/(1<<30), 1) + " GB"
+}
+
 func percent(used, total uint64) int {
 	if total == 0 {
 		return 0

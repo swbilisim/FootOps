@@ -19,6 +19,9 @@ type Keychain interface {
 	Get(ctx context.Context, name string) (string, error)
 	// Names are the service's items, without their secrets.
 	Names(ctx context.Context) ([]string, error)
+	// Command prints an item's secret when run: restic asks it for a repository's
+	// password (RESTIC_PASSWORD_COMMAND), so the password sits in no file, no argument.
+	Command(name string) []string
 }
 
 var errNoItem = errors.New("Anahtar Zinciri'nde yok")
@@ -47,6 +50,10 @@ func (k securityKeychain) Get(ctx context.Context, name string) (string, error) 
 		return "", fmt.Errorf("Anahtar Zinciri okunamadı (%s / %s): %s", k.Service, name, clip(firstLine(stderr.String(), err.Error()), 200))
 	}
 	return strings.TrimSuffix(string(out), "\n"), nil
+}
+
+func (k securityKeychain) Command(name string) []string {
+	return []string{k.Tool, "find-generic-password", "-s", k.Service, "-a", name, "-w"}
 }
 
 func (k securityKeychain) Names(ctx context.Context) ([]string, error) {

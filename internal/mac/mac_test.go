@@ -31,6 +31,15 @@ const (
 type fakeKeychain struct {
 	items map[string]string
 	err   error // every call fails so
+	// cmd prints an item named by its last argument (Command); none: one that fails.
+	cmd []string
+}
+
+func (k fakeKeychain) Command(name string) []string {
+	if len(k.cmd) == 0 {
+		return []string{"/usr/bin/false", name}
+	}
+	return append(append([]string{}, k.cmd...), name)
 }
 
 func (k fakeKeychain) Get(_ context.Context, name string) (string, error) {

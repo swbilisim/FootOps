@@ -2,7 +2,8 @@ import AppKit
 import FootOpsKit
 
 // FootOps.app (panel-tasarim §29): an item in the menu bar, no Dock icon until a window
-// opens. `FootOps --simge <dizin>` writes the icon for `make mac` and exits.
+// opens. `FootOps --simge <dizin>` writes the icon for `make mac` and exits; `--yedekler`
+// opens the Backups window at once (to try it, to measure it).
 
 let args = CommandLine.arguments.dropFirst()
 if args.first == "--simge" {
@@ -21,6 +22,7 @@ if args.first == "--simge" {
 
 let app = NSApplication.shared
 let controller = AppController()
+controller.openBackupsAtLaunch = args.contains("--yedekler")
 app.delegate = controller
 app.setActivationPolicy(.accessory)
 app.run()

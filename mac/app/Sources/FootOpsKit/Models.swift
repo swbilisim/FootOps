@@ -34,15 +34,18 @@ public struct Status: Decodable, Sendable, Equatable {
     /// Nothing could be read at all (the colour is gray): why.
     public var error: String?
     public var servers: [ServerStatus]
+    /// Backups opened on this Mac over a week ago and still there: the menu's reminder.
+    public var openedOld: Int
 
-    public init(time: Date, color: Light, error: String? = nil, servers: [ServerStatus] = []) {
+    public init(time: Date, color: Light, error: String? = nil, servers: [ServerStatus] = [], openedOld: Int = 0) {
         self.time = time
         self.color = color
         self.error = error
         self.servers = servers
+        self.openedOld = openedOld
     }
 
-    enum CodingKeys: String, CodingKey { case time, color, error, servers }
+    enum CodingKeys: String, CodingKey { case time, color, error, servers, openedOld }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -50,6 +53,7 @@ public struct Status: Decodable, Sendable, Equatable {
         color = try c.decode(Light.self, forKey: .color)
         error = try c.decodeIfPresent(String.self, forKey: .error)
         servers = try c.decodeIfPresent([ServerStatus].self, forKey: .servers) ?? []
+        openedOld = try c.decodeIfPresent(Int.self, forKey: .openedOld) ?? 0
     }
 }
 

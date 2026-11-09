@@ -48,17 +48,18 @@ public struct Core: Sendable {
 
     /// Runs a command to its end: what it wrote and its exit code.
     public func run(_ args: [String], input: Data? = nil, timeout: Duration = .seconds(60)) async throws -> Output {
-        try await execute(args, input: input, timeout: timeout, onLine: nil)
+        try await execute(args, input: input, timeout: timeout, grace: .seconds(5), onLine: nil)
     }
 
     /// Runs a command, handing each line it writes over as it comes (from a background
-    /// thread).
-    public func stream(_ args: [String], timeout: Duration,
+    /// thread). Stopped, it has grace to clean up before SIGKILL (opening a backup:
+    /// removing half a folder can take a while).
+    public func stream(_ args: [String], timeout: Duration, grace: Duration = .seconds(5),
                        onLine: @escaping @Sendable (Data) -> Void) async throws -> Output {
-        try await execute(args, input: nil, timeout: timeout, onLine: onLine)
+        try await execute(args, input: nil, timeout: timeout, grace: grace, onLine: onLine)
     }
 
-    private func execute(_ args: [String], input: Data?, timeout: Duration,
+    private func execute(_ args: [String], input: Data?, timeout: Duration, grace: Duration,
                          onLine: (@Sendable (Data) -> Void)?) async throws -> Output {
         _ = Self.brokenPipesIgnored
         let process = Process()
@@ -70,7 +71,7 @@ public struct Core: Sendable {
         process.standardOutput = out
         process.standardError = err
         process.standardInput = inPipe ?? FileHandle.nullDevice
-        let run = Running(process)
+        let run = Running(process, grace: Double(grace.components.seconds))
         let seconds = Double(timeout.components.seconds) + Double(timeout.components.attoseconds) / 1e18
 
         return try await withTaskCancellationHandler {
@@ -129,18 +130,20 @@ public struct Core: Sendable {
 }
 
 /// A run's process, stopped from whichever thread asks: SIGTERM first (the core cleans
-/// up and ends), SIGKILL if it is still there 5 seconds later.
+/// up and ends), SIGKILL if it is still there grace seconds later.
 private final class Running: @unchecked Sendable {
     private let lock = NSLock()
     private let process: Process
+    private let grace: Double
     private var isStarted = false
     private var isFinished = false
     private var stopWanted = false
     private(set) var cancelled = false
     private(set) var timedOut = false
 
-    init(_ process: Process) {
+    init(_ process: Process, grace: Double) {
         self.process = process
+        self.grace = grace
     }
 
     func started() {
@@ -181,7 +184,7 @@ private final class Running: @unchecked Sendable {
     private func terminate() {
         process.terminate()
         let pid = process.processIdentifier
-        DispatchQueue.global().asyncAfter(deadline: .now() + 5) { [self] in
+        DispatchQueue.global().asyncAfter(deadline: .now() + grace) { [self] in
             lock.lock()
             let done = isFinished
             lock.unlock()
@@ -249,6 +252,9 @@ private final class Collected: @unchecked Sendable {
                 if !one.isEmpty {
                     lines.append(Data(one))
                 }
+            }
+            if line.count > 1 << 20 { // a line that never ends is no line of the core's
+                line = Data()
             }
         }
         lock.unlock()

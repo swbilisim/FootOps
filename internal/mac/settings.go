@@ -183,12 +183,14 @@ func checkBucket(b string) error {
 	return nil
 }
 
-// server is one server as the Mac knows it.
+// server is one server as the Mac knows it; Password: its repository's password is in
+// the Keychain (restic-<code>), so its backups can be opened.
 type server struct {
-	Code   string
-	Bucket string
-	Panel  string
-	SSH    string
+	Code     string
+	Bucket   string
+	Panel    string
+	SSH      string
+	Password bool
 }
 
 // access is what reading the servers' buckets takes: the account and the Mac's
@@ -264,7 +266,7 @@ func (e *env) servers(ctx context.Context) ([]server, access, error) {
 	}
 	var out []server
 	for _, c := range codes {
-		s := server{Code: c, Bucket: "footops-" + c}
+		s := server{Code: c, Bucket: "footops-" + c, Password: has["restic-"+c]}
 		if has["kova-"+c] {
 			b, err := e.keychain.Get(ctx, "kova-"+c)
 			if err != nil {

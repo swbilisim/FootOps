@@ -83,6 +83,17 @@ func Dial(ctx context.Context, addr string, cred Credential) (*Conn, error) {
 	return c, nil
 }
 
+// DialNoLogin connects without logging in: a MongoDB that asks for no login (the Mac's
+// own, for footops-mac). The servers' are always logged in to (Dial).
+func DialNoLogin(ctx context.Context, addr string) (*Conn, error) {
+	var d net.Dialer
+	nc, err := d.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("MongoDB'ye bağlanılamadı: %w", err)
+	}
+	return &Conn{nc: nc}, nil
+}
+
 // Close closes the connection.
 func (c *Conn) Close() error { return c.nc.Close() }
 

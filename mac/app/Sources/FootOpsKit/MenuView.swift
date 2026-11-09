@@ -3,11 +3,14 @@ import SwiftUI
 /// What the menu's items do; the app gives them (the image tests give nothing).
 public struct MenuActions {
     public var open: (URL) -> Void
+    public var backups: () -> Void
     public var settings: () -> Void
     public var quit: () -> Void
 
-    public init(open: @escaping (URL) -> Void, settings: @escaping () -> Void, quit: @escaping () -> Void) {
+    public init(open: @escaping (URL) -> Void, backups: @escaping () -> Void = {}, settings: @escaping () -> Void,
+                quit: @escaping () -> Void) {
         self.open = open
+        self.backups = backups
         self.settings = settings
         self.quit = quit
     }
@@ -100,6 +103,9 @@ public struct MenuView: View {
                     }
                     Divider().padding(.vertical, 4)
                     ProbeSection(monitor: monitor, now: now, all: $allProbes)
+                    if let n = monitor.status?.openedOld, n > 0 {
+                        OpenedReminder(count: n, actions: actions)
+                    }
                 }
                 .padding(.vertical, 6)
             }
@@ -196,11 +202,36 @@ private struct Header: View {
     }
 }
 
+/// Backups opened on this Mac a week ago and more, still there (panel-tasarim §29.7):
+/// they may hold a site's secrets.
+private struct OpenedReminder: View {
+    let count: Int
+    let actions: MenuActions
+
+    var body: some View {
+        Button {
+            actions.backups()
+        } label: {
+            Notice(light: .yellow, text: "Bu Mac'te bir haftadan eski \(count) açılmış yedek var (sırlar içerebilir): Yedekler'den sil",
+                   font: .subheadline)
+        }
+        .buttonStyle(MenuRowStyle())
+        .padding(.horizontal, 6)
+    }
+}
+
 private struct Footer: View {
     let actions: MenuActions
 
     var body: some View {
         HStack(spacing: 2) {
+            Button {
+                actions.backups()
+            } label: {
+                Label("Yedekler…", systemImage: "externaldrive")
+            }
+            .buttonStyle(MenuRowStyle())
+            .keyboardShortcut("y", modifiers: .command)
             Button {
                 actions.settings()
             } label: {
@@ -219,14 +250,14 @@ private struct Footer: View {
             }
             .buttonStyle(MenuRowStyle())
             .keyboardShortcut("q", modifiers: .command)
-            .frame(width: 110)
+            .frame(width: 90)
         }
         .padding(6)
     }
 }
 
 /// A line of text with its colour's dot.
-private struct Notice: View {
+struct Notice: View {
     let light: Light
     let text: String
     var font: Font = .callout
@@ -708,7 +739,7 @@ private struct AllProbes: View {
 }
 
 /// A thin progress bar, drawn (no AppKit control: the image tests draw it too).
-private struct Bar: View {
+struct Bar: View {
     let fraction: Double
 
     var body: some View {
