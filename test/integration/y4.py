@@ -14,6 +14,7 @@ audit log.
 Usage: y4.py <container> <login-file>
 Prints measurements as JSON at the end; exits non-zero on the first failed check.
 """
+import calendar
 import json
 import os
 import re
@@ -268,7 +269,13 @@ def status_file():
     return json.loads(out) if out.strip() else None
 
 
-wait(lambda: status_file() is not None, "the status file", timeout=max(10, 75 - (time.time() - restarted)) + 60)
+def utc(t):
+    return calendar.timegm(time.strptime(t, "%Y-%m-%dT%H:%M:%SZ"))
+
+
+# One written since the agent restarted: a run before left its own in the bucket.
+wait(lambda: (status_file() or {}).get("time", "1970-01-01T00:00:00Z") >= time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(restarted - 2)),
+     "the status file", timeout=max(10, 75 - (time.time() - restarted)) + 60)
 st = status_file()
 raw = json.dumps(st)
 for secret in (sec["password"], sec["secret_key"], sec["key_id"], TOKEN):
@@ -281,8 +288,17 @@ if st["format"] != 1 or st["server"].lower() != code_.lower() or st["every"] != 
 _, ns = api("GET", "/v1/notify")
 if not ns.get("status_file", {}).get("last_ok") or ns["status_file"]["key"] != repo_path + "/izleme/durum.json":
     fail("status file state: %s" % ns.get("status_file"))
+# The host from the agent's latest sample (Faz M1): the Mac's menu bar shows it.
+sys_ = st.get("sys") or {}
+sampled, written = utc(sys_.get("time", "1970-01-01T00:00:00Z")), utc(st["time"])
+if not sys_.get("mem_total") or not 0 < sys_.get("mem_used", 0) < sys_["mem_total"] or not sys_.get("disk_total") or \
+        not 0 < sys_.get("disk_used", 0) < sys_["disk_total"] or sys_.get("uptime", 0) <= 0 or \
+        not 0 <= sys_.get("cpu_percent", -1) <= 100 or not 0 <= written - sampled <= 30 or "fo-it" in json.dumps(sys_):
+    fail("status file sys: %s" % sys_)
 measure["status_file_bytes"] = len(sh("docker run --rm -v it-s3:/veri mongo:7.0.45 cat /veri/%s/izleme/durum.json" % repo_path))
-ok("durum dosyası kovada: %d site, %d bayt, sırsız; panel son yazmayı gösteriyor" % (len(st["sites"]), measure["status_file_bytes"]))
+measure["status_sys_bytes"] = len(json.dumps({"sys": sys_}, indent=1))
+ok("durum dosyası kovada: %d site, %d bayt (sys ~%d), sırsız; panel son yazmayı gösteriyor" %
+   (len(st["sites"]), measure["status_file_bytes"], measure["status_sys_bytes"]))
 
 # ---- the outside watcher's heartbeat, read with the agent's own signed GET ----
 BEAT_URL = sec["repository"][len("s3:"):].rstrip("/") + "/izleme/nobetci.json"

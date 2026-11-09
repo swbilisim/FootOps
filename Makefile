@@ -4,7 +4,7 @@ DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 PKG     := github.com/swbilisim/FootOps/internal/version
 LDFLAGS := -s -w -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).Date=$(DATE)
 
-.PHONY: build linux test vet check clean
+.PHONY: build linux footops-mac test vet check clean
 
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o footops ./cmd/footops
@@ -15,6 +15,11 @@ linux:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$(LDFLAGS)" -o dist/footops_linux_amd64 ./cmd/footops
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "$(LDFLAGS)" -o dist/footops_linux_arm64 ./cmd/footops
 	cd dist && shasum -a 256 footops_linux_* > SHA256SUMS
+
+# The Mac's command (panel-tasarim §29) for Apple silicon: dist/footops-mac
+footops-mac:
+	mkdir -p dist
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "$(LDFLAGS)" -o dist/footops-mac ./cmd/footops-mac
 
 test:
 	go test -race ./...

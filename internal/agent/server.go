@@ -591,7 +591,7 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 	var statusFile *StatusWriter
 	if backups != nil {
 		statusFile = &StatusWriter{Backups: backups, Sites: ops.Store.List, Server: backups.Server, Log: logger,
-			Containers: func(ctx context.Context) []ContainerInfo { return sampler.Latest(ctx).Containers }}
+			Overview: sampler.Latest}
 		sampler.Alerts.Extra = append(sampler.Alerts.Extra, statusFile.Alerts)
 	}
 	// End dates and parking (Faz P1b): the panel and the chat park and bring back sites

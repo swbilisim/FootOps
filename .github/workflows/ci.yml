@@ -39,6 +39,8 @@ jobs:
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
       - name: Build linux binaries
         run: make linux
+      - name: Build the Mac's command
+        run: make footops-mac
 
   # The outside watcher (worker/): plain JavaScript, no dependencies.
   worker:

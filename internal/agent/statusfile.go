@@ -6,12 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/swbilisim/FootOps/internal/monitor"
+	"github.com/swbilisim/FootOps/internal/s3obj"
 	"github.com/swbilisim/FootOps/internal/sites"
 	"github.com/swbilisim/FootOps/internal/version"
 )
@@ -20,11 +23,11 @@ import (
 // izleme/durum.json next to its backup repository, for the outside watcher (a Cloudflare
 // Worker, Y4b) — which sites run under which domains, how the backups stand, and when
 // the agent last said so: a file that stops changing is the news that the server is
-// gone. No secrets; one small PUT with the repository's key, no tool container.
+// gone. No secrets; one small PUT with the repository's key, no tool container. The
+// formats are internal/monitor's, which the Mac's footops-mac reads too.
 const (
-	StatusKey    = "izleme/durum.json"
-	statusFormat = 1
-	statusEvery  = 5 * time.Minute
+	StatusKey   = monitor.StatusKey
+	statusEvery = 5 * time.Minute
 	// statusFirst gives the sampler time for its first round after a start.
 	statusFirst = time.Minute
 	// statusAlertAfter: writes failing this long raise a panel alert (the watcher will
@@ -37,7 +40,7 @@ const (
 // status file it writes: the panel shows what the watcher sees, and a heartbeat gone old
 // is an alert — without it a watcher that stopped would look like all being well.
 const (
-	WatcherKey = "izleme/nobetci.json"
+	WatcherKey = monitor.WatcherKey
 	// watcherSilentAfter: six of the watcher's beats missed.
 	watcherSilentAfter = 30 * time.Minute
 	// watcherTroubleAfter: the watcher failing to send its messages (or keep its state)
@@ -49,116 +52,24 @@ const (
 	watcherMax   = 256 << 10
 )
 
-// WatcherBeat is izleme/nobetci.json (worker/src/logic.js, beat()).
-type WatcherBeat struct {
-	Format int       `json:"format"`
-	Time   time.Time `json:"time"`
-	Every  int       `json:"every"`    // seconds until the next one
-	Visits int       `json:"interval"` // seconds between visits of a working domain
-	// Domains are this server's, as the watcher judges them.
-	Domains []WatcherDomain `json:"domains"`
-	// The watcher's own trouble in the run that wrote this: its messages refused (since
-	// SendFailing), its state not saved.
-	SendError   string    `json:"send_error,omitempty"`
-	SendFailing time.Time `json:"send_failing,omitzero"`
-	StateError  string    `json:"state_error,omitempty"`
-}
-
-// WatcherDomain is one domain seen from outside: OK when its last visit was answered;
-// Down when it failed often enough for the chat to hear of it.
-type WatcherDomain struct {
-	Name   string    `json:"name"`
-	Site   string    `json:"site"`
-	OK     bool      `json:"ok"`
-	Down   bool      `json:"down,omitempty"`
-	Code   string    `json:"code,omitempty"`
-	Reason string    `json:"reason,omitempty"`
-	Since  time.Time `json:"since,omitempty"`
-	Note   string    `json:"note,omitempty"` // e.g. a Cloudflare challenge answered the visit
-}
-
-// Failing lists the domains whose last visit was not answered (for the panel).
-func (b *WatcherBeat) Failing() []WatcherDomain {
-	var out []WatcherDomain
-	for _, d := range b.Domains {
-		if !d.OK {
-			out = append(out, d)
-		}
-	}
-	return out
-}
-
-// Minutes is how often a working domain is visited (for the panel); 0 if not said.
-func (b *WatcherBeat) Minutes() int { return b.Visits / 60 }
-
-// Blind lists the domains whose visits Cloudflare answered for the site (a challenge):
-// up as far as anyone can tell, but not watched.
-func (b *WatcherBeat) Blind() []WatcherDomain {
-	var out []WatcherDomain
-	for _, d := range b.Domains {
-		if d.OK && d.Note != "" {
-			out = append(out, d)
-		}
-	}
-	return out
-}
-
-// Trouble is the watcher's own problem, in a few words ("" when none).
-func (b *WatcherBeat) Trouble() string {
-	var parts []string
-	if b.SendError != "" {
-		parts = append(parts, "Telegram'a mesaj gönderemiyor ("+clipMsg(b.SendError, 200)+")")
-	}
-	if b.StateError != "" {
-		parts = append(parts, "durumunu kaydedemiyor ("+clipMsg(b.StateError, 200)+"), aynı haberi yeniden gönderebilir")
-	}
-	return strings.Join(parts, "; ")
-}
-
-// StatusFile is izleme/durum.json.
-type StatusFile struct {
-	Format  int          `json:"format"`
-	Server  string       `json:"server"`
-	FootOps string       `json:"footops"`
-	Time    time.Time    `json:"time"`
-	Every   int          `json:"every"` // seconds until the next one
-	Sites   []StatusSite `json:"sites"`
-	// SitesError: the site list could not be read; Sites is then empty and the watcher
-	// keeps the domains it had (it would otherwise take every site for removed).
-	SitesError string       `json:"sites_error,omitempty"`
-	Backup     StatusBackup `json:"backup"`
-}
-
-// StatusSite is a site and the state of its container.
-type StatusSite struct {
-	Name    string   `json:"name"`
-	Domains []string `json:"domains"`
-	// State: running, unhealthy, restarting, paused (frozen for a backup), stopped,
-	// missing (no container) or parked (switched off on purpose, Faz P1b: the watcher
-	// leaves it alone).
-	State string `json:"state"`
-}
-
-// StatusBackup is how the backups stand.
-type StatusBackup struct {
-	Ready  bool `json:"ready"` // set up and the password confirmed
-	Paused bool `json:"paused,omitempty"`
-	// LastOK is the newest part saved; NightDone the last night run's date.
-	LastOK    time.Time `json:"last_ok,omitzero"`
-	NightDone string    `json:"night_done,omitempty"`
-	// Problems are the backup alerts' titles.
-	Problems []string `json:"problems,omitempty"`
-}
+type (
+	StatusFile    = monitor.StatusFile
+	StatusSite    = monitor.StatusSite
+	StatusBackup  = monitor.StatusBackup
+	StatusSys     = monitor.StatusSys
+	WatcherBeat   = monitor.WatcherBeat
+	WatcherDomain = monitor.WatcherDomain
+)
 
 // StatusWriter writes the status file.
 type StatusWriter struct {
 	Backups *Backups
 	Sites   func() ([]sites.Spec, error)
-	// Containers returns the latest sample's containers.
-	Containers func(ctx context.Context) []ContainerInfo
-	Server     string
-	HTTP       *http.Client
-	Log        *log.Logger
+	// Overview returns the sampler's latest round: its containers and the host.
+	Overview func(ctx context.Context) Overview
+	Server   string
+	HTTP     *http.Client
+	Log      *log.Logger
 
 	now      func() time.Time
 	kickOnce sync.Once
@@ -248,13 +159,21 @@ func (w *StatusWriter) Run(ctx context.Context) {
 // Build puts the status together.
 func (w *StatusWriter) Build(ctx context.Context) StatusFile {
 	now := w.clock().UTC().Truncate(time.Second)
-	out := StatusFile{Format: statusFormat, Server: w.Server, FootOps: version.Version, Time: now,
+	out := StatusFile{Format: monitor.StatusFormat, Server: w.Server, FootOps: version.Version, Time: now,
 		Every: int(statusEvery / time.Second), Sites: []StatusSite{}}
+	var o Overview
+	if w.Overview != nil {
+		o = w.Overview(ctx)
+	}
 	byName := map[string]ContainerInfo{}
-	if w.Containers != nil {
-		for _, c := range w.Containers(ctx) {
-			byName[c.Name] = c
-		}
+	for _, c := range o.Containers {
+		byName[c.Name] = c
+	}
+	if s := o.System; !o.SampledAt.IsZero() {
+		out.Sys = &StatusSys{Time: o.SampledAt.UTC().Truncate(time.Second), CPUPercent: round(s.CPUPercent, 1),
+			Load1: round(s.Load1, 2), Load5: round(s.Load5, 2), Load15: round(s.Load15, 2),
+			MemUsed: s.MemUsed, MemTotal: s.MemTotal, SwapUsed: s.SwapUsed, SwapTotal: s.SwapTotal,
+			DiskUsed: s.DiskUsed, DiskTotal: s.DiskTotal, Uptime: int64(s.Uptime / time.Second)}
 	}
 	if w.Sites != nil {
 		if list, err := w.Sites(); err != nil {
@@ -280,6 +199,16 @@ func (w *StatusWriter) Build(ctx context.Context) StatusFile {
 		}
 	}
 	return out
+}
+
+// round keeps prec decimals: the file says no more than the panel shows. A reading
+// that is no number is 0: JSON has none, and the whole file would go unwritten.
+func round(v float64, prec int) float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0
+	}
+	p := math.Pow10(prec)
+	return math.Round(v*p) / p
 }
 
 // siteState is the site's state for the status file and /durum: parked, or its
@@ -317,11 +246,11 @@ func (w *StatusWriter) Write(ctx context.Context) error {
 	}
 	now := w.clock()
 	if err == nil {
-		var obj s3Object
+		var obj s3obj.Object
 		if obj, err = s3ObjectOf(sec, StatusKey); err == nil {
 			w.mu.Lock()
 			if w.region != "" {
-				obj.region = w.region
+				obj.Region = w.region
 			}
 			w.mu.Unlock()
 			var body []byte
@@ -335,14 +264,14 @@ func (w *StatusWriter) Write(ctx context.Context) error {
 				// would count as written: a redirect is an answer, not a way.
 				client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 				pctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-				err = obj.putIn(pctx, client, append(body, '\n'), "application/json", now)
+				err = obj.Put(pctx, client, append(body, '\n'), "application/json", now)
 				cancel()
 				if err == nil {
 					w.mu.Lock()
-					w.region = obj.region
+					w.region = obj.Region
 					w.mu.Unlock()
 					// Same server, same connection: the heartbeat costs one small GET.
-					w.readWatcher(ctx, client, sec, obj.region, now)
+					w.readWatcher(ctx, client, sec, obj.Region, now)
 				}
 			}
 		}
@@ -375,7 +304,7 @@ func (w *StatusWriter) State() StatusFileState {
 	if w.Backups != nil {
 		if sec, err := w.Backups.secret(); err == nil {
 			if obj, err := s3ObjectOf(sec, StatusKey); err == nil {
-				out.Key = obj.bucket + "/" + obj.key
+				out.Key = obj.Bucket + "/" + obj.Key
 			}
 		}
 	}
@@ -397,9 +326,9 @@ func (w *StatusWriter) readWatcher(ctx context.Context, c *http.Client, sec back
 	obj, err := s3ObjectOf(sec, WatcherKey)
 	var data []byte
 	if err == nil {
-		obj.region = region
+		obj.Region = region
 		gctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		data, err = obj.get(gctx, c, watcherMax, now)
+		data, _, err = obj.Get(gctx, c, watcherMax, now)
 		cancel()
 	}
 	var beat WatcherBeat
@@ -411,7 +340,7 @@ func (w *StatusWriter) readWatcher(ctx context.Context, c *http.Client, sec back
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	switch {
-	case errors.Is(err, errNoObject):
+	case errors.Is(err, s3obj.ErrNoObject):
 		w.watcher, w.none, w.watcherErr, w.readAt = nil, true, "", now
 		w.troubleSince = time.Time{}
 	case err != nil:

@@ -15,32 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/swbilisim/FootOps/internal/s3obj"
 	"github.com/swbilisim/FootOps/internal/sites"
 )
-
-// AWS's own examples (Signature Version 4, "Authenticating Requests: Using the
-// Authorization Header").
-func TestSigV4Vectors(t *testing.T) {
-	const keyID, secret = "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
-	empty := "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-	got := sigV4("GET", "/test.txt", "", [][2]string{{"host", "examplebucket.s3.amazonaws.com"}, {"range", "bytes=0-9"},
-		{"x-amz-content-sha256", empty}, {"x-amz-date", "20130524T000000Z"}}, empty, "20130524T000000Z", "us-east-1", keyID, secret)
-	want := "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, " +
-		"SignedHeaders=host;range;x-amz-content-sha256;x-amz-date, Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41"
-	if got != want {
-		t.Errorf("GET Object:\n got %s\nwant %s", got, want)
-	}
-	payload := "44ce7dd67c959e0d3524ffac1771dfbba87d2b6b4b4e99e42034a8b803f8b072" // "Welcome to Amazon S3."
-	if sum := sha256.Sum256([]byte("Welcome to Amazon S3.")); hex.EncodeToString(sum[:]) != payload {
-		t.Fatal("payload hash")
-	}
-	got = sigV4("PUT", "/"+awsEscape("test$file.text"), "", [][2]string{{"date", "Fri, 24 May 2013 00:00:00 GMT"},
-		{"host", "examplebucket.s3.amazonaws.com"}, {"x-amz-content-sha256", payload}, {"x-amz-date", "20130524T000000Z"},
-		{"x-amz-storage-class", "REDUCED_REDUNDANCY"}}, payload, "20130524T000000Z", "us-east-1", keyID, secret)
-	if !strings.HasSuffix(got, "Signature=98ad721746da40c64f1a55b78f14c238d841ea1380cd77a1b5971af0ece108bd") {
-		t.Errorf("PUT Object: %s", got)
-	}
-}
 
 func TestS3ObjectOf(t *testing.T) {
 	for _, c := range []struct{ repo, endpoint, bucket, key, region string }{
@@ -49,7 +26,7 @@ func TestS3ObjectOf(t *testing.T) {
 		{"s3:http://10.0.0.5:7070/footops-test/", "http://10.0.0.5:7070", "footops-test", "izleme/durum.json", "us-east-1"},
 	} {
 		o, err := s3ObjectOf(backupSecret{Repository: c.repo, KeyID: "k", SecretKey: "s"}, StatusKey)
-		if err != nil || o.endpoint.String() != c.endpoint || o.bucket != c.bucket || o.key != c.key || o.region != c.region {
+		if err != nil || o.Endpoint.String() != c.endpoint || o.Bucket != c.bucket || o.Key != c.key || o.Region != c.region {
 			t.Errorf("%s: %+v %v", c.repo, o, err)
 		}
 	}
@@ -92,7 +69,7 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		headers = headers[1:]
 	}
-	want := sigV4(r.Method, r.URL.EscapedPath(), "", headers, payload, stamp, region, f.keyID, f.secret)
+	want := s3obj.Sign(r.Method, r.URL.EscapedPath(), "", headers, payload, stamp, region, f.keyID, f.secret)
 	if (r.Method != http.MethodPut && r.Method != http.MethodGet) || r.Header.Get("Authorization") != want || r.Header.Get("X-Amz-Content-Sha256") != payload {
 		w.WriteHeader(http.StatusForbidden)
 		io.WriteString(w, `<?xml version="1.0"?><Error><Code>SignatureDoesNotMatch</Code><Message>bad signature</Message></Error>`)
@@ -129,9 +106,13 @@ func TestStatusFile(t *testing.T) {
 	srv := httptest.NewServer(s3)
 	defer srv.Close()
 	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	sampled := now.Add(-7*time.Second - 300*time.Millisecond)
 	w := &StatusWriter{Backups: e.b, Sites: e.b.Data.Store.List, Server: "T1", HTTP: srv.Client(), now: func() time.Time { return now },
-		Containers: func(context.Context) []ContainerInfo {
-			return []ContainerInfo{{Name: "magaza", State: "running", Health: "unhealthy"}, {Name: "footops-mongo", State: "running"}}
+		Overview: func(context.Context) Overview {
+			return Overview{SampledAt: sampled, Containers: []ContainerInfo{{Name: "magaza", State: "running", Health: "unhealthy"}, {Name: "footops-mongo", State: "running"}},
+				System: SystemMetrics{Hostname: "gizli-makine-adi", CPUPercent: 12.345, Load1: 0.456, Load5: 0.3, Load15: 0.25,
+					MemTotal: 4 << 30, MemUsed: 3 << 30, SwapTotal: 2 << 30, SwapUsed: 5 << 20, DiskTotal: 40 << 30, DiskUsed: 34 << 30,
+					Uptime: 26*time.Hour + 3*time.Minute + 400*time.Millisecond}}
 		}}
 	ctx := context.Background()
 
@@ -177,6 +158,12 @@ func TestStatusFile(t *testing.T) {
 	}
 	if got.Backup.Ready || len(got.Backup.Problems) != 1 || !strings.Contains(got.Backup.Problems[0], "onaylanmadı") {
 		t.Errorf("backup before confirming: %+v", got.Backup)
+	}
+	// The host as last sampled, rounded as the panel shows it; not the host's name.
+	wantSys := StatusSys{Time: time.Date(2026, 11, 7, 11, 59, 52, 0, time.UTC), CPUPercent: 12.3, Load1: 0.46, Load5: 0.3, Load15: 0.25,
+		MemUsed: 3 << 30, MemTotal: 4 << 30, SwapUsed: 5 << 20, SwapTotal: 2 << 30, DiskUsed: 34 << 30, DiskTotal: 40 << 30, Uptime: 26*3600 + 180}
+	if got.Sys == nil || *got.Sys != wantSys || strings.Contains(string(body), "gizli-makine-adi") {
+		t.Errorf("sys: %+v\n%s", got.Sys, body)
 	}
 	if st := w.State(); st.Key != "footops-t1/klasor/izleme/durum.json" || !st.LastOK.Equal(now) || st.LastErr != "" {
 		t.Errorf("state: %+v", st)
@@ -235,26 +222,26 @@ func TestLiveS3Put(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	if err := o.putIn(context.Background(), &http.Client{Timeout: 30 * time.Second}, []byte(`{"format":1,"deneme":true}`+"\n"), "application/json", time.Now()); err != nil {
+	if err := o.Put(context.Background(), &http.Client{Timeout: 30 * time.Second}, []byte(`{"format":1,"deneme":true}`+"\n"), "application/json", time.Now()); err != nil {
 		t.Fatal(maskRepo(repo, err.Error()))
 	}
-	t.Logf("PUT %s/%s %s (region %s)", o.bucket, o.key, time.Since(start).Round(time.Millisecond), o.region)
+	t.Logf("PUT %s/%s %s (region %s)", o.Bucket, o.Key, time.Since(start).Round(time.Millisecond), o.Region)
 	// Read back with the same signing (the watcher's heartbeat is read this way).
 	start = time.Now()
-	data, err := o.get(context.Background(), &http.Client{Timeout: 30 * time.Second}, 1<<10, time.Now())
-	if err != nil || string(data) != `{"format":1,"deneme":true}`+"\n" {
-		t.Fatalf("GET: %q %v", data, err)
+	data, modified, err := o.Get(context.Background(), &http.Client{Timeout: 30 * time.Second}, 1<<10, time.Now())
+	if err != nil || string(data) != `{"format":1,"deneme":true}`+"\n" || time.Since(modified) > time.Minute {
+		t.Fatalf("GET: %q %v %v", data, modified, err)
 	}
-	t.Logf("GET %s", time.Since(start).Round(time.Millisecond))
+	t.Logf("GET %s (last modified %s)", time.Since(start).Round(time.Millisecond), modified.Format(time.RFC3339))
 	missing := o
-	missing.key += ".yok"
-	if _, err := missing.get(context.Background(), &http.Client{Timeout: 30 * time.Second}, 1<<10, time.Now()); !errors.Is(err, errNoObject) {
+	missing.Key += ".yok"
+	if _, _, err := missing.Get(context.Background(), &http.Client{Timeout: 30 * time.Second}, 1<<10, time.Now()); !errors.Is(err, s3obj.ErrNoObject) {
 		t.Fatalf("GET of a missing object: %v", err)
 	}
 	// The wrong secret is refused, and the error does not show it.
-	o.secret = "wrong" + o.secret
-	err = o.put(context.Background(), &http.Client{Timeout: 30 * time.Second}, []byte("x"), "text/plain", time.Now())
-	if err == nil || strings.Contains(err.Error(), o.secret) {
+	o.Secret = "wrong" + o.Secret
+	err = o.Put(context.Background(), &http.Client{Timeout: 30 * time.Second}, []byte("x"), "text/plain", time.Now())
+	if err == nil || strings.Contains(err.Error(), o.Secret) {
 		t.Fatalf("wrong secret: %v", err)
 	}
 	t.Logf("wrong secret: %s", maskRepo(repo, err.Error()))
@@ -447,12 +434,15 @@ func TestStatusFileForTheWatcher(t *testing.T) {
 	broken := errors.New("footops.json okunamadı")
 	listErr := error(nil)
 	w := &StatusWriter{Backups: e.b, Server: "T1", HTTP: srv.Client(),
-		Sites: func() ([]sites.Spec, error) { return nil, listErr }}
+		Sites:    func() ([]sites.Spec, error) { return nil, listErr },
+		Overview: func(context.Context) Overview { return Overview{} }}
 	if err := w.Write(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	// Nor a host never sampled.
 	body := string(s3.objects["/footops-t1/izleme/durum.json"])
-	if strings.Contains(body, "last_ok") || strings.Contains(body, "0001-01-01") || strings.Contains(body, "sites_error") {
+	if strings.Contains(body, "last_ok") || strings.Contains(body, "0001-01-01") || strings.Contains(body, "sites_error") ||
+		strings.Contains(body, `"sys"`) {
 		t.Fatalf("no backup yet:\n%s", body)
 	}
 	listErr = broken

@@ -272,8 +272,8 @@ func TestParkedInStatusAndReport(t *testing.T) {
 	w := &StatusWriter{Sites: func() ([]sites.Spec, error) {
 		return []sites.Spec{parked, {Name: "blog", Domains: []string{"blog.com"}}}, nil
 	},
-		Containers: func(context.Context) []ContainerInfo {
-			return []ContainerInfo{{Name: "magaza", State: "exited"}, {Name: "blog", State: "running"}}
+		Overview: func(context.Context) Overview {
+			return Overview{Containers: []ContainerInfo{{Name: "magaza", State: "exited"}, {Name: "blog", State: "running"}}}
 		}}
 	f := w.Build(context.Background())
 	if len(f.Sites) != 2 || f.Sites[0].Name != "blog" || f.Sites[0].State != "running" || f.Sites[1].State != "parked" {
