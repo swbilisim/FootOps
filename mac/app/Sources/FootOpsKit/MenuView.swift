@@ -48,7 +48,6 @@ public struct MenuView: View {
     let maxHeight: CGFloat?
     @State private var expanded: Set<String>
     @State private var allProbes: Bool
-    @State private var contentHeight: CGFloat = 0
 
     public static let width: CGFloat = 360
 
@@ -119,31 +118,19 @@ public struct MenuView: View {
         })
     }
 
-    /// The middle scrolls once it is taller than maxHeight; shorter, the window fits it.
+    /// The middle scrolls once it is taller than maxHeight; shorter, the window fits it (a
+    /// scroll view's ideal height is its content's, so the window opens at its size).
     @ViewBuilder
     private func scrolling<Content: View>(@ViewBuilder _ inner: () -> Content) -> some View {
         if let maxHeight {
             ScrollView {
                 inner()
-                    .background(GeometryReader { g in
-                        Color.clear.preference(key: HeightKey.self, value: g.size.height)
-                    })
             }
             .scrollBounceBehavior(.basedOnSize)
-            .frame(height: min(max(contentHeight, 40), maxHeight))
-            .onPreferenceChange(HeightKey.self) { h in
-                contentHeight = h
-            }
+            .frame(maxHeight: maxHeight)
         } else {
             inner()
         }
-    }
-}
-
-private struct HeightKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
     }
 }
 

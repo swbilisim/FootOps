@@ -5,14 +5,18 @@ import SwiftUI
 /// The app's shell (panel-tasarim §29.2): the menu bar's item and the window it opens,
 /// the Settings window, sleep and wake, starting with the Mac. AppKit's own status item
 /// rather than SwiftUI's MenuBarExtra: only it can colour the icon, tell when the menu
-/// opens and close it from an item.
+/// opens and close it from an item; the menu is a panel of ours (MenuPanel).
 @MainActor
-public final class AppController: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSWindowDelegate {
+public final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let core: Core?
     private let monitor: Monitor
     private let version: String
     private var item: NSStatusItem?
-    private let popover = NSPopover()
+    private var menu: MenuPanel?
+    /// When the menu last closed: the click on the icon that closed it (the panel lets go
+    /// of the keys on the mouse's way down) does not open it again on the way up.
+    private var menuClosedAt = Date.distantPast
+    private var menuHeight: CGFloat = 560
     private var settingsWindow: NSWindow?
     private var settingsModel: SettingsModel?
     private var observers: [NSObjectProtocol] = []
@@ -35,12 +39,7 @@ public final class AppController: NSObject, NSApplicationDelegate, NSPopoverDele
         self.item = item
         showLight()
 
-        let height = min(720, (NSScreen.main?.visibleFrame.height ?? 900) - 140)
-        let host = NSHostingController(rootView: MenuView(monitor: monitor, actions: actions, maxHeight: height))
-        host.sizingOptions = [.preferredContentSize]
-        popover.contentViewController = host
-        popover.behavior = .transient
-        popover.delegate = self
+        menuHeight = min(720, (NSScreen.main?.visibleFrame.height ?? 900) - 140)
 
         let center = NSWorkspace.shared.notificationCenter
         observers.append(center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
@@ -72,11 +71,11 @@ public final class AppController: NSObject, NSApplicationDelegate, NSPopoverDele
     private var actions: MenuActions {
         MenuActions(
             open: { [weak self] url in
-                self?.popover.performClose(nil)
+                self?.menu?.close()
                 NSWorkspace.shared.open(url)
             },
             settings: { [weak self] in
-                self?.popover.performClose(nil)
+                self?.menu?.close()
                 self?.showSettings()
             },
             quit: {
@@ -85,20 +84,34 @@ public final class AppController: NSObject, NSApplicationDelegate, NSPopoverDele
     }
 
     @objc private func toggleMenu(_ sender: Any?) {
-        if popover.isShown {
-            popover.performClose(sender)
-        } else {
+        if let menu {
+            menu.close()
+        } else if Date().timeIntervalSince(menuClosedAt) > 0.3 {
             showMenu()
         }
     }
 
+    /// The menu is made anew each time it opens and let go once it closes: its window,
+    /// views and layers are not kept between openings; making it takes a few
+    /// milliseconds.
     private func showMenu() {
-        guard let button = item?.button else { return }
+        guard menu == nil, let button = item?.button else { return }
         monitor.menuOpened()
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        // Keys (Esc, ⌘Q, ⌘,) reach the menu only when it is the key window.
-        NSApp.activate()
-        popover.contentViewController?.view.window?.makeKey()
+        let host = NSHostingController(rootView: MenuView(monitor: monitor, actions: actions, maxHeight: menuHeight))
+        host.sizingOptions = [.preferredContentSize]
+        let panel = MenuPanel(host: host) { [weak button] in
+            guard let button, let window = button.window else { return nil }
+            return window.convertToScreen(button.convert(button.bounds, to: nil))
+        }
+        panel.onClose = { [weak self, weak panel] in
+            guard let self, let panel, self.menu === panel else { return }
+            self.menu = nil
+            self.menuClosedAt = Date()
+            self.item?.button?.highlight(false)
+        }
+        menu = panel
+        button.highlight(true)
+        panel.makeKeyAndOrderFront(nil)
     }
 
     /// The icon follows the whole's colour.
@@ -144,8 +157,14 @@ public final class AppController: NSObject, NSApplicationDelegate, NSPopoverDele
     }
 
     public func windowWillClose(_ notification: Notification) {
-        if (notification.object as? NSWindow) === settingsWindow {
-            NSApp.setActivationPolicy(.accessory)
+        guard (notification.object as? NSWindow) === settingsWindow else { return }
+        NSApp.setActivationPolicy(.accessory)
+        // Opened seldom, read anew each time: nothing of it is kept once it closes (after
+        // the close has run its course).
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.settingsWindow?.isVisible != true else { return }
+            self.settingsWindow = nil
+            self.settingsModel = nil
         }
     }
 
