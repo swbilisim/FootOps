@@ -680,6 +680,7 @@ func TestArchiveMongoRoom(t *testing.T) {
 	e, out, errb, dir := archiveEnv(t)
 	p, _ := footopsFixture(t, dir)
 	e.free = func(string) (uint64, error) { return 1 << 20, nil }
+	e.look = func(string) (string, error) { return "/bin/false", nil } // a mongorestore there (CI has none)
 	if code := runArchive(e, out, errb, "mongo", p); code != 1 || !strings.Contains(errb.String(), "Mac'te yer yetmiyor") {
 		t.Errorf("%d %s", code, errb)
 	}
