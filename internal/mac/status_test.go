@@ -42,6 +42,22 @@ func texts(s ServerStatus) string {
 	return strings.Join(out, "\n")
 }
 
+// A status file is a server's word: its names reach the menu clean of control and
+// format characters (U+202E turns a name around) and no longer than a line.
+func TestJudgeCleansNames(t *testing.T) {
+	now := testNow
+	f := goodFile(now)
+	f.Server = "H1\u202ekot"
+	f.FootOps = "abc1234\x1b[31m"
+	f.Sites[0].Name = strings.Repeat("uzun", 30)
+	f.Sites[1].Domains = []string{"blog.example\u200f"}
+	s := judge(server{Code: "h1", Bucket: "footops-h1"}, asFetched(f, now.Add(-time.Minute)), asFetched(goodBeat(now), now), now)
+	if s.Name != "H1?kot" || s.File.FootOps != "abc1234?[31m" || len(s.Sites[0].Name) != 64+len("…") ||
+		s.Sites[1].Domains[0].Name != "blog.example?" {
+		t.Errorf("%q %q %q %q", s.Name, s.File.FootOps, s.Sites[0].Name, s.Sites[1].Domains[0].Name)
+	}
+}
+
 // What a server's colour comes of (panel-tasarim §29.3): each rule alone, from a server
 // where all is well.
 func TestJudge(t *testing.T) {

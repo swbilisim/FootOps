@@ -1,6 +1,8 @@
 # Build output
 /dist/
 /footops
+/mac/app/.build/
+.swiftpm/
 
 # Test / coverage
 *.out

@@ -157,6 +157,35 @@ func printProbe(w io.Writer, r ProbeRun) {
 	}
 }
 
+func printSettings(w io.Writer, v SettingsView) {
+	fmt.Fprintf(w, "Ayarlar: %s\n", v.Path)
+	if len(v.Servers) == 0 {
+		fmt.Fprintln(w, "Bilinen sunucu yok.")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "\nSUNUCU\tPANEL\tSSH\tKOVA")
+	for _, s := range v.Servers {
+		bucket := s.Bucket
+		if bucket == "" {
+			bucket = s.DefaultBucket + " (varsayılan)"
+		}
+		code := s.Code
+		if !s.Keychain {
+			code += " (yalnız ayarlarda)"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", code, orDash(s.Panel), orDash(s.SSH), bucket)
+	}
+	tw.Flush()
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return s
+}
+
 // trNum is v with prec decimals and a decimal comma.
 func trNum(v float64, prec int) string {
 	return strings.Replace(strconv.FormatFloat(v, 'f', prec, 64), ".", ",", 1)
@@ -228,12 +257,13 @@ func clock(t, now time.Time) string {
 	return t.Format("02.01 15:04")
 }
 
-// clean keeps text from a file free of control characters: nothing in a status file
-// reaches the Terminal as an escape sequence.
+// clean keeps text from a file free of control and format characters: nothing in a
+// status file reaches the Terminal as an escape sequence, or turns a name around
+// (U+202E) in the menu.
 func clean(s string) string {
 	s = strings.ToValidUTF8(s, "?")
 	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return '?'
 		}
 		return r

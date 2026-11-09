@@ -249,8 +249,11 @@ func judge(srv server, sf, wf fetched, now time.Time) ServerStatus {
 	var fileTrouble string
 	switch {
 	case err == nil:
-		s.File, s.FileAt = file, sf.at
-		if n := clean(file.Server); n != "" {
+		// The file as read, its version (shown in the menu) cleaned like the rest.
+		shown := *file
+		shown.FootOps = clip(clean(shown.FootOps), 40)
+		s.File, s.FileAt = &shown, sf.at
+		if n := clip(clean(file.Server), 64); n != "" {
 			s.Name = n
 		}
 		at := sf.at
@@ -312,7 +315,8 @@ func judge(srv server, sf, wf fetched, now time.Time) ServerStatus {
 			add(yellow, "Site listesi okunamadı: %s", clip(clean(file.SitesError), 200))
 		}
 		for _, site := range file.Sites {
-			ss := SiteStatus{Name: clean(site.Name), State: clean(site.State), Label: stateTR[site.State], Color: green, Domains: []DomainStatus{}}
+			ss := SiteStatus{Name: clip(clean(site.Name), 64), State: clip(clean(site.State), 32), Label: stateTR[site.State],
+				Color: green, Domains: []DomainStatus{}}
 			if ss.Label == "" {
 				ss.Label = ss.State
 			}
@@ -425,7 +429,7 @@ func judge(srv server, sf, wf fetched, now time.Time) ServerStatus {
 }
 
 func domainStatus(name string, seen map[string]monitor.WatcherDomain, fresh bool) DomainStatus {
-	ds := DomainStatus{Name: clean(name), Watcher: "unknown"}
+	ds := DomainStatus{Name: clip(clean(name), 253), Watcher: "unknown"}
 	d, ok := seen[name]
 	if !fresh || !ok {
 		return ds

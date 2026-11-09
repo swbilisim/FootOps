@@ -277,6 +277,32 @@ footops-yedek ac h1 magaza "2026-11-07 04:00" --mongo   # db.archive, files/, en
 footops-yedek kurtarma h1 | pbcopy            # the recovery line for the installer
 ```
 
+### On a Mac: FootOps.app and `footops-mac`
+
+A menu bar app that shows how the servers are without reaching them: each server's
+status file and the outside watcher's heartbeat, read from the buckets with the same
+read-only key (four small reads every 5 minutes while the Mac is awake, and when the
+menu opens on an older read). Its icon is green, yellow (worth a look), red (visitors
+are hit, or a server went quiet) or gray (nothing known). The menu lists each server's
+sites with what the watcher sees of them, opens the server's panel in the browser and
+SSH in the Terminal, and on request visits every site from the Mac, side by side with
+the watcher. It never talks to a panel and has no way to change a server.
+
+`make mac-install` builds `FootOps.app` (SwiftUI, the Go core `footops-mac` inside, signed
+ad hoc for this Mac), puts it in Applications, links `footops-mac` into `~/.local/bin`
+and opens it; from then on it starts with the Mac (its Settings turn that off). The
+core works in the Terminal too:
+
+```bash
+footops-mac durum      # the servers, as the menu shows them
+footops-mac yokla      # visit every site from this Mac now
+footops-mac ayar       # each server's panel, SSH target and bucket
+```
+
+The settings (no secrets) are in `~/Library/Application Support/FootOps/ayarlar.json`,
+written by the app's Settings window through `footops-mac ayar yaz`; the Keychain items
+are footops-yedek's.
+
 ## Commands
 
 | Command | Purpose |
@@ -297,6 +323,7 @@ footops-yedek kurtarma h1 | pbcopy            # the recovery line for the instal
 make check   # go vet + tests
 make build   # local binary
 make linux   # dist/footops_linux_{amd64,arm64} + SHA256SUMS
+make mac     # dist/FootOps.app (on a Mac: Swift and Go); swift test --package-path mac/app
 ```
 
 Releases: push a `vX.Y.Z` tag; the Release workflow builds and publishes binaries.

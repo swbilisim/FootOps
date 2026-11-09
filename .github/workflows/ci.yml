@@ -42,6 +42,21 @@ jobs:
       - name: Build the Mac's command
         run: make footops-mac
 
+  # FootOps.app (mac/app): SwiftUI, built and tested on the Mac it is for, then bundled
+  # with the core the way `make mac` does it on the Mac.
+  mac:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: swift --version
+      - name: Swift tests
+        run: swift test --package-path mac/app
+      - name: Bundle the app
+        run: make mac
+
   # The outside watcher (worker/): plain JavaScript, no dependencies.
   worker:
     runs-on: ubuntu-24.04

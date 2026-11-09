@@ -1,0 +1,26 @@
+import AppKit
+import FootOpsKit
+
+// FootOps.app (panel-tasarim §29): an item in the menu bar, no Dock icon until a window
+// opens. `FootOps --simge <dizin>` writes the icon for `make mac` and exits.
+
+let args = CommandLine.arguments.dropFirst()
+if args.first == "--simge" {
+    guard let folder = args.dropFirst().first else {
+        FileHandle.standardError.write(Data("kullanım: FootOps --simge <dizin>\n".utf8))
+        exit(2)
+    }
+    do {
+        try AppIcon.writeIconset(to: URL(fileURLWithPath: folder, isDirectory: true))
+        exit(0)
+    } catch {
+        FileHandle.standardError.write(Data("simge yazılamadı: \(error.localizedDescription)\n".utf8))
+        exit(1)
+    }
+}
+
+let app = NSApplication.shared
+let controller = AppController()
+app.delegate = controller
+app.setActivationPolicy(.accessory)
+app.run()

@@ -29,9 +29,11 @@ Kullanım: footops-mac <komut> [--json]
   durum              sunucuların durumu: R2'deki durum dosyası (sunucunun FootOps'u yazar)
                      ve dış nöbetçinin gördüğü — sunucu başına iki küçük okuma, salt okunur anahtarla
   yokla [sunucu…]    sitelere bu Mac'ten şimdi bakar, nöbetçinin gördüğüyle yan yana gösterir
+  ayar               bu Mac'in ayarları: sunucu başına panel adresi, SSH hedefi, kova
+  ayar yaz           ayarları stdin'den JSON olarak alır, denetler ve yazar (FootOps.app'in Ayarlar'ı)
   surum              sürüm
 
-  --json             FootOps.app için: tek JSON nesnesi (durum) ya da satır satır olaylar (yokla)
+  --json             FootOps.app için: tek JSON nesnesi (durum, ayar) ya da satır satır olaylar (yokla)
 
 Sırlar yalnız Anahtar Zinciri'nde (hizmet footops-yedek): r2-hesap, r2-mac-erisim, r2-mac-gizli.
 Sunucular restic-<kod> kayıtlarından ve ayarlar dosyasından gelir:
@@ -40,6 +42,7 @@ Sunucular restic-<kod> kayıtlarından ve ayarlar dosyasından gelir:
 
 // env is everything a command reaches outside itself; tests put stand-ins in its place.
 type env struct {
+	in        io.Reader // ayar yaz's settings
 	out, errw io.Writer
 	keychain  Keychain
 	// settings is the settings file's path.
@@ -65,7 +68,7 @@ func defaultEnv(stdout, stderr io.Writer) *env {
 	client := &http.Client{Timeout: 15 * time.Second,
 		// A redirect is an answer, not a way: R2 sends none.
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	return &env{out: stdout, errw: stderr, keychain: securityKeychain{Tool: "/usr/bin/security", Service: service},
+	return &env{in: os.Stdin, out: stdout, errw: stderr, keychain: securityKeychain{Tool: "/usr/bin/security", Service: service},
 		settings: filepath.Join(dir, "FootOps", "ayarlar.json"),
 		r2:       func(account string) string { return "https://" + account + ".r2.cloudflarestorage.com" },
 		client:   client, probeTimeout: probeTimeout, now: time.Now}
@@ -116,6 +119,8 @@ func (e *env) run(ctx context.Context, args []string) int {
 		err = e.status(ctx, jsonOut)
 	case "yokla":
 		err = e.probeCmd(ctx, pos, jsonOut)
+	case "ayar":
+		err = e.settingsCmd(ctx, pos, jsonOut)
 	case "surum", "version", "--version", "-v":
 		fmt.Fprintf(e.out, "footops-mac %s %s/%s\n", version.String(), runtime.GOOS, runtime.GOARCH)
 	case "yardim", "help", "--help", "-h":
