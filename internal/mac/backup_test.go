@@ -245,11 +245,11 @@ func TestParseSnapshots(t *testing.T) {
 		snap("2026-11-07T03:00:05.123456789+03:00", "/footops/magaza/db.archive", "footops", "site=magaza", "part=db", "kind=daily", "run=R1"),
 		snap("2026-11-07T00:00:40Z", "/footops/magaza/files", "footops", "site=magaza", "part=files", "kind=daily", "run=R1"),
 		snap("2026-11-07T00:00:41Z", "/footops/_server", "footops", "site=_server", "part=server", "run=R1"),
-		snap("2026-11-07T00:00:42Z", "/footops/magaza/db.archive", "site=magaza", "part=db"),                      // not FootOps'
-		snap("2026-11-07T00:00:43Z", "/elsewhere/db.archive", "footops", "site=magaza", "part=db"),               // wrong place
-		snap("2026-11-07T00:00:44Z", "/footops/../etc/db.archive", "footops", "site=../etc", "part=db"),          // no site
+		snap("2026-11-07T00:00:42Z", "/footops/magaza/db.archive", "site=magaza", "part=db"),                       // not FootOps'
+		snap("2026-11-07T00:00:43Z", "/elsewhere/db.archive", "footops", "site=magaza", "part=db"),                 // wrong place
+		snap("2026-11-07T00:00:44Z", "/footops/../etc/db.archive", "footops", "site=../etc", "part=db"),            // no site
 		snap("2026-11-07T00:00:45Z", "/footops/magaza/db.archive", "footops", "site=magaza", "part=db", "run=a/b"), // no run
-		snap("2026-11-07T00:00:46Z", "/footops/magaza/x", "footops", "site=magaza", "part=x"),                    // no part
+		snap("2026-11-07T00:00:46Z", "/footops/magaza/x", "footops", "site=magaza", "part=x"),                      // no part
 	}
 	bad := snap("2026-11-07T00:00:47Z", "/footops/magaza/db.archive", "footops", "site=magaza", "part=db")
 	bad["id"] = "kisa"
@@ -861,7 +861,6 @@ func TestToolWords(t *testing.T) {
 		}
 	}
 }
-
 
 // childOpen is footops-mac yedek ac --json as the app runs it, in a process of its own
 // (this test binary again), its signals as Run sets them.
