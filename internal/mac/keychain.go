@@ -11,9 +11,9 @@ import (
 	"strings"
 )
 
-// Keychain is the Mac's Keychain as footops-yedek keeps it (panel-tasarim §27.18): one
-// service, an item per name — r2-hesap, r2-mac-erisim, r2-mac-gizli, restic-<code>,
-// kova-<code>.
+// Keychain is the Mac's Keychain as FootOps keeps it (panel-tasarim §27.18; the service
+// named after footops-yedek, the bash helper footops-mac replaced): one service, an item
+// per name — r2-hesap, r2-mac-erisim, r2-mac-gizli, restic-<code>, kova-<code>.
 type Keychain interface {
 	// Get is an item's secret; errNoItem when there is none.
 	Get(ctx context.Context, name string) (string, error)

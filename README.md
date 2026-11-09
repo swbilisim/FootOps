@@ -234,8 +234,9 @@ server is lost, a new one is installed from them:
 
 1. `sudo ./footops install` and answer **yes** to "Bu sunucu bir yedekten mi kurulacak?".
    Give the old server's code (backups are taken under it), the usual answers, and the
-   repository: a key that can *read* the bucket is enough. The Mac helper prints all of
-   it as one line for a single paste: `footops-yedek kurtarma h1 | pbcopy`.
+   repository: a key that can *read* the bucket is enough. On the Mac it is all one line
+   for a single paste: FootOps.app's **Yedekler → Kurtarma satırını kopyala** (onto the
+   pasteboard only, cleared a minute later), or `footops-mac yedek kurtarma h1 | pbcopy`.
 2. After the usual steps (no tunnel, no new panel account: the old one comes back) the
    agent brings back the server's own part (certificates, the panel's login and 2FA,
    registry logins, backup settings) and then every site of the newest full backup:
@@ -262,21 +263,6 @@ compared with what mongodump counted, and a sample of its files against the live
 A failure is an alert (and a Telegram message). **Yedekleme → Şimdi dene** or
 `sudo footops backup trial [site]` runs it at once.
 
-### On a Mac: `mac/footops-yedek`
-
-Opens backups on a Mac without FootOps. It only reads (a read-only key, `--no-lock`); the
-account, the key and the repositories' passwords come from the Keychain (service
-`footops-yedek`: `r2-hesap`, `r2-mac-erisim`, `r2-mac-gizli`, `restic-<server>`,
-optionally `kova-<server>`). Needs `brew install restic`.
-
-```bash
-footops-yedek sunucular                       # servers in the Keychain
-footops-yedek liste h1                        # sites and their newest backups
-footops-yedek liste h1 magaza                 # one site's backups
-footops-yedek ac h1 magaza "2026-11-07 04:00" --mongo   # db.archive, files/, env → ~/Downloads, and into the local MongoDB
-footops-yedek kurtarma h1 | pbcopy            # the recovery line for the installer
-```
-
 ### On a Mac: FootOps.app and `footops-mac`
 
 A menu bar app that shows how the servers are without reaching them: each server's
@@ -288,20 +274,37 @@ sites with what the watcher sees of them, opens the server's panel in the browse
 SSH in the Terminal, and on request visits every site from the Mac, side by side with
 the watcher. It never talks to a panel and has no way to change a server.
 
+Its **Yedekler** window opens the servers' backups: a server, a site, one of its
+backups, then its parts into a folder of the owner's (`~/Downloads/<site>-<time>`:
+`db.archive`, `files/`, `footops.json` and the site's `env` as the panel's download gives
+it; kept out of Time Machine) or its database into the Mac's own MongoDB. It only reads
+(a read-only key, every restic command `--no-lock`), so nothing it does can change or
+remove a backup. What was opened is listed with its age — a week old, the menu says so
+— and deleted from there; and it puts a server's recovery line on the pasteboard.
+
 `make mac-install` builds `FootOps.app` (SwiftUI, the Go core `footops-mac` inside, signed
 ad hoc for this Mac), puts it in Applications, links `footops-mac` into `~/.local/bin`
 and opens it; from then on it starts with the Mac (its Settings turn that off). The
-core works in the Terminal too:
+core works in the Terminal too (needs `brew install restic`; loading into MongoDB also
+`mongodb-database-tools`):
 
 ```bash
-footops-mac durum      # the servers, as the menu shows them
-footops-mac yokla      # visit every site from this Mac now
-footops-mac ayar       # each server's panel, SSH target and bucket
+footops-mac durum                          # the servers, as the menu shows them
+footops-mac yokla                          # visit every site from this Mac now
+footops-mac ayar                           # each server's panel, SSH target and bucket
+footops-mac yedek liste h1                 # its sites and their newest backups
+footops-mac yedek liste h1 magaza          # one site's backups
+footops-mac yedek ac h1 magaza "2026-11-07 04:00"   # the backup begun that minute → ~/Downloads
+footops-mac yedek mongo h1 magaza          # its database into the local MongoDB (magaza_yedek_<time>)
+footops-mac yedek acilanlar                # what was opened on this Mac; delete with yedek sil
+footops-mac yedek kurtarma h1 | pbcopy     # the recovery line for the installer
 ```
 
 The settings (no secrets) are in `~/Library/Application Support/FootOps/ayarlar.json`,
-written by the app's Settings window through `footops-mac ayar yaz`; the Keychain items
-are footops-yedek's.
+written by the app's Settings window through `footops-mac ayar yaz`. The secrets are in
+the Keychain, service `footops-yedek`: `r2-hesap` (the R2 account), `r2-mac-erisim` and
+`r2-mac-gizli` (the read-only key), `restic-<server>` (each repository's password),
+optionally `kova-<server>`.
 
 ## Commands
 

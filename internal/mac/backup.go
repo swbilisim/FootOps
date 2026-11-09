@@ -16,7 +16,8 @@ import (
 	"time"
 )
 
-// The servers' backups on the Mac (panel-tasarim §29.5): footops-yedek's work, in Go. The
+// The servers' backups on the Mac (panel-tasarim §29.5): what the bash helper footops-yedek
+// did, in Go (it is gone since, M3). The
 // restic repositories are only read — with the Mac's read-only key, every command
 // --no-lock, never unlock — so nothing done here can change or remove a backup. The key
 // reaches restic in its environment alone and the repository's password through restic's

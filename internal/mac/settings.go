@@ -157,7 +157,7 @@ func checkSSH(s string) error {
 }
 
 var (
-	// reCode is a server's code as the Keychain's names carry it (footops-yedek's rule).
+	// reCode is a server's code as the Keychain's names carry it.
 	reCode = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
 	// The account is R2's: 32 hex digits. Buckets and folders as the agent takes them
 	// (internal/agent, checkRepository).
@@ -215,7 +215,7 @@ func (e *env) known(ctx context.Context) (Settings, map[string]bool, []string, e
 }
 
 // serverCodes are the servers of the Keychain's items — those with a repository
-// password (restic-<code>, as footops-yedek finds them) — and of the settings, sorted;
+// password (restic-<code>) — and of the settings, sorted;
 // has tells the items there are.
 func serverCodes(names []string, set Settings) (map[string]bool, []string) {
 	has := map[string]bool{}

@@ -61,7 +61,7 @@ func installActor() agent.Actor {
 }
 
 // recoveryPrefix starts a recovery line: everything a recovery needs in one paste,
-// made on the Mac (footops-yedek kurtarma <sunucu>).
+// made on the Mac (FootOps.app's Backups window, or footops-mac yedek kurtarma <sunucu>).
 const recoveryPrefix = "FOOTOPS-KURTARMA-1:"
 
 type recoveryInfo struct {
@@ -75,7 +75,7 @@ type recoveryInfo struct {
 func ParseRecoveryInfo(s string) (RecoverAnswers, error) {
 	rest, ok := strings.CutPrefix(strings.TrimSpace(s), recoveryPrefix)
 	if !ok {
-		return RecoverAnswers{}, errors.New("kurtarma bilgisi " + recoveryPrefix + " ile başlamalı (Mac'te: footops-yedek kurtarma <sunucu>)")
+		return RecoverAnswers{}, errors.New("kurtarma bilgisi " + recoveryPrefix + " ile başlamalı (Mac'te: FootOps → Yedekler → Kurtarma satırını kopyala, ya da footops-mac yedek kurtarma <sunucu> | pbcopy)")
 	}
 	raw, err := base64.StdEncoding.DecodeString(rest)
 	var in recoveryInfo
@@ -115,7 +115,8 @@ func askRecover(p *Prompter, code, tz string) (*RecoverAnswers, error) {
 	p.Say("")
 	p.Say("Yedek deposu: eski sunucunun R2 kovası. Okuyabilen bir anahtar yeter; önerilen Mac'teki salt okunur")
 	p.Say("anahtar (yazamaz, silemez: canlı sunucunun yedeklerine hiçbir şey olmaz).")
-	p.Say("Mac'te hepsi tek satırda panoya alınır:  footops-yedek kurtarma %s | pbcopy", strings.ToLower(code))
+	p.Say("Mac'te hepsi tek satırda panoya alınır: FootOps → Yedekler → %s → Kurtarma satırını kopyala", strings.ToUpper(code))
+	p.Say("(ya da Terminal'de:  footops-mac yedek kurtarma %s | pbcopy)", strings.ToLower(code))
 	for {
 		line, err := p.Secret("Kurtarma bilgisi (ekranda görünmez; yoksa boş bırak, tek tek sorulur)", func(s string) error {
 			if s == "" {
