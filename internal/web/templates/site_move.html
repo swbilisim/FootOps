@@ -15,6 +15,7 @@
         <datalist id="groups">{{range .Data.Groups}}<option value="{{.}}">{{end}}</datalist>
         <span class="hint">{{with .Data.Groups}}var olanlar: {{range $i, $g := .}}{{if $i}}, {{end}}<span class="mono">{{$g}}</span>{{end}}; {{end}}küçük harf, rakam, tire</span>
       </label>
+      {{template "layer" .Data.Layer}}
       <label class="field"><span>Onaylamak için site adını yaz: <strong>{{$s.Name}}</strong></span>
         <input name="confirm" autocomplete="off" autocapitalize="off" spellcheck="false" required>
       </label>

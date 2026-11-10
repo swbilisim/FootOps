@@ -185,12 +185,18 @@ func (o *SiteOps) Unpark(ctx context.Context, name, expires string, progress Pro
 			progress("ℹ Container yeniden durduruldu; site parkta kaldı")
 		}
 	}()
-	if err := o.syncCompose(spec, progress); err != nil {
-		return err
-	}
 	base := o.restartBaseline(ctx, spec)
-	if err := o.compose(ctx, spec, o.upArgs(ctx, spec, "--detach")...); err != nil {
+	started, err := o.startAsIs(ctx, spec, progress)
+	if err != nil {
 		return fmt.Errorf("container başlatılamadı: %w", err)
+	}
+	if !started {
+		if err := o.syncCompose(spec, progress); err != nil {
+			return err
+		}
+		if err := o.compose(ctx, spec, o.upArgs(ctx, spec, "--detach")...); err != nil {
+			return fmt.Errorf("container başlatılamadı: %w", err)
+		}
 	}
 	if err := o.waitListening(ctx, spec, base); err != nil {
 		return err

@@ -42,6 +42,10 @@ type SiteDocker interface {
 	ContainerIP(ctx context.Context, container, network string) (string, error)
 	Inspect(ctx context.Context, name string) (docker.Inspect, error)
 	Logs(ctx context.Context, name string, tail int) ([]string, error)
+	Changes(ctx context.Context, name string) ([]docker.Change, error)
+	PathStat(ctx context.Context, name, p string) (os.FileMode, error)
+	InspectSize(ctx context.Context, name string) (docker.Inspect, error)
+	Start(ctx context.Context, name string) error
 }
 
 // SiteOps creates, updates and removes sites. Operations are serialised: two at once
@@ -364,8 +368,11 @@ func (o *SiteOps) discard(ctx context.Context, s sites.Spec) error {
 	return os.RemoveAll(dir)
 }
 
-// Redeploy pulls the image again and recreates the container if it changed.
-func (o *SiteOps) Redeploy(ctx context.Context, name string, progress Progress) error {
+// Redeploy pulls the image again and recreates the container if it changed. Unless force,
+// it stops when the container's layer holds files (written since the check before it: a
+// pull can take minutes). The compose file is brought up to date only after the pull, so
+// a failed one leaves it as the container was made from.
+func (o *SiteOps) Redeploy(ctx context.Context, name string, force bool, progress Progress) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.init()
@@ -376,9 +383,6 @@ func (o *SiteOps) Redeploy(ctx context.Context, name string, progress Progress) 
 	if spec.IsParked() {
 		return errParked
 	}
-	if err := o.syncCompose(spec, progress); err != nil {
-		return err
-	}
 	if err := o.compose(ctx, spec, "pull", "--quiet"); err != nil {
 		return fmt.Errorf("imaj indirilemedi: %w", explainPull(err))
 	}
@@ -386,6 +390,14 @@ func (o *SiteOps) Redeploy(ctx context.Context, name string, progress Progress) 
 		return err
 	}
 	progress("✓ İmaj indirildi: " + spec.Image)
+	if !force {
+		if r := o.Layer(ctx, spec); r.Risky() {
+			return layerError(r)
+		}
+	}
+	if err := o.syncCompose(spec, progress); err != nil {
+		return err
+	}
 	base := o.restartBaseline(ctx, spec)
 	old := o.containerImage(ctx, spec)
 	if err := o.compose(ctx, spec, o.upArgs(ctx, spec, "--detach", "--remove-orphans")...); err != nil {

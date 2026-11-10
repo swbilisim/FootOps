@@ -68,6 +68,7 @@ type Actor struct {
 
 type RestartRequest struct {
 	Actor Actor `json:"actor"`
+	Force bool  `json:"force,omitempty"` // a redeploy goes on though the container's layer holds files
 }
 
 type LogsResponse struct {
@@ -85,8 +86,9 @@ type AuditEntry struct {
 }
 
 type errorResponse struct {
-	Error    string   `json:"error"`
-	Problems []string `json:"problems,omitempty"`
+	Error    string       `json:"error"`
+	Problems []string     `json:"problems,omitempty"`
+	Layer    *LayerReport `json:"layer,omitempty"` // 409: what making the container anew would lose
 }
 
 // CreateSiteRequest carries the site definition and its environment. Env values may be
@@ -102,6 +104,7 @@ type CreateSiteRequest struct {
 type UpdateSiteRequest struct {
 	Update SiteUpdate `json:"update"`
 	Actor  Actor      `json:"actor"`
+	Force  bool       `json:"force,omitempty"` // go on though the container's layer holds files
 }
 
 type JobResponse struct {
@@ -186,4 +189,5 @@ type MoveSiteRequest struct {
 	Group   string `json:"group"`
 	Confirm string `json:"confirm"`
 	Actor   Actor  `json:"actor"`
+	Force   bool   `json:"force,omitempty"` // go on though the container's layer holds files
 }

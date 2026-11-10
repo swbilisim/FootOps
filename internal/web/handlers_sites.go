@@ -1,6 +1,9 @@
 package web
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -59,7 +62,8 @@ func (s *Server) siteEdit(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.render(w, r, "site_edit", map[string]any{"Title": st.Spec.Name + " düzenle", "S": st.Spec, "F": editFormFor(st.Spec), "EnvFile": true})
+	s.render(w, r, "site_edit", map[string]any{"Title": st.Spec.Name + " düzenle", "S": st.Spec, "F": editFormFor(st.Spec), "EnvFile": true,
+		"Layer": s.layerOf(r, st.Spec, false)})
 }
 
 func (s *Server) siteUpdate(w http.ResponseWriter, r *http.Request) {
@@ -76,9 +80,11 @@ func (s *Server) siteUpdate(w http.ResponseWriter, r *http.Request) {
 		f.Unset[k] = true
 	}
 	var notes []sites.EnvRow
+	var layer *layerView
 	again := func(problems ...string) {
 		s.renderStatus(w, r, http.StatusUnprocessableEntity, "site_edit",
-			map[string]any{"Title": st.Spec.Name + " düzenle", "S": st.Spec, "F": f, "Problems": problems, "EnvFile": true, "EnvNotes": notes})
+			map[string]any{"Title": st.Spec.Name + " düzenle", "S": st.Spec, "F": f, "Problems": problems, "EnvFile": true, "EnvNotes": notes,
+				"Layer": layer})
 	}
 	entries, err := sites.ParseDotenv(f.Env)
 	if err != nil {
@@ -113,8 +119,18 @@ func (s *Server) siteUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	u := agent.SiteUpdate{Domains: strings.Fields(f.Domains), Image: f.Image, Port: port, MemoryMB: mem, MaxBodyMB: body,
 		DataMount: f.DataMount, Set: set, Unset: sites.SortedKeys(boolKeys(f.Unset))}
-	id, err := s.agent.UpdateSite(r.Context(), st.Spec.Name, agent.UpdateSiteRequest{Update: u, Actor: s.actor(r)})
+	// The box counts for the update it was shown with: a form changed since is checked
+	// again.
+	force := forced(r) && r.PostFormValue("consent") == consentOf(u)
+	id, err := s.agent.UpdateSite(r.Context(), st.Spec.Name, agent.UpdateSiteRequest{Update: u, Actor: s.actor(r), Force: force})
 	if err != nil {
+		// The change makes the container anew and its layer holds files: the same form,
+		// with them and the box.
+		if layer = layerRefused(err, st.Spec); layer != nil {
+			layer.Required, layer.Consent = false, consentOf(u)
+			again()
+			return
+		}
 		var ae *agent.Error
 		if errors.As(err, &ae) && len(ae.Problems) > 0 {
 			again(ae.Problems...)
@@ -195,7 +211,8 @@ func (s *Server) siteMoveForm(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.render(w, r, "site_move", map[string]any{"Title": st.Spec.Name + " grubunu değiştir", "S": st, "Groups": s.otherGroups(r, st.Spec.Group)})
+	s.render(w, r, "site_move", map[string]any{"Title": st.Spec.Name + " grubunu değiştir", "S": st, "Groups": s.otherGroups(r, st.Spec.Group),
+		"Layer": s.layerOf(r, st.Spec, true)})
 }
 
 // otherGroups are the groups a site in group g can move to.
@@ -210,15 +227,23 @@ func (s *Server) siteMove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	group := r.PostFormValue("group")
+	var layer *layerView
 	again := func(problems ...string) {
+		if layer == nil {
+			layer = s.layerOf(r, st.Spec, true)
+		}
 		s.renderStatus(w, r, http.StatusUnprocessableEntity, "site_move", map[string]any{"Title": st.Spec.Name + " grubunu değiştir",
-			"S": st, "Groups": s.otherGroups(r, st.Spec.Group), "Group": group, "Problems": problems})
+			"S": st, "Groups": s.otherGroups(r, st.Spec.Group), "Group": group, "Problems": problems, "Layer": layer})
 	}
 	if r.PostFormValue("confirm") != st.Spec.Name {
 		again("Onay için site adını aynen yaz.")
 		return
 	}
-	id, err := s.agent.MoveSite(r.Context(), st.Spec.Name, group, st.Spec.Name, s.actor(r))
+	id, err := s.agent.MoveSite(r.Context(), st.Spec.Name, group, st.Spec.Name, forced(r), s.actor(r))
+	if layer = layerRefused(err, st.Spec); layer != nil {
+		again()
+		return
+	}
 	if err != nil {
 		again(problemsOf(err)...)
 		return
@@ -245,7 +270,11 @@ func (s *Server) siteConfirm(verb string) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		s.render(w, r, "site_confirm", map[string]any{"S": st, "Verb": verb})
+		data := map[string]any{"S": st, "Verb": verb}
+		if verb == "redeploy" || verb == "remove" {
+			data["Layer"] = s.layerOf(r, st.Spec, verb == "redeploy")
+		}
+		s.render(w, r, "site_confirm", data)
 	}
 }
 
@@ -258,10 +287,14 @@ func (s *Server) siteAction(verb string) http.HandlerFunc {
 		// Removal is confirmed by typing the site's name, not by a single click.
 		if verb == "remove" && r.PostFormValue("confirm") != st.Spec.Name {
 			s.renderStatus(w, r, http.StatusUnprocessableEntity, "site_confirm",
-				map[string]any{"S": st, "Verb": verb, "Problem": "Onay için site adını aynen yaz."})
+				map[string]any{"S": st, "Verb": verb, "Problem": "Onay için site adını aynen yaz.", "Layer": s.layerOf(r, st.Spec, false)})
 			return
 		}
-		id, err := s.agent.SiteJob(r.Context(), st.Spec.Name, verb, s.actor(r))
+		id, err := s.agent.SiteJob(r.Context(), st.Spec.Name, verb, verb == "redeploy" && forced(r), s.actor(r))
+		if layer := layerRefused(err, st.Spec); layer != nil {
+			s.renderStatus(w, r, http.StatusConflict, "site_confirm", map[string]any{"S": st, "Verb": verb, "Layer": layer})
+			return
+		}
 		if err != nil {
 			s.sessions.setFlash(current(r).ID, err.Error())
 			http.Redirect(w, r, "/sites/"+st.Spec.Name, http.StatusSeeOther)
@@ -270,6 +303,48 @@ func (s *Server) siteAction(verb string) http.HandlerFunc {
 		http.Redirect(w, r, "/jobs/"+id, http.StatusSeeOther)
 	}
 }
+
+// ---- what a site's container holds in its own layer (Faz L) ----
+
+// layerView is the layer notice: the report, the site and its persistent folder (what
+// to advise depends on it), and whether the form asks to go on anyway: its box sends
+// force=1, required on a form that does nothing else, with the update it was shown for
+// on the edit form (Consent).
+type layerView struct {
+	L             agent.LayerReport
+	Site, Mount   string
+	Ask, Required bool
+	Consent       string
+}
+
+// layerOf is the notice for a site's container, nil when nothing is at stake. Nor when
+// the agent cannot say: it checks again, and refuses, when the form is sent.
+func (s *Server) layerOf(r *http.Request, spec sites.Spec, ask bool) *layerView {
+	l, err := s.agent.SiteLayer(r.Context(), spec.Name)
+	if err != nil || !l.Risky() {
+		return nil
+	}
+	return &layerView{L: l, Site: spec.Name, Mount: spec.DataMount, Ask: ask, Required: ask}
+}
+
+// layerRefused is the agent's refusal to make a container anew, as a notice with the box.
+func layerRefused(err error, spec sites.Spec) *layerView {
+	var ae *agent.Error
+	if errors.As(err, &ae) && ae.Layer != nil {
+		return &layerView{L: *ae.Layer, Site: spec.Name, Mount: spec.DataMount, Ask: true, Required: true}
+	}
+	return nil
+}
+
+// consentOf names an update, so the box ticked for it counts for it alone.
+func consentOf(u agent.SiteUpdate) string {
+	b, _ := json.Marshal(u)
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:8])
+}
+
+// forced reports whether the form's box said go on though files are lost.
+func forced(r *http.Request) bool { return r.PostFormValue("force") == "1" }
 
 func (s *Server) job(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")

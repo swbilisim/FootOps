@@ -42,13 +42,19 @@ func (o *SiteOps) CheckMove(name, group string) (sites.Spec, sites.Spec, error) 
 // a container starts, so one restarting meanwhile would get an empty directory at the
 // old path. The site is away for a few seconds, as on an edit. If any step fails,
 // everything this move did is undone and the old container started again.
-func (o *SiteOps) Move(ctx context.Context, name, group string, progress Progress) (err error) {
+func (o *SiteOps) Move(ctx context.Context, name, group string, force bool, progress Progress) (err error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.init()
 	cur, next, err := o.CheckMove(name, group)
 	if err != nil {
 		return err
+	}
+	// The container is made anew: unless someone agreed, not over files its layer holds.
+	if !force {
+		if r := o.Layer(ctx, cur); r.Risky() {
+			return layerError(r)
+		}
 	}
 	if err := o.checkTag(ctx, cur); err != nil {
 		return err
@@ -295,10 +301,18 @@ func (o *SiteOps) syncCompose(s sites.Spec, progress Progress) error {
 // would start that container again where it was, out of Caddy's reach.
 func (o *SiteOps) upArgs(ctx context.Context, s sites.Spec, args ...string) []string {
 	up := append([]string{"up"}, args...)
-	if in, err := o.Docker.Inspect(ctx, s.Container()); err == nil && len(in.NetworkSettings.Networks) > 0 {
-		if _, ok := in.NetworkSettings.Networks[s.Network()]; !ok {
-			up = append(up, "--force-recreate")
-		}
+	if o.offNetwork(ctx, s) {
+		up = append(up, "--force-recreate")
 	}
 	return up
+}
+
+// offNetwork reports whether s's container is on networks but not on the site's own.
+func (o *SiteOps) offNetwork(ctx context.Context, s sites.Spec) bool {
+	in, err := o.Docker.Inspect(ctx, s.Container())
+	if err != nil || len(in.NetworkSettings.Networks) == 0 {
+		return false
+	}
+	_, ok := in.NetworkSettings.Networks[s.Network()]
+	return !ok
 }

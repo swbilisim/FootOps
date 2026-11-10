@@ -2,11 +2,14 @@ package install
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 
+	"github.com/swbilisim/FootOps/internal/agent"
 	"github.com/swbilisim/FootOps/internal/core"
 	"github.com/swbilisim/FootOps/internal/doctor"
+	"github.com/swbilisim/FootOps/internal/sites"
 	"github.com/swbilisim/FootOps/internal/version"
 )
 
@@ -48,6 +51,9 @@ func Doctor(ctx context.Context, h Host, d doctor.Docker, self string) doctor.Re
 	host, _ := os.Hostname()
 	env := doctor.Env{Root: h.Root, Run: h.Run, Docker: d, Host: host, FootOps: version.Version,
 		KeepImages: core.PinnedImages}
+	if ld, ok := d.(agent.LayerDocker); ok {
+		env.Sites = func(ctx context.Context) []doctor.Finding { return siteFindings(ctx, h, ld) }
+	}
 	if a, err := savedAnswers(h); err == nil {
 		env.AutoReboot, env.RebootTime = a.AutoReboot, a.RebootTime
 		env.Standard = func(ctx context.Context) []doctor.Finding { return standardFindings(ctx, h, a, self) }
@@ -59,6 +65,45 @@ func Doctor(ctx context.Context, h Host, d doctor.Docker, self string) doctor.Re
 		}
 	}
 	return doctor.Run(ctx, env)
+}
+
+// siteFindings are the sites whose containers wrote outside their persistent folders:
+// what goes when a container is made anew (Faz L), one finding each so each warns alone.
+func siteFindings(ctx context.Context, h Host, d agent.LayerDocker) []doctor.Finding {
+	specs, err := sites.Store{Root: h.Root}.List()
+	if err != nil {
+		return []doctor.Finding{{ID: "site-layers", Section: "disk", Level: doctor.Warn,
+			Title: "Siteler okunamadı: container'larının içi denetlenemedi", Detail: err.Error()}}
+	}
+	var out []doctor.Finding
+	for _, s := range specs {
+		r := agent.LayerOf(ctx, d, s)
+		f := doctor.Finding{ID: "site-layer:" + s.Name, Section: "disk", Level: doctor.Warn}
+		switch {
+		case r.Err != "":
+			f.Title, f.Detail = s.Name+": container'ın içi denetlenemedi", r.Err
+		case r.Files > 0:
+			f.Title = fmt.Sprintf("%s container'ının içine yazıyor: kalıcı klasör dışında %d dosya", s.Name, r.Files)
+			f.Detail = strings.Join(r.Paths, ", ")
+			if r.More > 0 {
+				f.Detail += fmt.Sprintf(" ve %d yer daha", r.More)
+			}
+			f.Fix = "Container yeniden oluşturulunca (yeniden dağıtım, imaj değişikliği, grup değiştirme) bunlar kaybolur; panel o işlemlerden önce sorar. "
+			if s.DataMount != "" {
+				f.Fix += "Site kalıcı klasör olarak " + s.DataMount + " kullanıyor: kalıcı olmaları için uygulama onları oraya yazmalı."
+			} else {
+				f.Fix += "Kalıcı tutmak için site ayarlarında bu yolu kalıcı klasör yap: içerik oraya taşınır."
+			}
+		default:
+			continue
+		}
+		out = append(out, f)
+	}
+	if len(out) == 0 {
+		out = append(out, doctor.Finding{ID: "site-layers", Section: "disk", Level: doctor.OK,
+			Title: "Container'ının içine, kalıcı klasör dışında yazan site yok"})
+	}
+	return out
 }
 
 func standardFindings(ctx context.Context, h Host, a Answers, self string) []doctor.Finding {

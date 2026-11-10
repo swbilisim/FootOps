@@ -119,6 +119,9 @@ type Env struct {
 	// KeepImages are image references FootOps itself pulls (its core and tools): never
 	// counted as unused, even while no container runs them.
 	KeepImages []string
+	// Sites checks what the sites' containers wrote outside their persistent folders
+	// (package install supplies it; Faz L); nil skips it.
+	Sites func(ctx context.Context) []Finding
 }
 
 func (e Env) path(p string) string { return filepath.Join(e.Root, p) }
@@ -160,6 +163,9 @@ func Run(ctx context.Context, env Env) Report {
 	}
 	add(ports(ctx, env, containers, dockerErr))
 	add(images(ctx, env))
+	if env.Sites != nil {
+		add(env.Sites(ctx)...)
+	}
 	if env.Accounts != nil {
 		acc := env.Accounts()
 		if len(acc) == 0 {

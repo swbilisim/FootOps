@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -167,6 +169,11 @@ type Inspect struct {
 	NetworkSettings struct {
 		Networks map[string]Endpoint `json:"Networks"`
 	} `json:"NetworkSettings"`
+	// Mounts are where the container actually has volumes and bind mounts.
+	Mounts []struct {
+		Destination string `json:"Destination"`
+	} `json:"Mounts"`
+	SizeRw int64 `json:"SizeRw"` // its own layer's bytes: only from InspectSize
 }
 
 // Endpoint is a container's place on a network. A container that is not running keeps
@@ -189,6 +196,83 @@ func (c *Client) Inspect(ctx context.Context, name string) (Inspect, error) {
 	}
 	err := c.getJSON(ctx, "/containers/"+name+"/json", nil, &out)
 	return out, err
+}
+
+// Change is an entry of GET /containers/{id}/changes: a path the container's own layer
+// changed, added or deleted against its image.
+type Change struct {
+	Path string `json:"Path"`
+	Kind int    `json:"Kind"`
+}
+
+// The kinds of a Change.
+const (
+	ChangeModified = 0
+	ChangeAdded    = 1
+	ChangeDeleted  = 2
+)
+
+// Changes lists what a container, running or not, wrote to its own layer: what goes when
+// it is made anew. What its mounts hold is not part of it.
+func (c *Client) Changes(ctx context.Context, name string) ([]Change, error) {
+	var out []Change
+	if !ValidName(name) {
+		return out, fmt.Errorf("invalid container name %q", name)
+	}
+	err := c.getJSON(ctx, "/containers/"+name+"/changes", nil, &out)
+	return out, err
+}
+
+// InspectSize is Inspect with SizeRw, what the container's own layer holds: dockerd
+// walks the layer for it.
+func (c *Client) InspectSize(ctx context.Context, name string) (Inspect, error) {
+	var out Inspect
+	if !ValidName(name) {
+		return out, fmt.Errorf("invalid container name %q", name)
+	}
+	err := c.getJSON(ctx, "/containers/"+name+"/json", url.Values{"size": {"1"}}, &out)
+	return out, err
+}
+
+// PathStat is the mode of a path in a container, running or not.
+func (c *Client) PathStat(ctx context.Context, name, p string) (os.FileMode, error) {
+	if !ValidName(name) {
+		return 0, fmt.Errorf("invalid container name %q", name)
+	}
+	resp, err := c.do(ctx, http.MethodHead, "/containers/"+name+"/archive", url.Values{"path": {p}})
+	if err != nil {
+		return 0, err
+	}
+	resp.Body.Close()
+	raw, err := base64.StdEncoding.DecodeString(resp.Header.Get("X-Docker-Container-Path-Stat"))
+	if err != nil {
+		return 0, err
+	}
+	var st struct {
+		Mode uint32 `json:"mode"`
+	}
+	if err := json.Unmarshal(raw, &st); err != nil {
+		return 0, err
+	}
+	return os.FileMode(st.Mode), nil
+}
+
+// Start starts an existing container as it is, never made anew; one already running is
+// fine.
+func (c *Client) Start(ctx context.Context, name string) error {
+	if !ValidName(name) {
+		return fmt.Errorf("invalid container name %q", name)
+	}
+	resp, err := c.do(ctx, http.MethodPost, "/containers/"+name+"/start", nil)
+	var ae *APIError
+	if errors.As(err, &ae) && ae.Status == http.StatusNotModified {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
 }
 
 // Version is the engine's GET /version.

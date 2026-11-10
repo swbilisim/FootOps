@@ -96,7 +96,7 @@ func TestParkAndUnpark(t *testing.T) {
 	}
 
 	// What would start the container is refused; Start leaves it stopped.
-	if err := e.ops.Redeploy(ctx, "enisparta", e.progress); !errors.Is(err, errParked) {
+	if err := e.ops.Redeploy(ctx, "enisparta", false, e.progress); !errors.Is(err, errParked) {
 		t.Errorf("redeploy: %v", err)
 	}
 	if _, err := e.ops.CheckUpdate("enisparta", SiteUpdate{Domains: spec.Domains, Image: spec.Image, Port: 3000, MemoryMB: 256}); !errors.Is(err, errParked) {

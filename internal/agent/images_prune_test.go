@@ -99,7 +99,7 @@ func TestRedeployDropsReplacedImage(t *testing.T) {
 		}
 	}
 	e.steps = nil
-	if err := e.ops.Redeploy(context.Background(), "enisparta", e.progress); err != nil {
+	if err := e.ops.Redeploy(context.Background(), "enisparta", false, e.progress); err != nil {
 		t.Fatal(err)
 	}
 	if e.run.ran("docker image rm sha256:eski") != 1 || !strings.Contains(strings.Join(e.steps, "\n"), "✓ Önceki imaj silindi") {
@@ -108,7 +108,7 @@ func TestRedeployDropsReplacedImage(t *testing.T) {
 	// The same image again (nothing new pulled): nothing to remove.
 	e.run.hook = nil
 	e.steps = nil
-	if err := e.ops.Redeploy(context.Background(), "enisparta", e.progress); err != nil {
+	if err := e.ops.Redeploy(context.Background(), "enisparta", false, e.progress); err != nil {
 		t.Fatal(err)
 	}
 	if e.run.ran("docker image rm") != 1 {
@@ -127,7 +127,7 @@ func TestRedeployDropsReplacedImage(t *testing.T) {
 	}
 	e.run.fail["docker image rm sha256:paylasilan"] = errors.New("conflict: image is being used by stopped container")
 	e.steps = nil
-	if err := e.ops.Redeploy(context.Background(), "enisparta", e.progress); err != nil {
+	if err := e.ops.Redeploy(context.Background(), "enisparta", false, e.progress); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(strings.Join(e.steps, "\n"), "ℹ Önceki imaj bırakıldı") {

@@ -131,6 +131,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sites/check", s.checkSite)
 	mux.HandleFunc("POST /v1/sites/{name}/move", s.moveSite)
 	mux.HandleFunc("GET /v1/sites/{name}/dns", s.siteDNS)
+	mux.HandleFunc("GET /v1/sites/{name}/layer", s.siteLayer)
 	mux.HandleFunc("GET /v1/removed", s.listRemoved)
 	mux.HandleFunc("POST /v1/removed/{id}/purge", s.purgeRemoved)
 	mux.HandleFunc("POST /v1/images/check", s.checkImage)
@@ -1083,9 +1084,12 @@ func (s *Server) moveSite(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	detail := cur.Group + " → " + next.Group
+	if !req.Force && refuseLayer(w, s.Sites.Layer(r.Context(), cur)) {
+		return
+	}
+	detail := cur.Group + " → " + next.Group + forcedNote(req.Force)
 	id, err := s.Jobs.Start(JobSpec{Kind: "site.move", Target: name, Actor: req.Actor}, func(ctx context.Context, t *Task) error {
-		return s.Sites.Move(ctx, name, next.Group, t.Step)
+		return s.Sites.Move(ctx, name, next.Group, req.Force, t.Step)
 	}, func(j Job) {
 		if j.Err != "" {
 			detail += " — hata: " + j.Err
@@ -1170,16 +1174,23 @@ func (s *Server) siteJob(kind string) http.HandlerFunc {
 			writeErr(w, http.StatusBadRequest, "geçersiz istek")
 			return
 		}
-		if _, err := s.Sites.Store.Get(name); err != nil {
+		spec, err := s.Sites.Store.Get(name)
+		if err != nil {
 			writeErr(w, http.StatusNotFound, err.Error())
+			return
+		}
+		// A removal was confirmed with the site's name, the layer in view.
+		if kind == "site.redeploy" && !req.Force && refuseLayer(w, s.Sites.Layer(r.Context(), spec)) {
 			return
 		}
 		id, err := s.Jobs.Start(JobSpec{Kind: kind, Target: name, Actor: req.Actor}, func(ctx context.Context, t *Task) error {
 			if kind == "site.remove" {
 				return s.Sites.Remove(ctx, name, t.Step)
 			}
-			return s.Sites.Redeploy(ctx, name, t.Step)
-		}, s.recordJob)
+			return s.Sites.Redeploy(ctx, name, req.Force, t.Step)
+		}, func(j Job) {
+			s.recordJobDetail(j, strings.TrimSpace(j.Err+forcedNote(req.Force && kind == "site.redeploy")))
+		})
 		s.jobResponse(w, id, err)
 	}
 }
@@ -1206,9 +1217,14 @@ func (s *Server) updateSite(w http.ResponseWriter, r *http.Request) {
 		writeProblems(w, err)
 		return
 	}
-	summary := strings.Join(changes, "; ")
+	if !req.Force {
+		if lr, err := s.Sites.UpdateLayer(r.Context(), name, req.Update); err == nil && refuseLayer(w, lr) {
+			return
+		}
+	}
+	summary := strings.Join(changes, "; ") + forcedNote(req.Force)
 	id, err := s.Jobs.Start(JobSpec{Kind: "site.update", Target: name, Actor: req.Actor}, func(ctx context.Context, t *Task) error {
-		return s.Sites.Update(ctx, name, req.Update, t.Step)
+		return s.Sites.Update(ctx, name, req.Update, req.Force, t.Step)
 	}, func(j Job) {
 		if j.Err != "" {
 			summary += " — hata: " + j.Err

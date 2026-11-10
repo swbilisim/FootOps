@@ -2,10 +2,14 @@ package install
 
 import (
 	"context"
+	"os"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/swbilisim/FootOps/internal/docker"
 	"github.com/swbilisim/FootOps/internal/doctor"
+	"github.com/swbilisim/FootOps/internal/sites"
 )
 
 func TestDoctorStandard(t *testing.T) {
@@ -72,5 +76,64 @@ func TestDoctorStandard(t *testing.T) {
 	put(t, h, "/var/run/reboot-required", "")
 	if f := byID(Doctor(ctx, h, nil, "/nonexistent/footops"))["reboot"]; f.Level != doctor.Info || !strings.Contains(f.Title, "04:00") {
 		t.Errorf("reboot = %+v", f)
+	}
+}
+
+// layerDocker is the Docker the check reads the sites' layers from.
+type layerDocker struct{ layers map[string][]docker.Change }
+
+func (layerDocker) Containers(context.Context) ([]docker.Container, error) { return nil, nil }
+func (layerDocker) Version(context.Context) (docker.Version, error)        { return docker.Version{}, nil }
+func (layerDocker) ImageUsage(context.Context) (docker.ImageUsage, error) {
+	return docker.ImageUsage{}, nil
+}
+func (layerDocker) Inspect(context.Context, string) (docker.Inspect, error) {
+	return docker.Inspect{}, nil
+}
+func (layerDocker) PathStat(context.Context, string, string) (os.FileMode, error) {
+	return 0o644, nil
+}
+func (d layerDocker) Changes(_ context.Context, name string) ([]docker.Change, error) {
+	if c, ok := d.layers[name]; ok {
+		return c, nil
+	}
+	return nil, &docker.APIError{Status: 404, Message: "no such container"}
+}
+
+// A site whose container wrote outside its persistent folder is a warning of its own;
+// none such, one line that says so (Faz L).
+func TestDoctorSites(t *testing.T) {
+	h, _ := newTestHost(t, func(cmd string) (string, error) { return "", errExit })
+	ctx := context.Background()
+	st := sites.Store{Root: h.Root}
+	for _, s := range []sites.Spec{
+		{Name: "kuleonu", Group: "kuleonu", Domains: []string{"kuleonu.bel.tr"}, Image: "ghcr.io/x/kuleonu:main", Port: 3000, MemoryMB: 256},
+		{Name: "enisparta", Group: "musteri", Domains: []string{"enisparta.com"}, Image: "nginx:1.27-alpine", Port: 80, MemoryMB: 64, DataMount: "/usr/share/nginx/html/up"},
+	} {
+		if err := os.MkdirAll(h.Path(s.Dir()), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.WriteMeta(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d := layerDocker{layers: map[string][]docker.Change{
+		"kuleonu": {{Path: "/app", Kind: docker.ChangeModified}, {Path: "/app/uploads", Kind: docker.ChangeAdded},
+			{Path: "/app/uploads/a.jpg", Kind: docker.ChangeAdded}, {Path: "/app/uploads/b.jpg", Kind: docker.ChangeAdded}},
+		"enisparta": {{Path: "/usr/share/nginx/html/up", Kind: docker.ChangeAdded}, {Path: "/run/nginx.pid", Kind: docker.ChangeAdded}},
+	}}
+	got := siteFindings(ctx, h, d)
+	if len(got) != 1 || got[0].ID != "site-layer:kuleonu" || got[0].Level != doctor.Warn ||
+		got[0].Title != "kuleonu container'ının içine yazıyor: kalıcı klasör dışında 2 dosya" || got[0].Detail != "/app/uploads — 2 dosya" ||
+		!strings.Contains(got[0].Fix, "kalıcı klasör yap") {
+		t.Errorf("findings: %+v", got)
+	}
+	delete(d.layers, "kuleonu")
+	if got := siteFindings(ctx, h, d); len(got) != 1 || got[0].ID != "site-layers" || got[0].Level != doctor.OK {
+		t.Errorf("none: %+v", got)
+	}
+	// It runs with the server check when Docker can read layers.
+	if m := Doctor(ctx, h, d, "/nonexistent/footops"); !slices.ContainsFunc(m.Findings, func(f doctor.Finding) bool { return f.ID == "site-layers" }) {
+		t.Errorf("not in the check: %+v", m.Findings)
 	}
 }

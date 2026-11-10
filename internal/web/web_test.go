@@ -26,6 +26,9 @@ import (
 
 type fakeAgent struct {
 	mu sync.Mutex
+	// what the site's container holds in its own layer (Faz L): a redeploy, an update or a
+	// move without force is refused while it is risky
+	layer agent.LayerReport
 	// the server check (Faz U1) and updates (Faz U3)
 	doctor     agent.DoctorStatus
 	doctorRuns []agent.Actor
@@ -149,6 +152,9 @@ func (f *fakeAgent) CreateSite(_ context.Context, req agent.CreateSiteRequest) (
 func (f *fakeAgent) UpdateSite(_ context.Context, name string, req agent.UpdateSiteRequest) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if err := f.refuseLayer(req.Force); err != nil {
+		return "", err
+	}
 	f.updates = append(f.updates, req)
 	if f.createErr != nil {
 		return "", f.createErr
@@ -156,9 +162,32 @@ func (f *fakeAgent) UpdateSite(_ context.Context, name string, req agent.UpdateS
 	return "job789", nil
 }
 
-func (f *fakeAgent) SiteJob(_ context.Context, name, verb string, a agent.Actor) (string, error) {
+// refuseLayer answers as the agent does when the layer holds files and nobody said go on.
+func (f *fakeAgent) refuseLayer(force bool) error {
+	if force || !f.layer.Risky() {
+		return nil
+	}
+	l := f.layer
+	return &agent.Error{Status: http.StatusConflict, Message: "container yeniden oluşturulunca kaybolacaklar var: " + l.Summary(), Layer: &l}
+}
+
+func (f *fakeAgent) SiteLayer(context.Context, string) (agent.LayerReport, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	return f.layer, nil
+}
+
+func (f *fakeAgent) SiteJob(_ context.Context, name, verb string, force bool, a agent.Actor) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if verb == "redeploy" {
+		if err := f.refuseLayer(force); err != nil {
+			return "", err
+		}
+	}
+	if force {
+		verb += "!"
+	}
 	f.siteJobs = append(f.siteJobs, verb+" "+name)
 	return "job456", nil
 }

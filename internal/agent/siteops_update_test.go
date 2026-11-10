@@ -57,7 +57,7 @@ func TestUpdateSite(t *testing.T) {
 		t.Errorf("summary leaks values: %q", summary)
 	}
 
-	if err := e.ops.Update(context.Background(), "enisparta", u, e.progress); err != nil {
+	if err := e.ops.Update(context.Background(), "enisparta", u, false, e.progress); err != nil {
 		t.Fatalf("update: %v\n%s", err, strings.Join(e.steps, "\n"))
 	}
 	compose := readFile(t, filepath.Join(dir, "compose.yaml"))
@@ -87,7 +87,7 @@ func TestUpdateOnlyEnvSkipsPullAndCaddy(t *testing.T) {
 	e.net.restarts = 4 // an old container with restarts behind it must not fail the update
 	u := updateFrom(specFor("enisparta"))
 	u.Set = map[string]string{"NODE_ENV": "staging"}
-	if err := e.ops.Update(context.Background(), "enisparta", u, e.progress); err != nil {
+	if err := e.ops.Update(context.Background(), "enisparta", u, false, e.progress); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	if e.run.ran("pull") != 0 || e.run.ran("caddy") != 0 {
@@ -106,7 +106,7 @@ func TestUpdateBodyCap(t *testing.T) {
 	if err != nil || strings.Join(changes, "; ") != "en büyük istek 100 → 5 MB" {
 		t.Fatalf("changes = %v, %v", changes, err)
 	}
-	if err := e.ops.Update(context.Background(), "enisparta", u, e.progress); err != nil {
+	if err := e.ops.Update(context.Background(), "enisparta", u, false, e.progress); err != nil {
 		t.Fatalf("update: %v\n%s", err, strings.Join(e.steps, "\n"))
 	}
 	caddy := readFile(t, filepath.Join(e.root, core.CaddySitesDir, "enisparta.caddy"))
@@ -121,7 +121,7 @@ func TestUpdateBodyCap(t *testing.T) {
 	}
 	// Back to the default: nothing written down for it, the block as before.
 	u.MaxBodyMB = 100
-	if err := e.ops.Update(context.Background(), "enisparta", u, e.progress); err != nil {
+	if err := e.ops.Update(context.Background(), "enisparta", u, false, e.progress); err != nil {
 		t.Fatalf("back: %v", err)
 	}
 	if sp, _ := e.ops.Store.Get("enisparta"); sp.MaxBodyMB != 0 || !strings.Contains(readFile(t, filepath.Join(e.root, core.CaddySitesDir, "enisparta.caddy")), "max_size 100MiB") {
@@ -209,7 +209,7 @@ func TestUpdateRollsBack(t *testing.T) {
 			u.DataMount = "/srv/files" // a new data directory: removed again on failure
 			os.RemoveAll(filepath.Join(dir, "data"))
 			u.Set = map[string]string{"NODE_ENV": "broken"}
-			if err := e.ops.Update(context.Background(), "enisparta", u, e.progress); err == nil {
+			if err := e.ops.Update(context.Background(), "enisparta", u, false, e.progress); err == nil {
 				t.Fatal("expected error")
 			}
 			if readFile(t, filepath.Join(dir, "compose.yaml")) != oldCompose || readFile(t, filepath.Join(dir, "footops.json")) != oldMeta {
@@ -287,7 +287,7 @@ func TestUpdateRollbackRestoresCaddyEvenIfContainerFails(t *testing.T) {
 	}
 	u := updateFrom(specFor("enisparta"))
 	u.Domains = []string{"enisparta.com"}
-	if err := e.ops.Update(context.Background(), "enisparta", u, e.progress); err == nil {
+	if err := e.ops.Update(context.Background(), "enisparta", u, false, e.progress); err == nil {
 		t.Fatal("expected error")
 	}
 	if readFile(t, caddyPath) != oldCaddy {

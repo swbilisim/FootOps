@@ -56,6 +56,17 @@
 {{/* Problems returned by the agent for a form. */}}
 {{define "problems"}}{{with .}}<div class="notice bad" role="alert">{{icon "alert"}}<div><strong>Düzeltilmesi gerekenler</strong><ul>{{range .}}<li>{{.}}</li>{{end}}</ul></div></div>{{end}}{{end}}
 
+{{/* What a site's container holds in its own layer (Faz L). With Ask it stands in a form:
+     the box sends force=1 (with the update it was shown for, on the edit form). */}}
+{{define "layer"}}{{with .}}<div class="notice warn" role="alert">{{icon "alert"}}<div>
+  {{if .L.Err}}<strong>Container'ın içi denetlenemedi</strong> ({{.L.Err}}): içine yazılmış dosyalar varsa container yeniden oluşturulunca kaybolur.
+  {{else}}<strong>Container'ın içinde, kalıcı klasör dışında {{.L.Files}} dosya var.</strong> Container yeniden oluşturulunca kaybolurlar:
+  <ul>{{range .L.Paths}}<li class="mono">{{.}}</li>{{end}}{{with .L.More}}<li>ve {{.}} yer daha</li>{{end}}</ul>
+  {{if .Mount}}Bu site kalıcı klasör olarak <span class="mono">{{.Mount}}</span> kullanıyor; bunlar onun dışında. Kalıcı olmaları için uygulama onları oraya yazmalı.
+  {{else}}Kalıcı tutmak için önce <a href="/sites/{{.Site}}/edit">site ayarlarında</a> bu yolu <strong>kalıcı klasör</strong> yap: içerik oraya taşınır (bir site tek kalıcı klasör bağlar).{{end}}{{end}}
+  {{if .Ask}}<label class="check"><input type="checkbox" name="force" value="1"{{if .Required}} required{{end}}> Bu dosyaların kaybolmasını kabul ediyorum</label>{{with .Consent}}<input type="hidden" name="consent" value="{{.}}">{{end}}{{end}}
+</div></div>{{end}}{{end}}
+
 {{/* Time-range selector and the charts below it. */}}
 {{define "history"}}
 <div class="section-head">

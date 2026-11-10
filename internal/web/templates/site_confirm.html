@@ -11,6 +11,7 @@
     {{with .Data.Problem}}<div class="notice bad">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
     <form method="post" action="/sites/{{$s.Name}}/remove">
       <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      {{template "layer" .Data.Layer}}
       <label class="field"><span>Onaylamak için site adını yaz: <strong>{{$s.Name}}</strong></span>
         <input name="confirm" autocomplete="off" autocapitalize="off" spellcheck="false" required>
       </label>
@@ -48,6 +49,7 @@
     <p><span class="mono">{{$s.Image}}</span> imajı tekrar indirilir; değiştiyse container yenisiyle değiştirilir (birkaç saniye kesinti).</p>
     <form method="post" action="/sites/{{$s.Name}}/redeploy">
       <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      {{template "layer" .Data.Layer}}
       <div class="form-actions">
         <button type="submit" class="primary">{{icon "deploy"}}Yeniden dağıt</button>
         <a class="btn" href="/sites/{{$s.Name}}">Vazgeç</a>

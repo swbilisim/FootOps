@@ -44,6 +44,7 @@ type Error struct {
 	Status   int
 	Message  string
 	Problems []string
+	Layer    *LayerReport // 409: what making the container anew would lose
 }
 
 func (e *Error) Error() string { return e.Message }
@@ -83,7 +84,7 @@ func decode(resp *http.Response, out any) error {
 		if e.Error == "" {
 			e.Error = resp.Status
 		}
-		return &Error{Status: resp.StatusCode, Message: e.Error, Problems: e.Problems}
+		return &Error{Status: resp.StatusCode, Message: e.Error, Problems: e.Problems, Layer: e.Layer}
 	}
 	if out == nil {
 		return nil
@@ -198,9 +199,9 @@ func (c *Client) CheckImage(ctx context.Context, image string, a Actor) (string,
 }
 
 // MoveSite starts moving a site to another group.
-func (c *Client) MoveSite(ctx context.Context, name, group, confirm string, a Actor) (string, error) {
+func (c *Client) MoveSite(ctx context.Context, name, group, confirm string, force bool, a Actor) (string, error) {
 	var r JobResponse
-	err := c.call(ctx, http.MethodPost, "/v1/sites/"+url.PathEscape(name)+"/move", MoveSiteRequest{Group: group, Confirm: confirm, Actor: a}, &r)
+	err := c.call(ctx, http.MethodPost, "/v1/sites/"+url.PathEscape(name)+"/move", MoveSiteRequest{Group: group, Confirm: confirm, Actor: a, Force: force}, &r)
 	return r.JobID, err
 }
 
@@ -208,6 +209,13 @@ func (c *Client) MoveSite(ctx context.Context, name, group, confirm string, a Ac
 func (c *Client) SiteDNS(ctx context.Context, name string) ([]DomainCheck, error) {
 	var out []DomainCheck
 	err := c.call(ctx, http.MethodGet, "/v1/sites/"+url.PathEscape(name)+"/dns", nil, &out)
+	return out, err
+}
+
+// SiteLayer reports what the site's container wrote outside its persistent folder.
+func (c *Client) SiteLayer(ctx context.Context, name string) (LayerReport, error) {
+	var out LayerReport
+	err := c.call(ctx, http.MethodGet, "/v1/sites/"+url.PathEscape(name)+"/layer", nil, &out)
 	return out, err
 }
 
@@ -230,9 +238,9 @@ func (c *Client) RegistryLogout(ctx context.Context, host string, a Actor) error
 }
 
 // SiteJob starts "redeploy" or "remove" for a site.
-func (c *Client) SiteJob(ctx context.Context, name, verb string, a Actor) (string, error) {
+func (c *Client) SiteJob(ctx context.Context, name, verb string, force bool, a Actor) (string, error) {
 	var r JobResponse
-	err := c.call(ctx, http.MethodPost, "/v1/sites/"+url.PathEscape(name)+"/"+verb, RestartRequest{Actor: a}, &r)
+	err := c.call(ctx, http.MethodPost, "/v1/sites/"+url.PathEscape(name)+"/"+verb, RestartRequest{Actor: a, Force: force}, &r)
 	return r.JobID, err
 }
 

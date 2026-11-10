@@ -405,7 +405,7 @@ func createdSite(t *testing.T) *opsEnv {
 
 func TestMoveSite(t *testing.T) {
 	e := createdSite(t)
-	if err := e.ops.Move(context.Background(), "enisparta", "kisisel", e.progress); err != nil {
+	if err := e.ops.Move(context.Background(), "enisparta", "kisisel", false, e.progress); err != nil {
 		t.Fatalf("move: %v\n%s", err, strings.Join(e.steps, "\n"))
 	}
 	dir := filepath.Join(e.root, "/srv/kisisel/enisparta")
@@ -470,7 +470,7 @@ func TestMoveKeepsGroupThatIsNotEmpty(t *testing.T) {
 	e := createdSite(t)
 	os.MkdirAll(filepath.Join(e.root, "/srv/musteri/_removed/eski-20261101-120000"), 0o700)
 	os.MkdirAll(filepath.Join(e.root, "/srv/kisisel"), 0o700)
-	if err := e.ops.Move(context.Background(), "enisparta", "kisisel", e.progress); err != nil {
+	if err := e.ops.Move(context.Background(), "enisparta", "kisisel", false, e.progress); err != nil {
 		t.Fatalf("move: %v\n%s", err, strings.Join(e.steps, "\n"))
 	}
 	if _, err := os.Stat(filepath.Join(e.root, "/srv/musteri/_removed/eski-20261101-120000")); err != nil {
@@ -502,7 +502,7 @@ func TestMoveRollsBackWhenNewContainerCrashes(t *testing.T) {
 			e.net.running = true
 		}
 	}
-	err := e.ops.Move(context.Background(), "enisparta", "kisisel", e.progress)
+	err := e.ops.Move(context.Background(), "enisparta", "kisisel", false, e.progress)
 	if err == nil || !strings.Contains(err.Error(), "Cannot find module") {
 		t.Fatalf("err = %v", err)
 	}
@@ -525,7 +525,7 @@ func TestMoveKeepsNetworkItDidNotCreate(t *testing.T) {
 	e := createdSite(t)
 	e.net.networks["prj_kisisel_enisparta"] = map[string][]string{"footops-caddy": nil}
 	e.run.fail["/srv/kisisel/enisparta/compose.yaml up"] = errors.New("exit status 1")
-	if err := e.ops.Move(context.Background(), "enisparta", "kisisel", e.progress); err == nil {
+	if err := e.ops.Move(context.Background(), "enisparta", "kisisel", false, e.progress); err == nil {
 		t.Fatal("move succeeded")
 	}
 	members, ok := e.net.networks["prj_kisisel_enisparta"]
@@ -549,12 +549,12 @@ func TestMoveAndUpdateRefuseMovedTag(t *testing.T) {
 	e := createdSite(t)
 	e.net.image = "sha256:old"
 	e.run.out["image inspect --format {{.Id}} ghcr.io/swbilisim/enisparta:main"] = "sha256:new\n"
-	if err := e.ops.Move(context.Background(), "enisparta", "kisisel", e.progress); !errors.Is(err, errTagMoved) {
+	if err := e.ops.Move(context.Background(), "enisparta", "kisisel", false, e.progress); !errors.Is(err, errTagMoved) {
 		t.Fatalf("move: %v", err)
 	}
 	u := updateFrom(specFor("enisparta"))
 	u.MemoryMB = 512
-	if err := e.ops.Update(context.Background(), "enisparta", u, e.progress); !errors.Is(err, errTagMoved) {
+	if err := e.ops.Update(context.Background(), "enisparta", u, false, e.progress); !errors.Is(err, errTagMoved) {
 		t.Fatalf("update: %v", err)
 	}
 	if e.run.ran(" stop") != 0 || e.run.ran(" up ") != 0 {
@@ -564,7 +564,7 @@ func TestMoveAndUpdateRefuseMovedTag(t *testing.T) {
 		t.Errorf("spec changed: %+v", sp)
 	}
 	e.run.out["image inspect --format {{.Id}} ghcr.io/swbilisim/enisparta:main"] = "sha256:old\n"
-	if err := e.ops.Move(context.Background(), "enisparta", "kisisel", e.progress); err != nil {
+	if err := e.ops.Move(context.Background(), "enisparta", "kisisel", false, e.progress); err != nil {
 		t.Errorf("same image refused: %v", err)
 	}
 }
@@ -579,7 +579,7 @@ func TestRedeployRewritesComposeAfterCutShortMove(t *testing.T) {
 	}
 	e.net.ctrNets = []string{"prj_musteri_enisparta"} // the container is where the move left it
 	e.ops.Reconcile(context.Background())
-	if err := e.ops.Redeploy(context.Background(), "enisparta", e.progress); err != nil {
+	if err := e.ops.Redeploy(context.Background(), "enisparta", false, e.progress); err != nil {
 		t.Fatalf("redeploy: %v\n%s", err, strings.Join(e.steps, "\n"))
 	}
 	compose := readFile(t, filepath.Join(e.root, "/srv/kisisel/enisparta/compose.yaml"))
@@ -597,7 +597,7 @@ func TestRedeployRewritesComposeAfterCutShortMove(t *testing.T) {
 	// Nothing to rewrite the next time, and the container is on the site's network.
 	e.net.ctrNets = []string{"prj_kisisel_enisparta"}
 	e.steps, e.run.calls = nil, nil
-	e.ops.Redeploy(context.Background(), "enisparta", e.progress)
+	e.ops.Redeploy(context.Background(), "enisparta", false, e.progress)
 	if strings.Contains(strings.Join(e.steps, "\n"), "yeniden yazıldı") || e.run.ran("--force-recreate") != 0 {
 		t.Errorf("an unchanged compose.yaml was rewritten:\n%s", strings.Join(e.run.calls, "\n"))
 	}
@@ -621,7 +621,7 @@ func TestStartRecreatesAfterCutShortMove(t *testing.T) {
 	}
 	// compose.yaml is right now; the container, say, still is not (cut short again).
 	e.run.calls = nil
-	if err := e.ops.Redeploy(context.Background(), "enisparta", e.progress); err != nil {
+	if err := e.ops.Redeploy(context.Background(), "enisparta", false, e.progress); err != nil {
 		t.Fatalf("redeploy: %v", err)
 	}
 	if e.run.ran("/srv/kisisel/enisparta/compose.yaml up --detach --remove-orphans --force-recreate") != 1 {
@@ -637,7 +637,7 @@ func TestStartRecreatesAfterCutShortMove(t *testing.T) {
 	u.MaxBodyMB = 5
 	e.net.ctrNets = []string{"prj_musteri_enisparta"}
 	e.run.calls = nil
-	if err := e.ops.Update(context.Background(), "enisparta", u, e.progress); err != nil || e.run.ran("up --detach --remove-orphans --force-recreate") != 1 {
+	if err := e.ops.Update(context.Background(), "enisparta", u, false, e.progress); err != nil || e.run.ran("up --detach --remove-orphans --force-recreate") != 1 {
 		t.Errorf("update on the old network: %v\n%s", err, strings.Join(e.run.calls, "\n"))
 	}
 }
@@ -647,7 +647,7 @@ func TestStartRecreatesAfterCutShortMove(t *testing.T) {
 func TestMoveRollsBackBeforeRecreate(t *testing.T) {
 	e := createdSite(t)
 	e.run.fail["/srv/musteri/enisparta/compose.yaml stop"] = errors.New("exit status 1")
-	if err := e.ops.Move(context.Background(), "enisparta", "kisisel", e.progress); err == nil {
+	if err := e.ops.Move(context.Background(), "enisparta", "kisisel", false, e.progress); err == nil {
 		t.Fatal("move succeeded")
 	}
 	if e.run.ran("/srv/musteri/enisparta/compose.yaml up --detach --remove-orphans") != 1 || e.run.ran("--force-recreate") != 0 {
@@ -661,7 +661,7 @@ func TestMoveRollsBackBeforeRecreate(t *testing.T) {
 func TestMoveRollsBack(t *testing.T) {
 	e := createdSite(t)
 	e.run.fail["/srv/kisisel/enisparta/compose.yaml up"] = errors.New("exit status 1: network not found")
-	err := e.ops.Move(context.Background(), "enisparta", "kisisel", e.progress)
+	err := e.ops.Move(context.Background(), "enisparta", "kisisel", false, e.progress)
 	if err == nil {
 		t.Fatal("move succeeded")
 	}
@@ -721,14 +721,14 @@ func TestMoveHandler(t *testing.T) {
 		s.Audit = NewAudit(filepath.Join(recDir, "audit.jsonl"))
 	})
 	var ae *Error
-	if _, err := c.MoveSite(ctx, "enisparta", "kisisel", "enisparta-x", Actor{User: "u"}); !errors.As(err, &ae) || ae.Status != 422 {
+	if _, err := c.MoveSite(ctx, "enisparta", "kisisel", "enisparta-x", false, Actor{User: "u"}); !errors.As(err, &ae) || ae.Status != 422 {
 		t.Errorf("wrong confirmation: %v", err)
 	}
-	if _, err := c.MoveSite(ctx, "nope", "kisisel", "nope", Actor{User: "u"}); !errors.As(err, &ae) || ae.Status != 404 {
+	if _, err := c.MoveSite(ctx, "nope", "kisisel", "nope", false, Actor{User: "u"}); !errors.As(err, &ae) || ae.Status != 404 {
 		t.Errorf("missing site: %v", err)
 	}
 	os.WriteFile(filepath.Join(recDir, "job9.json"), []byte(`{"job":"job9","kind":"restore","site":"enisparta"}`), 0o600)
-	if _, err := c.MoveSite(ctx, "enisparta", "kisisel", "enisparta", Actor{User: "u"}); !errors.As(err, &ae) || ae.Status != 409 {
+	if _, err := c.MoveSite(ctx, "enisparta", "kisisel", "enisparta", false, Actor{User: "u"}); !errors.As(err, &ae) || ae.Status != 409 {
 		t.Errorf("recovery pending: %v", err)
 	}
 	if _, err := c.CheckImage(ctx, "not an image", Actor{User: "u"}); !errors.As(err, &ae) || ae.Status != 422 {

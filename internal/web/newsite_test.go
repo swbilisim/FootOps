@@ -58,10 +58,17 @@ func (f *fakeAgent) CheckImage(_ context.Context, image string, a agent.Actor) (
 	return "imgjob1", nil
 }
 
-func (f *fakeAgent) MoveSite(_ context.Context, name, group, confirm string, a agent.Actor) (string, error) {
+func (f *fakeAgent) MoveSite(_ context.Context, name, group, confirm string, force bool, a agent.Actor) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.f6.moves = append(f.f6.moves, name+"/"+group+"/"+confirm)
+	if err := f.refuseLayer(force); err != nil {
+		return "", err
+	}
+	move := name + "/" + group + "/" + confirm
+	if force {
+		move += "!"
+	}
+	f.f6.moves = append(f.f6.moves, move)
 	if f.f6.moveErr != nil {
 		return "", f.f6.moveErr
 	}

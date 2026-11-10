@@ -40,6 +40,44 @@ type fakeNet struct {
 	stale    []string // networks Caddy and MongoDB are configured for but not on (stopped)
 	members  int      // NetworkMembers requests
 	log      []string
+	layer    map[string][]docker.Change // what each container wrote to its own layer
+	layerErr error
+	mounts   map[string][]string // where each container has mounts
+	dirs     map[string]bool     // paths in the containers that are folders
+	sizeRw   int64               // each container's own layer
+}
+
+func (f *fakeNet) PathStat(_ context.Context, _, p string) (os.FileMode, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.dirs[p] {
+		return os.ModeDir | 0o755, nil
+	}
+	return 0o644, nil
+}
+
+func (f *fakeNet) InspectSize(ctx context.Context, name string) (docker.Inspect, error) {
+	in, err := f.Inspect(ctx, name)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	in.SizeRw = f.sizeRw
+	return in, err
+}
+
+func (f *fakeNet) Changes(_ context.Context, name string) ([]docker.Change, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.layerErr != nil {
+		return nil, f.layerErr
+	}
+	return f.layer[name], nil
+}
+
+func (f *fakeNet) Start(_ context.Context, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rec("start " + name)
+	return nil
 }
 
 func newFakeNet() *fakeNet {
@@ -129,6 +167,11 @@ func (f *fakeNet) Inspect(_ context.Context, name string) (docker.Inspect, error
 		in.State.Health = &struct {
 			Status string `json:"Status"`
 		}{f.health}
+	}
+	for _, m := range f.mounts[name] {
+		in.Mounts = append(in.Mounts, struct {
+			Destination string `json:"Destination"`
+		}{m})
 	}
 	in.NetworkSettings.Networks = map[string]docker.Endpoint{}
 	if name == caddyContainer || name == mongoContainer { // the core: where it is attached

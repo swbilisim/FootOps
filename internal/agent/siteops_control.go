@@ -58,12 +58,18 @@ func (o *SiteOps) Start(ctx context.Context, name string) error {
 	if spec.IsParked() {
 		return nil
 	}
-	if err := o.syncCompose(spec, nil); err != nil {
-		return err
-	}
 	base := o.restartBaseline(ctx, spec)
-	if err := o.compose(ctx, spec, o.upArgs(ctx, spec, "--detach")...); err != nil {
+	started, err := o.startAsIs(ctx, spec, nil)
+	if err != nil {
 		return fmt.Errorf("site başlatılamadı: %w", err)
+	}
+	if !started {
+		if err := o.syncCompose(spec, nil); err != nil {
+			return err
+		}
+		if err := o.compose(ctx, spec, o.upArgs(ctx, spec, "--detach")...); err != nil {
+			return fmt.Errorf("site başlatılamadı: %w", err)
+		}
 	}
 	return o.waitListening(ctx, spec, base)
 }

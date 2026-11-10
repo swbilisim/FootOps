@@ -12,6 +12,7 @@
 {{template "problems" .Data.Problems}}
 <form method="post" action="/sites/{{$s.Name}}/edit" class="stack">
   <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+  {{template "layer" .Data.Layer}}
 
   <fieldset>
     <legend>Alan adları</legend>

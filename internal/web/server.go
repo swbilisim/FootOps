@@ -41,8 +41,9 @@ type AgentAPI interface {
 	CreateSite(ctx context.Context, req agent.CreateSiteRequest) (string, error)
 	CheckSite(ctx context.Context, req agent.CreateSiteRequest) (sites.Spec, error)
 	CheckImage(ctx context.Context, image string, a agent.Actor) (string, error)
-	MoveSite(ctx context.Context, name, group, confirm string, a agent.Actor) (string, error)
+	MoveSite(ctx context.Context, name, group, confirm string, force bool, a agent.Actor) (string, error)
 	SiteDNS(ctx context.Context, name string) ([]agent.DomainCheck, error)
+	SiteLayer(ctx context.Context, name string) (agent.LayerReport, error)
 	Registries(ctx context.Context) ([]agent.RegistryLogin, error)
 	RegistryLogin(ctx context.Context, host, user, token string, a agent.Actor) (agent.RegistryLoginResponse, error)
 	RegistryLogout(ctx context.Context, host string, a agent.Actor) error
@@ -50,7 +51,7 @@ type AgentAPI interface {
 	SetExpiry(ctx context.Context, name, expires string, was *string, a agent.Actor) error
 	ParkSite(ctx context.Context, name string, a agent.Actor) (string, error)
 	UnparkSite(ctx context.Context, name, expires string, a agent.Actor) (string, error)
-	SiteJob(ctx context.Context, name, verb string, a agent.Actor) (string, error)
+	SiteJob(ctx context.Context, name, verb string, force bool, a agent.Actor) (string, error)
 	Job(ctx context.Context, id string) (agent.Job, error)
 	CancelJob(ctx context.Context, id string, a agent.Actor) error
 	Snapshots(ctx context.Context, site string) ([]agent.Snapshot, error)
