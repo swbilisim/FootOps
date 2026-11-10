@@ -32,8 +32,32 @@ const (
 type fakeKeychain struct {
 	items map[string]string
 	err   error // every call fails so
+	// setErr, delErr: writing, deleting an item named so fails.
+	setErr, delErr map[string]error
 	// cmd prints an item named by its last argument (Command); none: one that fails.
 	cmd []string
+}
+
+func (k fakeKeychain) Set(_ context.Context, name, secret string) error {
+	if k.err != nil {
+		return k.err
+	}
+	if err := k.setErr[name]; err != nil {
+		return err
+	}
+	k.items[name] = secret
+	return nil
+}
+
+func (k fakeKeychain) Delete(_ context.Context, name string) error {
+	if k.err != nil {
+		return k.err
+	}
+	if err := k.delErr[name]; err != nil {
+		return err
+	}
+	delete(k.items, name)
+	return nil
 }
 
 func (k fakeKeychain) Command(name string) []string {

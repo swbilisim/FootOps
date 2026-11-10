@@ -163,12 +163,13 @@ struct OpenedSection: View {
         .padding(.vertical, 10)
     }
 
-    /// Where it came from: a server's backup ("H1 / magaza"), or an archive.
-    private func origin(server: String?, site: String?, archive: String?) -> String {
+    /// Where it came from: a server's backup ("H1 / magaza", the server as the Mac calls
+    /// it), or an archive.
+    private func origin(server: String?, serverName: String?, site: String?, archive: String?) -> String {
         if let archive {
             return "arşiv \(archive)" + (site.map { $0.isEmpty ? "" : " (\($0))" } ?? "")
         }
-        return "\((server ?? "").uppercased()) / \(site ?? "")"
+        return "\(serverName ?? (server ?? "").uppercased()) / \(site ?? "")"
     }
 
     private func taken(_ time: Date, archive: String?) -> String {
@@ -176,7 +177,7 @@ struct OpenedSection: View {
     }
 
     private func folderDetail(_ f: OpenedFolder) -> String {
-        let from = origin(server: f.server, site: f.site, archive: f.archive)
+        let from = origin(server: f.server, serverName: f.serverName, site: f.site, archive: f.archive)
         if let e = f.error {
             return "\(from) · \(e)"
         }
@@ -196,7 +197,7 @@ struct OpenedSection: View {
     private func dbDetail(_ d: OpenedDatabase) -> String {
         var t = "MongoDB · \(Fmt.bytes(d.bytes))"
         if d.registered, d.server != nil || d.archive != nil {
-            t += " · " + origin(server: d.server, site: d.site, archive: d.archive)
+            t += " · " + origin(server: d.server, serverName: d.serverName, site: d.site, archive: d.archive)
             if let time = d.time {
                 t += ", " + taken(time, archive: d.archive)
             }

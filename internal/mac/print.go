@@ -164,7 +164,7 @@ func printSettings(w io.Writer, v SettingsView) {
 		return
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "\nSUNUCU\tPANEL\tSSH\tKOVA")
+	fmt.Fprintln(tw, "\nSUNUCU\tAD\tPANEL\tSSH\tKOVA")
 	for _, s := range v.Servers {
 		bucket := s.Bucket
 		if bucket == "" {
@@ -172,9 +172,9 @@ func printSettings(w io.Writer, v SettingsView) {
 		}
 		code := s.Code
 		if !s.Keychain {
-			code += " (yalnız ayarlarda)"
+			code += " (şifre yok)"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", code, orDash(s.Panel), orDash(s.SSH), bucket)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", code, orDash(clean(s.Name)), orDash(s.Panel), orDash(s.SSH), bucket)
 	}
 	tw.Flush()
 }
@@ -274,16 +274,21 @@ func clock(t, now time.Time) string {
 }
 
 // clean keeps text from a file free of control and format characters: nothing in a
-// status file reaches the Terminal as an escape sequence, or turns a name around
-// (U+202E) in the menu.
+// status file reaches the Terminal as an escape sequence, turns a name around (U+202E)
+// or breaks it into two lines (U+2028) in the menu.
 func clean(s string) string {
 	s = strings.ToValidUTF8(s, "?")
 	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+		if unprintable(r) {
 			return '?'
 		}
 		return r
 	}, s)
+}
+
+// unprintable: a control or format character, or a line or paragraph separator.
+func unprintable(r rune) bool {
+	return unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp)
 }
 
 // clip keeps at most n bytes of a message (whole characters).

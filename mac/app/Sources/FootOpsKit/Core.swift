@@ -278,7 +278,7 @@ extension Core {
         // The error first: an answer whose fields may all be left out (ayar's) would
         // read an error object as an empty answer.
         if let f = try? decoder.decode(CoreFailure.self, from: out.stdout), f.event == "error" {
-            return .failure(CoreMessage(f.message ?? "bilinmeyen hata"))
+            return .failure(CoreMessage(f.message ?? "bilinmeyen hata", code: f.code))
         }
         if let v = try? decoder.decode(T.self, from: out.stdout) {
             return .success(v)
@@ -292,11 +292,13 @@ extension Core {
     }
 }
 
-/// Why the core gave no answer, in its words.
+/// Why the core gave no answer, in its words; code: its error's (settings_changed).
 public struct CoreMessage: Error, Equatable, Sendable {
     public var text: String
+    public var code: String?
 
-    public init(_ text: String) {
+    public init(_ text: String, code: String? = nil) {
         self.text = text
+        self.code = code
     }
 }

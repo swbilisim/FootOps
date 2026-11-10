@@ -127,8 +127,8 @@ final class ModelsTests: XCTestCase {
         let back = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         XCTAssertEqual(back?["format"] as? Int, 1)
         let servers = back?["servers"] as? [String: [String: String]]
-        XCTAssertEqual(servers?["a"], ["panel": "", "ssh": "", "bucket": ""])
-        XCTAssertEqual(servers?["b"], ["panel": "", "ssh": "kisi@sunucu.example", "bucket": "kova-b"])
+        XCTAssertEqual(servers?["a"], ["name": "", "panel": "", "ssh": "", "bucket": ""])
+        XCTAssertEqual(servers?["b"], ["name": "", "panel": "", "ssh": "kisi@sunucu.example", "bucket": "kova-b"])
     }
 
     /// The core's answer, its own error, or what can be told of neither.

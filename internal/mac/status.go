@@ -80,7 +80,7 @@ type Status struct {
 // say.
 type ServerStatus struct {
 	Code   string `json:"code"`
-	Name   string `json:"name"` // as its status file says (H1); else the code in capitals
+	Name   string `json:"name"` // as the settings call it; else its status file (H1); else the code in capitals
 	Bucket string `json:"bucket"`
 	Panel  string `json:"panel,omitempty"`
 	SSH    string `json:"ssh,omitempty"`
@@ -246,6 +246,9 @@ func decode[T any](f fetched, ok func(*T) bool) (*T, error) {
 func judge(srv server, sf, wf fetched, now time.Time) ServerStatus {
 	s := ServerStatus{Code: srv.Code, Name: strings.ToUpper(srv.Code), Bucket: srv.Bucket, Panel: srv.Panel, SSH: srv.SSH,
 		Color: green, Sites: []SiteStatus{}}
+	if srv.Name != "" {
+		s.Name = srv.Name // the settings' name before the status file's
+	}
 	add := func(color, format string, args ...any) {
 		s.Problems = append(s.Problems, Problem{Color: color, Text: fmt.Sprintf(format, args...)})
 	}
@@ -259,7 +262,7 @@ func judge(srv server, sf, wf fetched, now time.Time) ServerStatus {
 		shown := *file
 		shown.FootOps = clip(clean(shown.FootOps), 40)
 		s.File, s.FileAt = &shown, sf.at
-		if n := clip(clean(file.Server), 64); n != "" {
+		if n := clip(clean(file.Server), 64); n != "" && srv.Name == "" {
 			s.Name = n
 		}
 		at := sf.at

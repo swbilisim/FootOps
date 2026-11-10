@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -22,6 +23,10 @@ type Keychain interface {
 	// Command prints an item's secret when run: restic asks it for a repository's
 	// password (RESTIC_PASSWORD_COMMAND), so the password sits in no file, no argument.
 	Command(name string) []string
+	// Set writes an item's secret, in place of one there; Delete removes an item, none
+	// there being no error (footops-mac sunucu: the Settings window's servers).
+	Set(ctx context.Context, name, secret string) error
+	Delete(ctx context.Context, name string) error
 }
 
 var errNoItem = errors.New("Anahtar Zinciri'nde yok")
@@ -54,6 +59,58 @@ func (k securityKeychain) Get(ctx context.Context, name string) (string, error) 
 
 func (k securityKeychain) Command(name string) []string {
 	return []string{k.Tool, "find-generic-password", "-s", k.Service, "-a", name, "-w"}
+}
+
+// reItemWord is what goes unquoted into security -i's command line: no space, quote,
+// backslash or line break — a value of another shape could end the command there and
+// start one of its own — and no dash first, to be read as no option.
+var reItemWord = regexp.MustCompile(`^[A-Za-z0-9._@+/=][A-Za-z0-9._@+/=-]{0,255}$`)
+
+// Set writes the item as the ones there were made (footops-yedek's sifre-kaydet): by
+// security itself, so security reads it again without a prompt. The secret goes in on
+// stdin, as a line of security's own (-i), never as an argument a process list would
+// show; what is read back must be what was written.
+func (k securityKeychain) Set(ctx context.Context, name, secret string) error {
+	if !reItemWord.MatchString(k.Service) || !reItemWord.MatchString(name) || !reItemWord.MatchString(secret) {
+		return fmt.Errorf("Anahtar Zinciri'ne yazılmadı (%s): ad ya da değer beklenmeyen bir karakter taşıyor", clip(name, 40))
+	}
+	cmd := exec.CommandContext(ctx, k.Tool, "-i")
+	cmd.Stdin = strings.NewReader(fmt.Sprintf("add-generic-password -U -s %s -a %s -l \"%s %s\" -w %s\n",
+		k.Service, name, k.Service, name, secret))
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	// Its exit code is the failed command's.
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("Anahtar Zinciri'ne yazılamadı (%s / %s): %s", k.Service, name, clip(firstLine(stderr.String(), err.Error()), 200))
+	}
+	got, err := k.Get(ctx, name)
+	if err != nil {
+		return err
+	}
+	if got != secret {
+		return fmt.Errorf("Anahtar Zinciri'ne yazılan geri okunamadı (%s / %s)", k.Service, name)
+	}
+	return nil
+}
+
+// Delete removes the item from every keychain that has one (a copy made by hand in
+// another keychain would be read in its place).
+func (k securityKeychain) Delete(ctx context.Context, name string) error {
+	for range 8 {
+		cmd := exec.CommandContext(ctx, k.Tool, "delete-generic-password", "-s", k.Service, "-a", name)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		err := cmd.Run()
+		var ee *exec.ExitError
+		switch {
+		case err == nil:
+			continue
+		case errors.As(err, &ee) && ee.ExitCode() == itemNotFound:
+			return nil
+		}
+		return fmt.Errorf("Anahtar Zinciri'nden silinemedi (%s / %s): %s", k.Service, name, clip(firstLine(stderr.String(), err.Error()), 200))
+	}
+	return fmt.Errorf("Anahtar Zinciri'nden silinemedi (%s / %s): kayıt bitmiyor", k.Service, name)
 }
 
 func (k securityKeychain) Names(ctx context.Context) ([]string, error) {

@@ -3,6 +3,8 @@ package mac
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Settings is ~/Library/Application Support/FootOps/ayarlar.json (0600): what the Mac
@@ -30,6 +33,9 @@ type Settings struct {
 
 // ServerSettings is one server's.
 type ServerSettings struct {
+	// Name is what this Mac calls it (the menu, the windows); none: the name its status
+	// file gives, else its code in capitals.
+	Name string `json:"name,omitempty"`
 	// Panel is opened in the browser (the app's "Panel" item), SSH in the Terminal as
 	// ssh://<SSH>.
 	Panel string `json:"panel,omitempty"`
@@ -92,7 +98,8 @@ func checkPlaces(s Settings) error {
 	return nil
 }
 
-// fieldProblems names the panels and SSH targets not to the rules, a server at a time.
+// fieldProblems names the names, panels and SSH targets not to the rules, a server at a
+// time.
 func fieldProblems(s Settings) []string {
 	codes := make([]string, 0, len(s.Servers))
 	for c := range s.Servers {
@@ -102,6 +109,11 @@ func fieldProblems(s Settings) []string {
 	var out []string
 	for _, c := range codes {
 		srv := s.Servers[c]
+		if srv.Name != "" {
+			if err := checkName(srv.Name); err != nil {
+				out = append(out, fmt.Sprintf("%s: %v", c, err))
+			}
+		}
 		if srv.Panel != "" {
 			if err := checkPanel(srv.Panel); err != nil {
 				out = append(out, fmt.Sprintf("%s: %v", c, err))
@@ -119,6 +131,9 @@ func fieldProblems(s Settings) []string {
 // usable is a server's settings with what is not to the rules left out: nothing the app
 // opens comes of a file edited by hand.
 func (srv ServerSettings) usable() ServerSettings {
+	if srv.Name != "" && checkName(srv.Name) != nil {
+		srv.Name = ""
+	}
 	if srv.Panel != "" && checkPanel(srv.Panel) != nil {
 		srv.Panel = ""
 	}
@@ -126,6 +141,18 @@ func (srv ServerSettings) usable() ServerSettings {
 		srv.SSH = ""
 	}
 	return srv
+}
+
+// nameMax is the most characters of a server's name.
+const nameMax = 64
+
+// checkName takes a server's name: one line of up to nameMax characters ("Hetzner –
+// ana"), nothing a terminal would take for a command of its own.
+func checkName(n string) error {
+	if !utf8.ValidString(n) || utf8.RuneCountInString(n) > nameMax || strings.TrimSpace(n) != n || strings.ContainsFunc(n, unprintable) {
+		return fmt.Errorf("ad geçersiz: %q (en çok %d karakter, tek satır)", clip(n, 80), nameMax)
+	}
+	return nil
 }
 
 // checkPanel takes a web address of a host: http too (a panel reached through an SSH
@@ -183,10 +210,12 @@ func checkBucket(b string) error {
 	return nil
 }
 
-// server is one server as the Mac knows it; Password: its repository's password is in
-// the Keychain (restic-<code>), so its backups can be opened.
+// server is one server as the Mac knows it; Name: what the settings call it (none:
+// none); Password: its repository's password is in the Keychain (restic-<code>), so
+// its backups can be opened.
 type server struct {
 	Code     string
+	Name     string
 	Bucket   string
 	Panel    string
 	SSH      string
@@ -239,30 +268,55 @@ func serverCodes(names []string, set Settings) (map[string]bool, []string) {
 
 // servers lists the servers the Mac knows and reads the key that reads their buckets.
 func (e *env) servers(ctx context.Context) ([]server, access, error) {
-	set, has, codes, err := e.known(ctx)
+	list, err := e.serverList(ctx)
 	if err != nil {
 		return nil, access{}, err
 	}
-	if len(codes) == 0 {
+	if len(list) == 0 {
 		return nil, access{}, errors.New("sunucu yok: Anahtar Zinciri'nde footops-yedek / restic-<sunucu> kaydı da ayarlar dosyasında sunucu da yok")
 	}
+	acc, err := e.readAccess(ctx)
+	if err != nil {
+		return nil, access{}, err
+	}
+	return list, acc, nil
+}
+
+// accessItems are the Keychain's items of the Mac's R2 access.
+var accessItems = []struct{ name, what string }{{"r2-hesap", "R2 hesap kimliği"}, {"r2-mac-erisim", "salt okunur anahtar"},
+	{"r2-mac-gizli", "salt okunur anahtarın gizlisi"}}
+
+// noAccessError: an item of the Mac's R2 access is not in the Keychain.
+type noAccessError struct{ text string }
+
+func (n *noAccessError) Error() string { return n.text }
+
+// readAccess reads the key that reads the servers' buckets.
+func (e *env) readAccess(ctx context.Context) (access, error) {
 	var acc access
-	for _, it := range []struct {
-		name, what string
-		to         *string
-	}{{"r2-hesap", "R2 hesap kimliği", &acc.Account}, {"r2-mac-erisim", "salt okunur anahtar", &acc.KeyID},
-		{"r2-mac-gizli", "salt okunur anahtarın gizlisi", &acc.Secret}} {
+	for i, to := range []*string{&acc.Account, &acc.KeyID, &acc.Secret} {
+		it := accessItems[i]
 		v, err := e.keychain.Get(ctx, it.name)
 		if errors.Is(err, errNoItem) {
-			return nil, access{}, fmt.Errorf("Anahtar Zinciri'nde footops-yedek / %s yok (%s)", it.name, it.what)
+			return access{}, &noAccessError{fmt.Sprintf("Anahtar Zinciri'nde footops-yedek / %s yok (%s)", it.name, it.what)}
 		}
 		if err != nil {
-			return nil, access{}, err
+			return access{}, err
 		}
-		*it.to = strings.TrimSpace(v)
+		*to = strings.TrimSpace(v)
 	}
 	if !reAccount.MatchString(acc.Account) {
-		return nil, access{}, errors.New("Anahtar Zinciri'ndeki r2-hesap bir R2 hesap kimliğine benzemiyor (32 onaltılık rakam)")
+		return access{}, errors.New("Anahtar Zinciri'ndeki r2-hesap bir R2 hesap kimliğine benzemiyor (32 onaltılık rakam)")
+	}
+	return acc, nil
+}
+
+// serverList is the servers the Mac knows, with what the settings and the Keychain's
+// names say of each; no secret is read but a kova-<code> item.
+func (e *env) serverList(ctx context.Context) ([]server, error) {
+	set, has, codes, err := e.known(ctx)
+	if err != nil {
+		return nil, err
 	}
 	var out []server
 	for _, c := range codes {
@@ -270,38 +324,80 @@ func (e *env) servers(ctx context.Context) ([]server, access, error) {
 		if has["kova-"+c] {
 			b, err := e.keychain.Get(ctx, "kova-"+c)
 			if err != nil {
-				return nil, access{}, err
+				return nil, err
 			}
 			s.Bucket = strings.Trim(strings.TrimSpace(b), "/")
 		}
 		if st, ok := set.Servers[c]; ok {
 			st = st.usable()
-			s.Panel, s.SSH = st.Panel, st.SSH
+			s.Name, s.Panel, s.SSH = st.Name, st.Panel, st.SSH
 			if st.Bucket != "" {
 				s.Bucket = strings.Trim(st.Bucket, "/")
 			}
 		}
 		if err := checkBucket(s.Bucket); err != nil {
-			return nil, access{}, fmt.Errorf("%s: %v", c, err)
+			return nil, fmt.Errorf("%s: %v", c, err)
 		}
 		out = append(out, s)
 	}
-	return out, acc, nil
+	return out, nil
+}
+
+// names are the servers' names in the settings, by code; a file not read gives none
+// (what reads it says why).
+func (e *env) names() map[string]string {
+	out := map[string]string{}
+	set, err := readSettings(e.settings)
+	if err != nil {
+		return out
+	}
+	for c, s := range set.Servers {
+		if n := s.usable().Name; n != "" {
+			out[c] = n
+		}
+	}
+	return out
+}
+
+// displayName is a server's name as the Mac shows it: the settings', else its code in
+// capitals.
+func displayName(code string, names map[string]string) string {
+	if n := names[code]; n != "" {
+		return n
+	}
+	return strings.ToUpper(code)
 }
 
 // SettingsView is footops-mac ayar's answer (its --json), and ayar yaz's once written:
 // where the file is and every server the Mac knows, with what is set for it. Error: the
 // file or the Keychain could not be read (what could be is still listed; writing
-// replaces the file).
+// replaces the file). Revision is the file as read (settingsRevision): ayar yaz given it
+// writes only over that file.
 type SettingsView struct {
-	Path    string          `json:"path"`
-	Error   string          `json:"error,omitempty"`
-	Servers []ServerSetting `json:"servers"`
+	Path     string          `json:"path"`
+	Revision string          `json:"revision,omitempty"`
+	Error    string          `json:"error,omitempty"`
+	Servers  []ServerSetting `json:"servers"`
+}
+
+// settingsRevision names the file as it is: the start of its SHA-256, "yok" when there
+// is none, "" when it cannot be read.
+func settingsRevision(path string) string {
+	data, err := os.ReadFile(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return "yok"
+	case err != nil:
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:8])
 }
 
 // ServerSetting is one server's settings.
 type ServerSetting struct {
 	Code   string `json:"code"`
+	Name   string `json:"name,omitempty"`
 	Panel  string `json:"panel,omitempty"`
 	SSH    string `json:"ssh,omitempty"`
 	Bucket string `json:"bucket,omitempty"`
@@ -314,7 +410,7 @@ type ServerSetting struct {
 }
 
 func (e *env) settingsView(ctx context.Context) SettingsView {
-	v := SettingsView{Path: e.settings, Servers: []ServerSetting{}}
+	v := SettingsView{Path: e.settings, Revision: settingsRevision(e.settings), Servers: []ServerSetting{}}
 	// What can be read is listed all the same: the file not understood, the Keychain's
 	// servers, for the file to be written anew; the Keychain locked, the file's.
 	var problems []string
@@ -339,7 +435,7 @@ func (e *env) settingsView(ctx context.Context) SettingsView {
 			}
 		}
 		if st, ok := set.Servers[c]; ok {
-			s.Panel, s.SSH, s.Bucket = st.Panel, st.SSH, st.Bucket
+			s.Name, s.Panel, s.SSH, s.Bucket = st.Name, st.Panel, st.SSH, st.Bucket
 		}
 		v.Servers = append(v.Servers, s)
 	}
@@ -350,32 +446,40 @@ func (e *env) settingsView(ctx context.Context) SettingsView {
 // settingsMax is the most read of new settings from stdin.
 const settingsMax = 64 << 10
 
+// newSettings is ayar yaz's input: the file's JSON, with the revision of the file it
+// was read from (none: written over whatever is there).
+type newSettings struct {
+	Format   int                       `json:"format"`
+	Revision string                    `json:"revision,omitempty"`
+	Servers  map[string]ServerSettings `json:"servers,omitempty"`
+}
+
 // readNewSettings reads the settings to write: the file's JSON, unknown fields refused
 // (a misspelt one would be lost silently), the values trimmed, servers with nothing set
-// left out, then held to the reader's rules.
-func readNewSettings(in io.Reader) (Settings, error) {
+// left out, then held to the reader's rules; and the revision they were read at.
+func readNewSettings(in io.Reader) (Settings, string, error) {
 	data, err := io.ReadAll(io.LimitReader(in, settingsMax+1))
 	if err != nil {
-		return Settings{}, fmt.Errorf("ayarlar okunamadı: %v", err)
+		return Settings{}, "", fmt.Errorf("ayarlar okunamadı: %v", err)
 	}
 	if len(data) > settingsMax {
-		return Settings{}, errors.New("ayarlar çok büyük")
+		return Settings{}, "", errors.New("ayarlar çok büyük")
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
-	var s Settings
+	var s newSettings
 	if err := dec.Decode(&s); err != nil {
-		return Settings{}, fmt.Errorf("ayarlar anlaşılamadı: %v", err)
+		return Settings{}, "", fmt.Errorf("ayarlar anlaşılamadı: %v", err)
 	}
 	if dec.More() {
-		return Settings{}, errors.New("ayarlar anlaşılamadı: tek bir JSON nesnesi olmalı")
+		return Settings{}, "", errors.New("ayarlar anlaşılamadı: tek bir JSON nesnesi olmalı")
 	}
 	if s.Format != settingsFormat {
-		return Settings{}, fmt.Errorf("ayarların biçimi %d olmalı", settingsFormat)
+		return Settings{}, "", fmt.Errorf("ayarların biçimi %d olmalı", settingsFormat)
 	}
 	out := Settings{Format: settingsFormat}
 	for code, srv := range s.Servers {
-		srv = ServerSettings{Panel: strings.TrimSpace(srv.Panel), SSH: strings.TrimSpace(srv.SSH),
+		srv = ServerSettings{Name: strings.TrimSpace(srv.Name), Panel: strings.TrimSpace(srv.Panel), SSH: strings.TrimSpace(srv.SSH),
 			Bucket: strings.Trim(strings.TrimSpace(srv.Bucket), "/")}
 		if srv == (ServerSettings{}) {
 			continue
@@ -390,9 +494,9 @@ func readNewSettings(in io.Reader) (Settings, error) {
 		out.Servers[code] = srv
 	}
 	if err := checkSettings(out); err != nil {
-		return Settings{}, err
+		return Settings{}, "", err
 	}
-	return out, nil
+	return out, s.Revision, nil
 }
 
 // saveSettings writes the file whole or not at all: a temporary file beside it (0600),
@@ -435,9 +539,15 @@ func (e *env) settingsCmd(ctx context.Context, args []string, jsonOut bool) erro
 	switch {
 	case len(args) == 0:
 	case len(args) == 1 && args[0] == "yaz":
-		s, err := readNewSettings(e.in)
+		s, rev, err := readNewSettings(e.in)
 		if err != nil {
 			return err
+		}
+		// Written over the file it was read from only: a server added or taken off since
+		// (sunucu ekle, the Terminal) would be undone by the whole file written anew.
+		if rev != "" && rev != settingsRevision(e.settings) {
+			return &codedError{code: "settings_changed",
+				text: "ayarlar dosyası okunduktan sonra değişmiş (başka bir pencere ya da Terminal): yeniden okuyup yeniden yazın"}
 		}
 		if err := saveSettings(e.settings, s); err != nil {
 			return err

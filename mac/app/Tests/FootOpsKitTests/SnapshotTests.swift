@@ -33,11 +33,38 @@ final class SnapshotTests: XCTestCase {
 
     func testSettings() throws {
         let path = "/Users/kisi/Library/Application Support/FootOps/ayarlar.json"
-        let model = SettingsModel(view: SettingsView(path: path, servers: [
-            ServerSetting(code: "a", defaultBucket: "footops-a"),
-            ServerSetting(code: "h1", panel: "https://panel.example", ssh: "kisi@sunucu.example", defaultBucket: "footops-h1"),
-        ]), login: .enabled, version: "abc1234")
-        try drawWindow("settings", SettingsWindow(model: model), size: NSSize(width: SettingsWindow.width, height: 640))
+        let servers = [
+            ServerSetting(code: "a", name: "Contabo", panel: "https://panel-a.example", ssh: "kisi@192.0.2.10", defaultBucket: "footops-a"),
+            ServerSetting(code: "h1", name: "Hetzner – ana", panel: "https://panel.example", ssh: "kisi@sunucu.example", defaultBucket: "footops-h1"),
+        ]
+        let model = SettingsModel(view: SettingsView(path: path, servers: servers), login: .enabled, version: "abc1234",
+                                  r2: R2Access(account: "0123…cdef", accountSet: true, keySet: true, secretSet: true))
+        model.tries["h1"] = .done(ServerTry(code: "h1", name: "Hetzner – ana", bucket: "footops-h1", checks: [
+            TryCheck(part: "status", state: "ok", text: "Durum dosyası okundu: FootOps abc1234 · 9 / 9 site çalışıyor · son yedek 09:00 (2 dk önce yazılmış)"),
+            TryCheck(part: "backups", state: "ok", text: "Yedek deposu açıldı (salt okunur): 154 anlık görüntü"),
+        ], ok: true))
+        model.tries["a"] = .running
+        try drawWindow("settings", SettingsWindow(model: model), size: NSSize(width: SettingsWindow.width, height: 1020))
+
+        // A server being added, one that failed its try (Cloudflare's step), a password
+        // being typed, one asked about before removal, the R2 access being typed.
+        let forms = SettingsModel(view: SettingsView(path: path, servers: [
+            ServerSetting(code: "a", name: "Contabo", defaultBucket: "footops-a"),
+            ServerSetting(code: "deneme", defaultBucket: "footops-test", keychain: false),
+        ]), login: .enabled, version: "abc1234", r2: R2Access(accountSet: false, keySet: false, secretSet: false))
+        forms.tries["deneme"] = .done(ServerTry(code: "deneme", name: "DENEME", bucket: "footops-test", checks: [
+            TryCheck(part: "status", state: "fail", text: "Kova bu Mac'in salt okunur anahtarıyla okunamıyor (R2: 403). Cloudflare → R2 → API token'ları → bu Mac'in salt okunur anahtarı → footops-test kovasını ekle."),
+            TryCheck(part: "backups", state: "skip", text: "Yedek deposu şifresi Anahtar Zinciri'nde yok: yedekler bu Mac'te açılamaz (Ayarlar → şifre)"),
+        ], ok: false))
+        forms.passwordFor = "a"
+        forms.password = "gizli"
+        forms.removing = "deneme"
+        forms.adding = NewServer(code: "h2", name: "Yeni sunucu", panel: "https://panel-h2.example")
+        forms.r2Form = NewR2()
+        try drawWindow("settings-forms", SettingsWindow(model: forms), size: NSSize(width: SettingsWindow.width, height: 1400))
+
+        let empty = SettingsModel(view: SettingsView(path: path, servers: []), login: .disabled, version: "abc1234")
+        try drawWindow("settings-empty", SettingsWindow(model: empty), size: NSSize(width: SettingsWindow.width, height: 560))
         let failing = SettingsModel(view: SettingsView(path: path, servers: [
             ServerSetting(code: "h1", panel: "panel.example", defaultBucket: "footops-h1/kasa"),
         ]), login: .requiresApproval, version: "abc1234")
@@ -64,7 +91,7 @@ final class SnapshotTests: XCTestCase {
                               sites: [SiteBackups(name: "blog", points: Array(points.prefix(2))),
                                       SiteBackups(name: "magaza", points: points),
                                       SiteBackups(name: "uzun-bir-site-adi-burada", points: [points[1]])])
-        let servers = [BackupServer(code: "a", bucket: "footops-a"), BackupServer(code: "h1", bucket: "footops-h1")]
+        let servers = [BackupServer(code: "a", name: "Contabo", bucket: "footops-a"), BackupServer(code: "h1", name: "Hetzner – ana", bucket: "footops-h1")]
         let opened = OpenedView(folders: [
             OpenedFolder(path: "/Users/kisi/Downloads/magaza-20261109-0300", server: "h1", site: "magaza", time: t(10), at: Samples.ago(5),
                          files: 50, bytes: 3_400_000),

@@ -265,18 +265,20 @@ func dropWhere(items []openedEntry, gone func(openedEntry) bool) []openedEntry {
 // not end — Busy: it is under way (else it was cut short). Error: it could not be looked
 // at (macOS privacy, a disk not mounted): its line is kept.
 type OpenedFolder struct {
-	Path    string    `json:"path"`
-	Server  string    `json:"server"`
-	Site    string    `json:"site"`
-	Archive string    `json:"archive,omitempty"`
-	Time    time.Time `json:"time"`
-	At      time.Time `json:"at"`
-	Files   int64     `json:"files"`
-	Bytes   int64     `json:"bytes"`
-	Old     bool      `json:"old,omitempty"`
-	Partial bool      `json:"partial,omitempty"`
-	Busy    bool      `json:"busy,omitempty"`
-	Error   string    `json:"error,omitempty"`
+	Path   string `json:"path"`
+	Server string `json:"server"`
+	// ServerName is the server as the Mac calls it now (a backup's; none for an archive).
+	ServerName string    `json:"server_name,omitempty"`
+	Site       string    `json:"site"`
+	Archive    string    `json:"archive,omitempty"`
+	Time       time.Time `json:"time"`
+	At         time.Time `json:"at"`
+	Files      int64     `json:"files"`
+	Bytes      int64     `json:"bytes"`
+	Old        bool      `json:"old,omitempty"`
+	Partial    bool      `json:"partial,omitempty"`
+	Busy       bool      `json:"busy,omitempty"`
+	Error      string    `json:"error,omitempty"`
 }
 
 // OpenedDatabase is a database of the Mac's MongoDB a backup or an archive was loaded
@@ -285,6 +287,7 @@ type OpenedFolder struct {
 type OpenedDatabase struct {
 	Name       string    `json:"name"`
 	Server     string    `json:"server,omitempty"`
+	ServerName string    `json:"server_name,omitempty"`
 	Site       string    `json:"site,omitempty"`
 	Archive    string    `json:"archive,omitempty"`
 	Time       time.Time `json:"time,omitzero"`
@@ -352,6 +355,13 @@ func (e *env) openedView(ctx context.Context) (OpenedView, error) {
 	}
 	listed := map[string]bool{}
 	looked := map[string]error{}
+	names := e.names()
+	serverName := func(code string) string {
+		if code == "" {
+			return ""
+		}
+		return displayName(code, names)
+	}
 	err := e.withOpened(func(l *openedList) bool {
 		before := len(l.Items)
 		l.Items = dropWhere(l.Items, func(it openedEntry) bool {
@@ -370,8 +380,8 @@ func (e *env) openedView(ctx context.Context) (OpenedView, error) {
 			old := now.Sub(it.At) > openedOld
 			switch it.Kind {
 			case "folder":
-				f := OpenedFolder{Path: it.Path, Server: it.Server, Site: it.Site, Archive: it.Archive, Time: it.Time, At: it.At, Old: old,
-					Partial: it.Partial}
+				f := OpenedFolder{Path: it.Path, Server: it.Server, ServerName: serverName(it.Server), Site: it.Site, Archive: it.Archive,
+					Time: it.Time, At: it.At, Old: old, Partial: it.Partial}
 				if err := looked[it.ID]; err != nil {
 					f.Error = "bakılamadı: " + clip(err.Error(), 200)
 				} else {
@@ -381,8 +391,8 @@ func (e *env) openedView(ctx context.Context) (OpenedView, error) {
 				v.Folders = append(v.Folders, f)
 			case "database":
 				listed[it.Name] = true
-				v.Databases = append(v.Databases, OpenedDatabase{Name: it.Name, Server: it.Server, Site: it.Site, Archive: it.Archive,
-					Time: it.Time, At: it.At, Bytes: dbs[it.Name], Registered: true, Old: old})
+				v.Databases = append(v.Databases, OpenedDatabase{Name: it.Name, Server: it.Server, ServerName: serverName(it.Server),
+					Site: it.Site, Archive: it.Archive, Time: it.Time, At: it.At, Bytes: dbs[it.Name], Registered: true, Old: old})
 			}
 		}
 		return len(l.Items) != before

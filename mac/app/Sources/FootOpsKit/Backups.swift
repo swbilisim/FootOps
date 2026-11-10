@@ -19,21 +19,25 @@ extension KeyedDecodingContainer {
 public struct BackupServer: Decodable, Sendable, Equatable, Identifiable {
     public var id: String { code }
     public var code: String
+    /// As the Mac calls it (its code in capitals when the settings give none).
+    public var name: String
     public var bucket: String
     /// Its repository's password is in the Keychain: without it nothing can be opened.
     public var password: Bool
 
-    public init(code: String, bucket: String, password: Bool = true) {
+    public init(code: String, name: String? = nil, bucket: String, password: Bool = true) {
         self.code = code
+        self.name = name ?? code.uppercased()
         self.bucket = bucket
         self.password = password
     }
 
-    enum CodingKeys: String, CodingKey { case code, bucket, password }
+    enum CodingKeys: String, CodingKey { case code, name, bucket, password }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         code = try c.decode(String.self, forKey: .code)
+        name = try c.or(.name, code.uppercased())
         bucket = try c.or(.bucket, "footops-\(code)")
         password = try c.or(.password, false)
     }
@@ -309,6 +313,8 @@ public struct OpenedFolder: Decodable, Sendable, Equatable, Identifiable {
     public var id: String { path }
     public var path: String
     public var server: String
+    /// The server as the Mac calls it now (a backup's).
+    public var serverName: String?
     public var site: String
     public var archive: String?
     public var time: Date
@@ -323,10 +329,11 @@ public struct OpenedFolder: Decodable, Sendable, Equatable, Identifiable {
     /// It could not be looked at now (macOS privacy, a disk not mounted): its line is kept.
     public var error: String?
 
-    public init(path: String, server: String, site: String, archive: String? = nil, time: Date, at: Date, files: Int64, bytes: Int64,
-                old: Bool = false, partial: Bool = false, busy: Bool = false, error: String? = nil) {
+    public init(path: String, server: String, serverName: String? = nil, site: String, archive: String? = nil, time: Date, at: Date,
+                files: Int64, bytes: Int64, old: Bool = false, partial: Bool = false, busy: Bool = false, error: String? = nil) {
         self.path = path
         self.server = server
+        self.serverName = serverName
         self.site = site
         self.archive = archive
         self.time = time
@@ -339,12 +346,13 @@ public struct OpenedFolder: Decodable, Sendable, Equatable, Identifiable {
         self.error = error
     }
 
-    enum CodingKeys: String, CodingKey { case path, server, site, archive, time, at, files, bytes, old, partial, busy, error }
+    enum CodingKeys: String, CodingKey { case path, server, serverName, site, archive, time, at, files, bytes, old, partial, busy, error }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         path = try c.decode(String.self, forKey: .path)
         server = try c.or(.server, "")
+        serverName = try c.decodeIfPresent(String.self, forKey: .serverName)
         site = try c.or(.site, "")
         archive = try c.decodeIfPresent(String.self, forKey: .archive)
         time = try c.decode(Date.self, forKey: .time)
@@ -364,6 +372,8 @@ public struct OpenedDatabase: Decodable, Sendable, Equatable, Identifiable {
     public var id: String { name }
     public var name: String
     public var server: String?
+    /// The server as the Mac calls it now (a backup's).
+    public var serverName: String?
     public var site: String?
     public var archive: String?
     public var time: Date?
@@ -372,10 +382,11 @@ public struct OpenedDatabase: Decodable, Sendable, Equatable, Identifiable {
     public var registered: Bool
     public var old: Bool
 
-    public init(name: String, server: String? = nil, site: String? = nil, archive: String? = nil, time: Date? = nil, at: Date? = nil,
-                bytes: Int64 = 0, registered: Bool = true, old: Bool = false) {
+    public init(name: String, server: String? = nil, serverName: String? = nil, site: String? = nil, archive: String? = nil,
+                time: Date? = nil, at: Date? = nil, bytes: Int64 = 0, registered: Bool = true, old: Bool = false) {
         self.name = name
         self.server = server
+        self.serverName = serverName
         self.site = site
         self.archive = archive
         self.time = time
@@ -385,12 +396,13 @@ public struct OpenedDatabase: Decodable, Sendable, Equatable, Identifiable {
         self.old = old
     }
 
-    enum CodingKeys: String, CodingKey { case name, server, site, archive, time, at, bytes, registered, old }
+    enum CodingKeys: String, CodingKey { case name, server, serverName, site, archive, time, at, bytes, registered, old }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = try c.decode(String.self, forKey: .name)
         server = try c.decodeIfPresent(String.self, forKey: .server)
+        serverName = try c.decodeIfPresent(String.self, forKey: .serverName)
         site = try c.decodeIfPresent(String.self, forKey: .site)
         archive = try c.decodeIfPresent(String.self, forKey: .archive)
         time = try c.decodeIfPresent(Date.self, forKey: .time)

@@ -27,9 +27,11 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
     private var openedList: OpenedList?
     /// The recovery line's minute on the pasteboard runs out with the window closed too.
     private let clipboard = RecoveryClipboard()
-    /// The Backups / Archives window opens at launch (FootOps --yedekler, --arsivler).
+    /// The Backups / Archives / Settings window opens at launch (FootOps --yedekler,
+    /// --arsivler, --ayarlar).
     public var openBackupsAtLaunch = false
     public var openArchivesAtLaunch = false
+    public var openSettingsAtLaunch = false
     /// The archive the Archives window checks at launch (FootOps --arsivler <dosya>).
     public var archiveAtLaunch: String?
     private var observers: [NSObjectProtocol] = []
@@ -84,6 +86,9 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
         }
         if openArchivesAtLaunch {
             showArchives()
+        }
+        if openSettingsAtLaunch {
+            showSettings()
         }
         log.info("açıldı: \(self.version, privacy: .public), çekirdek \(self.core?.executable.path ?? "yok", privacy: .public)")
     }

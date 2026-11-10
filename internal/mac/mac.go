@@ -37,23 +37,29 @@ Kullanım: footops-mac <komut> [--json]
                      (yalnız okur; ayrıntı: footops-mac yedek yardim)
   arsiv <komut>      FootOps arşivleri: doğrula, klasöre / Mac'teki MongoDB'ye aç, Mac'teki MongoDB'den
                      panelin İçe aktar'ına uygun arşiv üret (ayrıntı: footops-mac arsiv yardim)
-  ayar               bu Mac'in ayarları: sunucu başına panel adresi, SSH hedefi, kova
+  ayar               bu Mac'in ayarları: sunucu başına ad, panel adresi, SSH hedefi, kova
   ayar yaz           ayarları stdin'den JSON olarak alır, denetler ve yazar (FootOps.app'in Ayarlar'ı)
+  sunucu <komut>     sunucu ekle / dene / şifresini yaz / bu Mac'ten kaldır; R2 erişimi
+                     (yalnız bu Mac; ayrıntı: footops-mac sunucu yardim)
   surum              sürüm
 
   --json             FootOps.app için: tek JSON nesnesi (durum, ayar, yedek liste…) ya da satır satır
                      olaylar (yokla, yedek ac)
 
-Sırlar yalnız Anahtar Zinciri'nde (hizmet footops-yedek): r2-hesap, r2-mac-erisim, r2-mac-gizli.
-Sunucular restic-<kod> kayıtlarından ve ayarlar dosyasından gelir:
+Sırlar yalnız Anahtar Zinciri'nde (hizmet footops-yedek): r2-hesap, r2-mac-erisim, r2-mac-gizli,
+restic-<kod>. Sunucular restic-<kod> kayıtlarından ve ayarlar dosyasından gelir:
   ~/Library/Application Support/FootOps/ayarlar.json
 `
 
 // env is everything a command reaches outside itself; tests put stand-ins in its place.
 type env struct {
-	in        io.Reader // ayar yaz's settings
+	in        io.Reader // ayar yaz's settings, sunucu ekle's server
 	out, errw io.Writer
 	keychain  Keychain
+	// stdinTerminal: the input is a terminal (sunucu ekle asks its questions there);
+	// readHidden reads a secret from it without echo.
+	stdinTerminal func() bool
+	readHidden    func() (string, error)
 	// settings is the settings file's path.
 	settings string
 	// r2 is the address of an R2 account's S3 endpoint.
@@ -116,6 +122,11 @@ func defaultEnv(stdout, stderr io.Writer) *env {
 		terminal: func() bool {
 			f, ok := stdout.(*os.File)
 			return ok && term.IsTerminal(int(f.Fd()))
+		},
+		stdinTerminal: func() bool { return term.IsTerminal(int(os.Stdin.Fd())) },
+		readHidden: func() (string, error) {
+			b, err := term.ReadPassword(int(os.Stdin.Fd()))
+			return string(b), err
 		},
 		free: freeRoom, exclude: timeMachineExclude}
 	e.repository = func(acc access, bucket string) string { return "s3:" + e.r2(acc.Account) + "/" + bucket }
@@ -232,6 +243,8 @@ func (e *env) run(ctx context.Context, args []string) int {
 		err = e.archiveCmd(ctx, pos, jsonOut)
 	case "ayar":
 		err = e.settingsCmd(ctx, pos, jsonOut)
+	case "sunucu":
+		err = e.serverCmd(ctx, pos, jsonOut)
 	case "surum", "version", "--version", "-v":
 		fmt.Fprintf(e.out, "footops-mac %s %s/%s\n", version.String(), runtime.GOOS, runtime.GOARCH)
 	case "yardim", "help", "--help", "-h":
@@ -252,6 +265,8 @@ func (e *env) run(ctx context.Context, args []string) int {
 			fmt.Fprint(e.errw, backupUsage)
 		case "arsiv":
 			fmt.Fprint(e.errw, archiveUsage)
+		case "sunucu":
+			fmt.Fprint(e.errw, serverUsage)
 		default:
 			fmt.Fprint(e.errw, usage)
 		}

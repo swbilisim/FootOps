@@ -67,8 +67,9 @@ private struct BackupsHeader: View {
                     Button {
                         model.select(server: s.code)
                     } label: {
-                        Text(s.code.uppercased())
+                        Text(s.name)
                             .font(.headline)
+                            .lineLimit(1)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 4)
                             .background(
@@ -148,7 +149,8 @@ private struct RecoveryButton: View {
         switch model.recovery {
         case .idle: "Yalnız panoya; 1 dk sonra silinir"
         case .copying: "Alınıyor…"
-        case .copied(let server, _): "\(server.uppercased()) panoda — 1 dk sonra silinecek"
+        case .copied(let server, _):
+            "\(model.servers.first { $0.code == server }?.name ?? server.uppercased()) panoda — 1 dk sonra silinecek"
         case .cleared: "Pano temizlendi"
         case .kept: "Pano değişmişti: dokunulmadı"
         case .failed(let e): e

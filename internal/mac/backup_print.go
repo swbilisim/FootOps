@@ -12,13 +12,13 @@ import (
 
 func printBackupServers(w io.Writer, list []BackupServer) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "SUNUCU\tKOVA\tDEPO ŞİFRESİ")
+	fmt.Fprintln(tw, "SUNUCU\tAD\tKOVA\tDEPO ŞİFRESİ")
 	for _, s := range list {
 		pw := "Anahtar Zinciri'nde"
 		if !s.Password {
 			pw = "yok (restic-" + s.Code + ")"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\n", s.Code, s.Bucket, pw)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", s.Code, clean(s.Name), s.Bucket, pw)
 	}
 	tw.Flush()
 }

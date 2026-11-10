@@ -91,7 +91,7 @@ final class ArchivesTests: XCTestCase {
           esac ;;
         "arsiv ac")
           echo '{"event":"start","server":"h1","site":"magaza","target":"/tmp/x/magaza-20261110-0136","time":"2026-11-09T22:36:10Z","parts":{}}'
-          \(slow ? "trap 'echo \"{\\\"event\\\":\\\"error\\\",\\\"message\\\":\\\"durduruldu\\\"}\"; exit 1' TERM; sleep 30 & wait" : "")
+          \(slow ? "trap 'kill $! 2>/dev/null; echo \"{\\\"event\\\":\\\"error\\\",\\\"message\\\":\\\"durduruldu\\\"}\"; exit 1' TERM; sleep 30 & wait" : "")
           echo '\(openResult)' ;;
         "arsiv mongo")
           case "$*" in

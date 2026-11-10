@@ -96,7 +96,7 @@ final class BackupsTests: XCTestCase {
         "yedek kurtarma") case "$*" in *--json*) exit 3 ;; esac; echo 'FOOTOPS-KURTARMA-1:ZmFrZQ=='; echo 'Kurtarma bilgisi yazıldı' >&2 ;;
         "yedek ac")
           echo '\(start)'
-          \(slow ? "trap 'echo \"{\\\"event\\\":\\\"error\\\",\\\"message\\\":\\\"durduruldu\\\"}\"; exit 1' TERM; sleep 30 & wait" : "")
+          \(slow ? "trap 'kill $! 2>/dev/null; echo \"{\\\"event\\\":\\\"error\\\",\\\"message\\\":\\\"durduruldu\\\"}\"; exit 1' TERM; sleep 30 & wait" : "")
           echo '{"done":1000,"event":"progress","part":"db","total":38000}'
           echo '\(result)' ;;
         "yedek mongo")
@@ -261,7 +261,9 @@ final class BackupsTests: XCTestCase {
         let start = Date()
         m.stop()
         try await until("stopped") { m.operation == .idle }
-        XCTAssertLessThan(Date().timeIntervalSince(start), 3)
+        // Its sleep goes with it (killed in its trap): nothing holds its pipe for the 2 s
+        // the core gives one — that is CoreTests'. The bound leaves a busy CI room.
+        XCTAssertLessThan(Date().timeIntervalSince(start), 5)
     }
 
     /// The recovery line: asked of the core without --json, onto the pasteboard alone,

@@ -495,30 +495,37 @@ extension ProbeEvent: Decodable {
 /// footops-mac ayar: where the settings file is and every server the Mac knows.
 public struct SettingsView: Decodable, Sendable, Equatable {
     public var path: String
+    /// The file as read: ayar yaz given it writes over that file only.
+    public var revision: String
     /// The file or the Keychain could not be read (what could be is still listed).
     public var error: String?
     public var servers: [ServerSetting]
 
-    public init(path: String, error: String? = nil, servers: [ServerSetting]) {
+    public init(path: String, revision: String = "", error: String? = nil, servers: [ServerSetting]) {
         self.path = path
+        self.revision = revision
         self.error = error
         self.servers = servers
     }
 
-    enum CodingKeys: String, CodingKey { case path, error, servers }
+    enum CodingKeys: String, CodingKey { case path, revision, error, servers }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         path = try c.decodeIfPresent(String.self, forKey: .path) ?? ""
+        revision = try c.decodeIfPresent(String.self, forKey: .revision) ?? ""
         error = try c.decodeIfPresent(String.self, forKey: .error)
         servers = try c.decodeIfPresent([ServerSetting].self, forKey: .servers) ?? []
     }
 }
 
-/// One server's settings: what the app opens (the panel, SSH) and where its backups are.
+/// One server's settings: what the Mac calls it, what the app opens (the panel, SSH) and
+/// where its backups are.
 public struct ServerSetting: Codable, Sendable, Equatable, Identifiable {
     public var id: String { code }
     public var code: String
+    /// Empty: its code in capitals (and the menu, its status file's name).
+    public var name: String
     public var panel: String
     public var ssh: String
     public var bucket: String
@@ -527,9 +534,10 @@ public struct ServerSetting: Codable, Sendable, Equatable, Identifiable {
     /// Its repository password is in the Keychain (a server footops-yedek knows).
     public var keychain: Bool
 
-    public init(code: String, panel: String = "", ssh: String = "", bucket: String = "", defaultBucket: String = "",
-                keychain: Bool = true) {
+    public init(code: String, name: String = "", panel: String = "", ssh: String = "", bucket: String = "",
+                defaultBucket: String = "", keychain: Bool = true) {
         self.code = code
+        self.name = name
         self.panel = panel
         self.ssh = ssh
         self.bucket = bucket
@@ -537,40 +545,143 @@ public struct ServerSetting: Codable, Sendable, Equatable, Identifiable {
         self.keychain = keychain
     }
 
-    enum CodingKeys: String, CodingKey { case code, panel, ssh, bucket, defaultBucket, keychain }
+    enum CodingKeys: String, CodingKey { case code, name, panel, ssh, bucket, defaultBucket, keychain }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         code = try c.decode(String.self, forKey: .code)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
         panel = try c.decodeIfPresent(String.self, forKey: .panel) ?? ""
         ssh = try c.decodeIfPresent(String.self, forKey: .ssh) ?? ""
         bucket = try c.decodeIfPresent(String.self, forKey: .bucket) ?? ""
         defaultBucket = try c.decodeIfPresent(String.self, forKey: .defaultBucket) ?? "footops-\(code)"
         keychain = try c.decodeIfPresent(Bool.self, forKey: .keychain) ?? false
     }
+
+    /// The name as the windows show it.
+    public var shownName: String {
+        let n = name.trimmingCharacters(in: .whitespaces)
+        return n.isEmpty ? code.uppercased() : n
+    }
 }
 
 /// The settings to write (ayar yaz's stdin): the file's own form.
 struct SettingsFile: Encodable {
     struct Server: Encodable {
+        var name: String
         var panel: String
         var ssh: String
         var bucket: String
     }
 
     var format = 1
+    /// The file the list was read from (none: written over whatever is there).
+    var revision: String?
     var servers: [String: Server]
 
-    init(_ list: [ServerSetting]) {
-        servers = Dictionary(list.map { ($0.code, Server(panel: $0.panel, ssh: $0.ssh, bucket: $0.bucket)) },
+    init(_ list: [ServerSetting], revision: String? = nil) {
+        self.revision = revision
+        servers = Dictionary(list.map { ($0.code, Server(name: $0.name, panel: $0.panel, ssh: $0.ssh, bucket: $0.bucket)) },
                              uniquingKeysWith: { a, _ in a })
     }
 }
 
-/// The core's word that a command failed: {"event":"error","message":…}.
+// MARK: - sunucu
+
+/// A server to add (sunucu ekle's stdin); the password goes to the Keychain only.
+struct NewServer: Encodable, Equatable {
+    var code = ""
+    var name = ""
+    var panel = ""
+    var ssh = ""
+    var bucket = ""
+    var password = ""
+}
+
+/// The Mac's R2 access to write (sunucu r2 yaz's stdin): a field left empty keeps what
+/// is there.
+struct NewR2: Encodable, Equatable {
+    var account = ""
+    var keyID = ""
+    var secret = ""
+
+    enum CodingKeys: String, CodingKey {
+        case account
+        case keyID = "key_id"
+        case secret
+    }
+}
+
+/// footops-mac sunucu dene: what was tried of a server from this Mac, a line each.
+public struct ServerTry: Decodable, Sendable, Equatable {
+    public var code: String
+    public var name: String
+    public var bucket: String
+    public var checks: [TryCheck]
+    /// Nothing failed (a part not tried fails nothing).
+    public var ok: Bool
+    public var tookMs: Int
+
+    public init(code: String, name: String, bucket: String, checks: [TryCheck], ok: Bool, tookMs: Int = 0) {
+        self.code = code
+        self.name = name
+        self.bucket = bucket
+        self.checks = checks
+        self.ok = ok
+        self.tookMs = tookMs
+    }
+
+    enum CodingKeys: String, CodingKey { case code, name, bucket, checks, ok, tookMs }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        code = try c.decode(String.self, forKey: .code)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? code.uppercased()
+        bucket = try c.decodeIfPresent(String.self, forKey: .bucket) ?? ""
+        checks = try c.decodeIfPresent([TryCheck].self, forKey: .checks) ?? []
+        ok = try c.decodeIfPresent(Bool.self, forKey: .ok) ?? false
+        tookMs = try c.decodeIfPresent(Int.self, forKey: .tookMs) ?? 0
+    }
+}
+
+/// One thing tried: ok, warn (it works, with a word of care), fail, or skip (not tried).
+public struct TryCheck: Decodable, Sendable, Equatable, Hashable {
+    public var part: String
+    public var state: String
+    public var text: String
+
+    public init(part: String, state: String, text: String) {
+        self.part = part
+        self.state = state
+        self.text = text
+    }
+}
+
+/// footops-mac sunucu r2: which items of the Mac's R2 access the Keychain has; the
+/// account masked.
+public struct R2Access: Decodable, Sendable, Equatable {
+    public var account: String?
+    public var accountSet: Bool
+    public var keySet: Bool
+    public var secretSet: Bool
+
+    public init(account: String? = nil, accountSet: Bool, keySet: Bool, secretSet: Bool) {
+        self.account = account
+        self.accountSet = accountSet
+        self.keySet = keySet
+        self.secretSet = secretSet
+    }
+
+    /// All three there: the servers' buckets can be read.
+    public var complete: Bool { accountSet && keySet && secretSet }
+}
+
+/// The core's word that a command failed: {"event":"error","message":…}, with a code
+/// for one the app answers in a way of its own (settings_changed).
 struct CoreFailure: Decodable {
     var event: String
     var message: String?
+    var code: String?
 }
 
 // MARK: - decoding

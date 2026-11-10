@@ -338,6 +338,13 @@ type repo struct {
 // openRepo readies a server's repository: its bucket, the Mac's read-only key and the
 // repository's password from the Keychain (only its name: restic asks for it).
 func (e *env) openRepo(ctx context.Context, asked string) (*repo, error) {
+	return e.openRepoWith(ctx, asked, "")
+}
+
+// openRepoWith is openRepo with the password from another Keychain item ("": the
+// server's restic-<code>): sunucu sifre tries a password before it takes the place of
+// the one there.
+func (e *env) openRepoWith(ctx context.Context, asked, item string) (*repo, error) {
 	code := strings.ToLower(strings.TrimSpace(asked))
 	if !reCode.MatchString(code) {
 		return nil, fmt.Errorf("geçersiz sunucu kodu: %q", clip(asked, 40))
@@ -359,10 +366,13 @@ func (e *env) openRepo(ctx context.Context, asked string) (*repo, error) {
 	if srv == nil {
 		return nil, unknownServer(asked, list)
 	}
-	if !srv.Password {
-		return nil, fmt.Errorf("Anahtar Zinciri'nde footops-yedek / restic-%s yok (bu sunucunun depo şifresi)", code)
+	if item == "" {
+		if !srv.Password {
+			return nil, fmt.Errorf("Anahtar Zinciri'nde footops-yedek / restic-%s yok (bu sunucunun depo şifresi)", code)
+		}
+		item = "restic-" + code
 	}
-	pw := e.keychain.Command("restic-" + code)
+	pw := e.keychain.Command(item)
 	for _, a := range pw {
 		// restic splits the command at spaces itself.
 		if a == "" || strings.ContainsAny(a, " \t\n\"'\\") {
@@ -636,9 +646,10 @@ func anyFlag(args []string) bool {
 	return false
 }
 
-// BackupServer is a server whose backups the Mac can read.
+// BackupServer is a server whose backups the Mac can read; Name as the Mac calls it.
 type BackupServer struct {
 	Code   string `json:"code"`
+	Name   string `json:"name"`
 	Bucket string `json:"bucket"`
 	// Password: its repository's password is in the Keychain (without it, its backups
 	// cannot be opened).
@@ -653,7 +664,10 @@ func (e *env) backupServers(ctx context.Context, jsonOut bool) error {
 	}
 	list := []BackupServer{}
 	for _, c := range codes {
-		s := BackupServer{Code: c, Bucket: "footops-" + c, Password: has["restic-"+c]}
+		s := BackupServer{Code: c, Name: strings.ToUpper(c), Bucket: "footops-" + c, Password: has["restic-"+c]}
+		if n := set.Servers[c].usable().Name; n != "" {
+			s.Name = n
+		}
 		if has["kova-"+c] {
 			b, err := e.keychain.Get(ctx, "kova-"+c)
 			if err != nil {
@@ -689,26 +703,36 @@ type BackupCheck struct {
 // its snapshots.
 func (e *env) backupCheck(ctx context.Context, server string, jsonOut bool) error {
 	start := time.Now()
-	r, err := e.openRepo(ctx, server)
+	r, n, err := e.countSnapshots(ctx, server)
 	if err != nil {
 		return err
 	}
-	lctx, cancel := context.WithTimeout(ctx, listTimeout)
-	defer cancel()
-	if err := r.run(lctx, io.Discard, "cat", "config"); err != nil {
-		return err
-	}
-	list, _, err := r.snapshots(lctx, "")
-	if err != nil {
-		return err
-	}
-	c := BackupCheck{Server: r.code, Bucket: r.bucket, Snapshots: len(list), TookMS: time.Since(start).Milliseconds()}
+	c := BackupCheck{Server: r.code, Bucket: r.bucket, Snapshots: n, TookMS: time.Since(start).Milliseconds()}
 	if jsonOut {
 		e.event(c)
 		return nil
 	}
 	fmt.Fprintf(e.out, "✓ %s açıldı (salt okunur): %d anlık görüntü\n", c.Bucket, c.Snapshots)
 	return nil
+}
+
+// countSnapshots opens a repository as a recovery would (its config, no lock) and
+// counts its snapshots (yedek dene, sunucu dene).
+func (e *env) countSnapshots(ctx context.Context, server string) (*repo, int, error) {
+	r, err := e.openRepo(ctx, server)
+	if err != nil {
+		return nil, 0, err
+	}
+	lctx, cancel := context.WithTimeout(ctx, listTimeout)
+	defer cancel()
+	if err := r.run(lctx, io.Discard, "cat", "config"); err != nil {
+		return nil, 0, err
+	}
+	list, _, err := r.snapshots(lctx, "")
+	if err != nil {
+		return nil, 0, err
+	}
+	return r, len(list), nil
 }
 
 // backupList is yedek liste: every site's backups, or one site's.

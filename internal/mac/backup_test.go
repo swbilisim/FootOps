@@ -334,7 +334,7 @@ func TestChoose(t *testing.T) {
 // the repository: every site, or one, as the panel groups them.
 func TestBackupListing(t *testing.T) {
 	f := newFixture(t)
-	if code := f.run(t, "sunucular", "--json"); code != 0 || !strings.Contains(f.out.String(), `{"code":"t1","bucket":"footops-t1","password":true}`) {
+	if code := f.run(t, "sunucular", "--json"); code != 0 || !strings.Contains(f.out.String(), `{"code":"t1","name":"T1","bucket":"footops-t1","password":true}`) {
 		t.Fatalf("%d %s %s", code, f.out, f.errb)
 	}
 	if code := f.run(t, "dene", "t1"); code != 0 || !strings.Contains(f.out.String(), "footops-t1 açıldı (salt okunur): 6 anlık görüntü") {

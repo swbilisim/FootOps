@@ -77,7 +77,7 @@ func TestSettingsCommand(t *testing.T) {
 	// The Terminal's view.
 	out.Reset()
 	if code := e.run(ctx, []string{"ayar"}); code != 0 || !strings.Contains(out.String(), e.settings) ||
-		!strings.Contains(out.String(), "footops-a (varsayılan)") || !strings.Contains(out.String(), "b (yalnız ayarlarda)") ||
+		!strings.Contains(out.String(), "footops-a (varsayılan)") || !strings.Contains(out.String(), "b (şifre yok)") ||
 		!strings.Contains(out.String(), "kisi@sunucu.example") {
 		t.Errorf("text: %d %s", code, out)
 	}

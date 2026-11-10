@@ -629,8 +629,9 @@ private struct PanelImport: View {
                         Button {
                             model.select(server: t.code)
                         } label: {
-                            Text(t.code.uppercased())
+                            Text(t.name)
                                 .font(.headline)
+                                .lineLimit(1)
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 3)
                                 .background(Capsule().fill(model.panelServer == t.code ? Color.accentColor.opacity(0.22) : Color.primary.opacity(0.06)))
