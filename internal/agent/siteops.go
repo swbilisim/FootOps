@@ -387,6 +387,7 @@ func (o *SiteOps) Redeploy(ctx context.Context, name string, progress Progress) 
 	}
 	progress("✓ İmaj indirildi: " + spec.Image)
 	base := o.restartBaseline(ctx, spec)
+	old := o.containerImage(ctx, spec)
 	if err := o.compose(ctx, spec, o.upArgs(ctx, spec, "--detach", "--remove-orphans")...); err != nil {
 		return err
 	}
@@ -402,7 +403,35 @@ func (o *SiteOps) Redeploy(ctx context.Context, name string, progress Progress) 
 		return err
 	}
 	progress("✓ Site yayında")
+	o.dropReplaced(ctx, spec, old, progress)
 	return nil
+}
+
+// containerImage is the image (ID) a site's container was made from; "" if none.
+func (o *SiteOps) containerImage(ctx context.Context, spec sites.Spec) string {
+	in, err := o.Docker.Inspect(ctx, spec.Container())
+	if err != nil {
+		return ""
+	}
+	return in.Image
+}
+
+// dropReplaced removes the image a deploy replaced (Faz U4), once the site is up on the
+// new one: each deploy of a moving tag (main) used to leave 100-400 MB behind. Docker
+// refuses an image a container still uses (another site's, a stopped one) or another
+// tag names; nothing is forced, and a refusal only leaves it.
+func (o *SiteOps) dropReplaced(ctx context.Context, spec sites.Spec, old string, progress Progress) {
+	if old == "" {
+		return
+	}
+	if cur := o.containerImage(ctx, spec); cur == "" || cur == old {
+		return
+	}
+	if _, err := o.Run.Run(ctx, "docker", "image", "rm", old); err != nil {
+		progress("ℹ Önceki imaj bırakıldı (başka bir container ya da etiket kullanıyor)")
+		return
+	}
+	progress("✓ Önceki imaj silindi")
 }
 
 // Remove takes a site offline and moves its directory aside. Data and the database are

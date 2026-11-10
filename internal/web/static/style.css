@@ -285,6 +285,7 @@ body.bare main { max-width: 400px; padding: 0; }
 .alerts li.info { background: var(--accent-soft); border-left-color: var(--accent); }
 .alerts li.info > .i { color: var(--accent); }
 .findings { margin-bottom: 12px; }
+.findings .inline-form { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 8px; }
 .oklist { list-style: none; padding: 0; margin: 0 0 16px; display: grid; gap: 4px; }
 .oklist li { display: flex; align-items: center; gap: 8px; color: var(--text-2); font-size: .88rem; min-width: 0; overflow-wrap: anywhere; }
 .oklist .i, .oklist-fold > summary .i { width: 16px; height: 16px; color: var(--ok); flex: none; }

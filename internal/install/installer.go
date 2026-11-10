@@ -42,7 +42,7 @@ type Options struct {
 // before the long Docker downloads start. SSH hardening runs after the admin user,
 // firewall and fail2ban are in place and asks the operator to verify key login first.
 func Steps(h Host, a Answers, d Deps) []Step {
-	coreCfg := core.Config{MongoCacheGB: a.MongoCacheGB, Tunnel: a.TunnelEnabled}
+	coreCfg := coreConfig(a)
 	panelCfg := config.Panel{
 		ServerCode: a.ServerCode, PanelHost: a.PanelHost,
 		ListenTunnel: config.DefaultTunnel, ListenLocal: config.DefaultLocal,
@@ -84,6 +84,11 @@ func Steps(h Host, a Answers, d Deps) []Step {
 		steps = append(steps, recoverStep{rec: a.Recover, run: d.Recover, status: d.RecoverStatus, out: d.Out})
 	}
 	return steps
+}
+
+// coreConfig is the core stack's configuration from the answers.
+func coreConfig(a Answers) core.Config {
+	return core.Config{MongoCacheGB: a.MongoCacheGB, Tunnel: a.TunnelEnabled}
 }
 
 // Deps are the interactive and environment-specific parts of the steps.

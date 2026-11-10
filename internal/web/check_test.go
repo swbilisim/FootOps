@@ -18,6 +18,13 @@ func (f *fakeAgent) DoctorStatus(context.Context) (agent.DoctorStatus, error) {
 	return f.doctor, nil
 }
 
+func (f *fakeAgent) PruneImages(_ context.Context, a agent.Actor) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.doctorRuns = append(f.doctorRuns, agent.Actor{User: "prune:" + a.User})
+	return "prunejob", nil
+}
+
 func (f *fakeAgent) DoctorRun(_ context.Context, a agent.Actor) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -100,5 +107,26 @@ func TestCheckPage(t *testing.T) {
 	c.do("POST", "/server/check", url.Values{})
 	if len(e.agent.doctorRuns) != n {
 		t.Error("ran without the CSRF token")
+	}
+}
+
+func TestImagesPruneButton(t *testing.T) {
+	e := newEnv(t)
+	c := e.client(t, true)
+	tok := e.login(t, c)
+	e.agent.doctor = agent.DoctorStatus{Report: &doctor.Report{Format: 1, Host: "h1", Time: time.Now(), Findings: []doctor.Finding{
+		{ID: "images", Section: "disk", Level: doctor.Info, Title: "3 imajı hiçbir container kullanmıyor (~1,2 GB)"}}}}
+	_, body := c.do("GET", "/server/check", nil)
+	if !strings.Contains(body, `action="/server/images/prune"`) || !strings.Contains(body, "Kullanılmayan imajları sil") {
+		t.Fatal("no prune button under the images finding")
+	}
+	resp, _ := c.do("POST", "/server/images/prune", url.Values{"csrf": {tok}})
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/jobs/prunejob" {
+		t.Fatalf("prune: %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	// Nothing to remove: no button.
+	e.agent.doctor.Report.Findings[0] = doctor.Finding{ID: "images", Section: "disk", Level: doctor.OK, Title: "Kullanılmayan imaj yok"}
+	if _, body := c.do("GET", "/server/check", nil); strings.Contains(body, "/server/images/prune") {
+		t.Error("prune button with nothing to remove")
 	}
 }

@@ -72,8 +72,12 @@ type inspectMark struct {
 }
 
 // inspectAge is how long an inspect stands while the container's list entry stays
-// the same.
-const inspectAge = 5 * time.Minute
+// the same; healthAge, for a container with a healthcheck (its health changes without
+// its list entry, which is kept up to a minute).
+const (
+	inspectAge = 5 * time.Minute
+	healthAge  = 30 * time.Second
+)
 
 // cpuMark is a container's last CPU reading, with the process it was of: a container
 // started again counts its CPU time from 0.
@@ -317,10 +321,15 @@ func (s *Sampler) inspect(ctx context.Context, c docker.Container) (docker.Inspe
 	s.marksMu.Lock()
 	m, ok := s.inspects[c.ID]
 	s.marksMu.Unlock()
-	// A container with a healthcheck is asked every time: the list, kept up to a minute,
-	// would tell a health change late (an inspect costs dockerd little, a list a lot).
-	if ok && c.ID != "" && m.state == c.State && m.status == c.Status && now.Sub(m.at) < inspectAge &&
-		!strings.Contains(c.Status, "second") && m.in.State.Health == nil {
+	// A container with a healthcheck is asked every healthAge: the list, kept up to a
+	// minute, would tell a health change late, and Docker itself checks no oftener than
+	// every 30 seconds (Faz U4: FootOps' own containers every minute, sites' two).
+	maxAge := inspectAge
+	if m.in.State.Health != nil {
+		maxAge = healthAge
+	}
+	if ok && c.ID != "" && m.state == c.State && m.status == c.Status && now.Sub(m.at) < maxAge &&
+		!strings.Contains(c.Status, "second") {
 		return m.in, nil
 	}
 	in, err := s.docker.Inspect(ctx, c.Name())

@@ -38,6 +38,13 @@
       <strong>{{.Title}}</strong>
       {{with .Detail}}<span class="detail">{{.}}</span>{{end}}
       {{with .Fix}}<span class="detail">Düzeltme: {{.}}</span>{{end}}
+      {{if eq .ID "images"}}
+      <form method="post" action="/server/images/prune" class="inline-form">
+        <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+        <button type="submit" class="btn sm">{{icon "trash"}}Kullanılmayan imajları sil</button>
+        <span class="detail">Hiçbir container'ın kullanmadığı imajlar silinir; FootOps'un kendi imajları kalır. Gerekirse bir sonraki dağıtımda yeniden indirilir.</span>
+      </form>
+      {{end}}
     </div>
     {{if .New}}<span class="when" title="Bir kontrol daha görürse uyarı olur">yeni</span>{{else if eq .Level "bad"}}<span class="when">ciddi</span>{{end}}
   </li>

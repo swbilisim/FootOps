@@ -47,7 +47,7 @@ var seriousSteps = map[string]bool{"ssh-hardening": true, "firewall": true, "fai
 func Doctor(ctx context.Context, h Host, d doctor.Docker, self string) doctor.Report {
 	host, _ := os.Hostname()
 	env := doctor.Env{Root: h.Root, Run: h.Run, Docker: d, Host: host, FootOps: version.Version,
-		KeepImages: []string{core.CaddyImage, core.MongoImage, core.CloudflaredImage, core.ResticImage}}
+		KeepImages: core.PinnedImages}
 	if a, err := savedAnswers(h); err == nil {
 		env.AutoReboot, env.RebootTime = a.AutoReboot, a.RebootTime
 		env.Standard = func(ctx context.Context) []doctor.Finding { return standardFindings(ctx, h, a, self) }

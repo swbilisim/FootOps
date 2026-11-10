@@ -9,6 +9,10 @@
 #                                      MongoDB and its database tools on this Mac; not in the default list)
 #   test/integration/run.sh u1 u3      the server check; updates from signed releases (u3 builds
 #                                      and signs two releases with the test's own key)
+#   test/integration/run.sh u4         the first update from the panel as on the servers: tag v0.1.0's
+#                                      code installed, this tree as the new release (not in the default
+#                                      list: slow, needs the tag and Docker Hub). Run long ones under
+#                                      caffeinate -is: a sleeping Mac pauses Colima's clock
 #   test/integration/run.sh clean      remove the container and its volumes
 #   docker stop footops-it             free the memory between runs (run.sh restarts it)
 #

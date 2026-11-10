@@ -23,6 +23,11 @@ const (
 	ResticImage = "restic/restic:0.19.1@sha256:136600b6ff6843d61d355f7f71f460a166429f35de6fd11b568fece3c9a4d510"
 )
 
+// PinnedImages are the images FootOps itself pulls: never counted or removed as unused,
+// even while no container runs them (the restic image between backups). Older versions
+// of them are.
+var PinnedImages = []string{CaddyImage, MongoImage, CloudflaredImage, ResticImage}
+
 // MongoStopGrace is how long MongoDB gets to shut down cleanly when its container is
 // stopped, restarted or replaced; Docker's default is 10 seconds, then SIGKILL, and under
 // load a clean shutdown can take longer. (When the server shuts down, dockerd leaves the
@@ -154,7 +159,7 @@ services:
     cap_add: [NET_BIND_SERVICE]
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
-      interval: 30s
+      interval: 60s
       timeout: 5s
       retries: 3
       start_period: 10s
@@ -175,7 +180,7 @@ services:
       nofile: {soft: 64000, hard: 64000}
     healthcheck:
       test: ["CMD", "bash", "-c", '%s']
-      interval: 30s
+      interval: 60s
       timeout: 10s
       retries: 3
       start_period: 40s

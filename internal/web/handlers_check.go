@@ -100,3 +100,15 @@ func checkSummaryOf(st agent.DoctorStatus) checkSummary {
 	}
 	return cs
 }
+
+// imagesPrune starts removing the images no container uses (Faz U4); the job's page
+// follows it.
+func (s *Server) imagesPrune(w http.ResponseWriter, r *http.Request) {
+	id, err := s.agent.PruneImages(r.Context(), s.actor(r))
+	if err != nil {
+		s.sessions.setFlash(current(r).ID, "İmajlar silinemedi: "+err.Error())
+		http.Redirect(w, r, "/server/check", http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/jobs/"+id, http.StatusSeeOther)
+}

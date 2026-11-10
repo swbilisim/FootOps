@@ -140,6 +140,7 @@ type AgentAPI interface {
 	UpdateCheck(ctx context.Context, a agent.Actor) error
 	UpdateApply(ctx context.Context, version string, a agent.Actor) (string, error)
 	UpdateBack(ctx context.Context, a agent.Actor) (string, error)
+	PruneImages(ctx context.Context, a agent.Actor) (string, error)
 }
 
 // AccessVerifier checks Cloudflare Access tokens. *cfaccess.Verifier implements it.
@@ -215,6 +216,7 @@ func (s *Server) Handler(via string) http.Handler {
 	mux.Handle("POST /containers/{name}/restart", s.requireSession(s.restart))
 	mux.Handle("GET /server/check", s.requireSession(s.checkPage))
 	mux.Handle("POST /server/check", s.requireSession(s.checkRun))
+	mux.Handle("POST /server/images/prune", s.requireSession(s.imagesPrune))
 	mux.Handle("GET /server/update", s.requireSession(s.updatePage))
 	mux.Handle("POST /server/update/check", s.requireSession(s.updateCheck))
 	mux.Handle("POST /server/update/apply", s.requireSession(s.updateApply))

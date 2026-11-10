@@ -983,3 +983,10 @@ func (c *Client) UpdateBack(ctx context.Context, a Actor) (string, error) {
 	err := c.call(ctx, http.MethodPost, "/v1/update/back", UpdateRequest{Actor: a}, &out)
 	return out.JobID, err
 }
+
+// PruneImages starts removing the images no container uses (Faz U4); the job.
+func (c *Client) PruneImages(ctx context.Context, a Actor) (string, error) {
+	var out JobResponse
+	err := c.call(ctx, http.MethodPost, "/v1/images/prune", RestartRequest{Actor: a}, &out)
+	return out.JobID, err
+}

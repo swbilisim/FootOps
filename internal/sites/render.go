@@ -26,6 +26,13 @@ func composeValue(s string) string {
 
 // Compose renders the site's compose file. env holds every variable the container gets,
 // including the database URI; the file is therefore written 0600.
+// HealthInterval is how often the image's own healthcheck runs, if it has one (Faz U4):
+// images often ask every 30 seconds, and each check is a process started in the
+// container by dockerd, containerd and runc (on A, 7 sites made most of their CPU). It
+// keeps its command and timeout, runs every 5 seconds while the site starts, and an
+// image without one stays without.
+const HealthInterval = "2m"
+
 func Compose(s Spec, env map[string]string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, `# Managed by FootOps. Changes are overwritten from the panel.
@@ -42,7 +49,11 @@ services:
     pids_limit: %d
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-`, s.Name, yamlString(s.Image), s.Container(), s.MemoryMB, s.MemoryMB, pidsLimit)
+    healthcheck:
+      interval: %s
+      start_period: 1m
+      start_interval: 5s
+`, s.Name, yamlString(s.Image), s.Container(), s.MemoryMB, s.MemoryMB, pidsLimit, HealthInterval)
 	if s.DataMount != "" {
 		fmt.Fprintf(&b, "    volumes:\n      - %s\n", yamlString(s.Dir()+"/"+DataDir+":"+s.DataMount))
 	}

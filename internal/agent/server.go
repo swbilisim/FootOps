@@ -65,10 +65,11 @@ type Server struct {
 	Rehearsal *Rehearsal
 	// Registries are the image registry logins docker pulls with.
 	Registries *Registries
-	// Doctor runs the server check (Faz U1), Updater the updates (Faz U3); nil in tests
-	// that do not need them.
+	// Doctor runs the server check (Faz U1), Updater the updates (Faz U3), Images reads
+	// the images for their clean-up (Faz U4); nil in tests that do not need them.
 	Doctor  *Doctor
 	Updater *Updater
+	Images  ImageLister
 	// AllowedUIDs may connect; everyone else gets 403. Checked against the kernel's
 	// peer credentials, not anything the client sends.
 	AllowedUIDs map[uint32]bool
@@ -234,6 +235,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/update/check", s.updateCheck)
 	mux.HandleFunc("POST /v1/update/apply", s.updateApply)
 	mux.HandleFunc("POST /v1/update/back", s.updateBack)
+	mux.HandleFunc("POST /v1/images/prune", s.pruneImages)
 	return s.checkPeer(mux)
 }
 
@@ -770,6 +772,7 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 		Registries:  regs,
 		Doctor:      doc,
 		Updater:     upd,
+		Images:      d,
 		AllowedUIDs: map[uint32]bool{0: true, uint32(uid): true},
 		Log:         logger,
 	}

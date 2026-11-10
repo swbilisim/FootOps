@@ -328,27 +328,12 @@ func images(ctx context.Context, env Env) Finding {
 		f.Level, f.Title, f.Detail = Info, "İmajlar denetlenemedi", err.Error()
 		return f
 	}
-	keep := map[string]bool{}
-	for _, ref := range env.KeepImages {
-		name, digest, _ := strings.Cut(ref, "@")
-		keep[name] = true
-		if digest != "" {
-			if i := strings.LastIndexByte(name, ':'); i > strings.LastIndexByte(name, '/') {
-				name = name[:i]
-			}
-			keep[name+"@"+digest] = true
-		}
-	}
 	var names []string
 	var low, high int64
-	for _, im := range u.Images {
-		// -1: not counted (an older engine); such an image is left alone.
-		if im.Containers != 0 || kept(im, keep) {
-			continue
-		}
+	for _, im := range Unused(u, env.KeepImages) {
 		high += im.Size
 		low += im.Size - max(im.SharedSize, 0)
-		names = append(names, imageName(im))
+		names = append(names, ImageName(im))
 	}
 	if len(names) == 0 {
 		f.Level, f.Title = OK, "Kullanılmayan imaj yok"
@@ -361,6 +346,30 @@ func images(ctx context.Context, env Env) Finding {
 	return f
 }
 
+// Unused are the images no container uses, stopped ones included, but those keep names
+// (FootOps' own; references as pulled, a digest too).
+func Unused(u docker.ImageUsage, keep []string) []docker.ImageEntry {
+	refs := map[string]bool{}
+	for _, ref := range keep {
+		name, digest, _ := strings.Cut(ref, "@")
+		refs[name] = true
+		if digest != "" {
+			if i := strings.LastIndexByte(name, ':'); i > strings.LastIndexByte(name, '/') {
+				name = name[:i]
+			}
+			refs[name+"@"+digest] = true
+		}
+	}
+	var out []docker.ImageEntry
+	for _, im := range u.Images {
+		// -1: not counted (an older engine); such an image is left alone.
+		if im.Containers == 0 && !kept(im, refs) {
+			out = append(out, im)
+		}
+	}
+	return out
+}
+
 func kept(im docker.ImageEntry, keep map[string]bool) bool {
 	for _, r := range append(append([]string{}, im.RepoTags...), im.RepoDigests...) {
 		if keep[r] {
@@ -370,7 +379,8 @@ func kept(im docker.ImageEntry, keep map[string]bool) bool {
 	return false
 }
 
-func imageName(im docker.ImageEntry) string {
+// ImageName is an image as people know it: its first tag, else its ID.
+func ImageName(im docker.ImageEntry) string {
 	for _, t := range im.RepoTags {
 		if t != "<none>:<none>" {
 			return t

@@ -419,8 +419,9 @@ func TestSamplerListsOnChange(t *testing.T) {
 	if lists() != 1 {
 		t.Errorf("same containers running: %d lists in 6 samples, want 1", lists())
 	}
-	if d.inspects["footops-mongo"] != 6 || d.inspects["magaza"] != 1 {
-		t.Errorf("inspects: %v (the healthcheck one every sample, the other once)", d.inspects)
+	// Samples at 0, 10, … 50 s: the healthcheck one at 0 and 30 (healthAge), the other once.
+	if d.inspects["footops-mongo"] != 2 || d.inspects["magaza"] != 1 {
+		t.Errorf("inspects: %v (the healthcheck one every %v, the other once)", d.inspects, healthAge)
 	}
 	sample(10 * time.Second) // a minute since the list
 	if lists() != 2 {

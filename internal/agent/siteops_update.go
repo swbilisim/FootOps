@@ -257,6 +257,7 @@ func (o *SiteOps) Update(ctx context.Context, name string, u SiteUpdate, progres
 			}
 		}
 	}
+	old := o.containerImage(ctx, cur)
 	if err := o.compose(ctx, next, o.upArgs(ctx, next, "--detach", "--remove-orphans")...); err != nil {
 		return fmt.Errorf("container güncellenemedi: %w", err)
 	}
@@ -282,5 +283,9 @@ func (o *SiteOps) Update(ctx context.Context, name string, u SiteUpdate, progres
 		return err
 	}
 	done("Site yeni ayarlarla yayında")
+	// Only now: until here a failure goes back to the old image.
+	if next.Image != cur.Image {
+		o.dropReplaced(ctx, next, old, progress)
+	}
 	return nil
 }

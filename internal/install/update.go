@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/swbilisim/FootOps/internal/core"
 	"github.com/swbilisim/FootOps/internal/update"
 )
 
@@ -96,11 +97,21 @@ func PlanUpdate(ctx context.Context, h Host, self string) (update.Plan, error) {
 	}
 	p := update.Plan{Steps: []update.PlanStep{}}
 	said := map[string]bool{}
+	// The core's containers follow its compose file, which core-files writes first: their
+	// own check reads the file as it is now, so a new one is told here (it recreates
+	// Caddy or MongoDB — the sites' few seconds).
+	composeChanges := false
+	if same, err := h.FileEquals(core.ComposePath, core.Compose(coreConfig(a))); err == nil && !same {
+		composeChanges = true
+	}
 	for _, s := range updateSteps(h, a, self, io.Discard) {
 		ps := update.PlanStep{Name: s.Name(), Title: stepTitle(s.Name())}
 		done, err := s.Check(ctx)
 		if err != nil {
 			ps.Err = err.Error()
+		}
+		if s.Name() == "core-stack" && composeChanges {
+			done = false
 		}
 		if ps.Change = err != nil || !done; ps.Change {
 			ps.Detail = s.Describe()
