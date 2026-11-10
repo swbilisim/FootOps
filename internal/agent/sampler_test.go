@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -339,6 +340,137 @@ func TestSamplerCgroupSaysInspectIsStale(t *testing.T) {
 	step(1_400_000, 1)
 	if inspects() != 3 {
 		t.Errorf("CPU count back: not asked again (%d inspects)", inspects())
+	}
+}
+
+// listDocker is dockerd for the list: containers the test sets, lists and inspects
+// counted.
+type listDocker struct {
+	fakeDocker
+	mu       sync.Mutex
+	ctrs     []docker.Container
+	lists    int
+	inspects map[string]int
+}
+
+func (d *listDocker) Containers(context.Context) ([]docker.Container, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.lists++
+	return append([]docker.Container(nil), d.ctrs...), nil
+}
+
+func (d *listDocker) Inspect(_ context.Context, name string) (docker.Inspect, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.inspects[name]++
+	var in docker.Inspect
+	for _, c := range d.ctrs {
+		if c.Name() == name {
+			in.ID, in.State.Status, in.State.Running = c.ID, c.State, c.State == "running"
+			if strings.Contains(c.Status, "healthy") {
+				in.State.Health = &struct {
+					Status string `json:"Status"`
+				}{"healthy"}
+			}
+		}
+	}
+	return in, nil
+}
+
+// dockerd's list is asked for when the cgroup tree's running containers differ from
+// the last list's, or the list is listEvery old; not every 10 s (~18 ms of dockerd and
+// containerd each time on Docker 29). A container with a healthcheck is inspected every
+// sample (cheap), so its health stays fresh.
+func TestSamplerListsOnChange(t *testing.T) {
+	root := t.TempDir()
+	id := func(c byte) string { return strings.Repeat(string(c), 64) }
+	scope := func(i string, on bool) {
+		t.Helper()
+		p := filepath.Join(root, "system.slice", "docker-"+i+".scope")
+		if on {
+			os.MkdirAll(p, 0o755)
+		} else {
+			os.Remove(p)
+		}
+	}
+	os.MkdirAll(filepath.Join(root, "system.slice", "cron.service"), 0o755)
+	d := &listDocker{inspects: map[string]int{}, ctrs: []docker.Container{
+		{ID: id('a'), Names: []string{"/magaza"}, State: "running", Status: "Up 2 hours"},
+		{ID: id('b'), Names: []string{"/footops-mongo"}, State: "running", Status: "Up 2 days (healthy)"},
+		{ID: id('c'), Names: []string{"/eski"}, State: "exited", Status: "Exited (0) 3 days ago"},
+	}}
+	scope(id('a'), true)
+	scope(id('b'), true)
+	now := time.Date(2026, 11, 10, 17, 0, 0, 0, time.UTC)
+	s := NewSampler(d, fakeSystem)
+	s.cgroupRoot, s.cgroupOf = root, func(int) string { return "" }
+	s.now = func() time.Time { return now }
+	sample := func(after time.Duration) Overview {
+		now = now.Add(after)
+		return s.Sample(context.Background())
+	}
+	lists := func() int { d.mu.Lock(); defer d.mu.Unlock(); return d.lists }
+
+	sample(0)
+	for i := 0; i < 5; i++ {
+		sample(10 * time.Second)
+	}
+	if lists() != 1 {
+		t.Errorf("same containers running: %d lists in 6 samples, want 1", lists())
+	}
+	if d.inspects["footops-mongo"] != 6 || d.inspects["magaza"] != 1 {
+		t.Errorf("inspects: %v (the healthcheck one every sample, the other once)", d.inspects)
+	}
+	sample(10 * time.Second) // a minute since the list
+	if lists() != 2 {
+		t.Errorf("after listEvery: %d lists", lists())
+	}
+	// It stops: its scope goes, the list is asked for at once.
+	d.mu.Lock()
+	d.ctrs[0].State, d.ctrs[0].Status = "exited", "Exited (137) 2 seconds ago"
+	d.mu.Unlock()
+	scope(id('a'), false)
+	if o := sample(10 * time.Second); lists() != 3 || o.Containers[2].Name != "magaza" || o.Containers[2].State != "exited" {
+		t.Errorf("stop: %d lists, %+v", lists(), o.Containers)
+	}
+	// A new one starts: its scope comes, the list is asked for.
+	d.mu.Lock()
+	d.ctrs = append(d.ctrs, docker.Container{ID: id('d'), Names: []string{"/yeni"}, State: "running", Status: "Up 1 second"})
+	d.mu.Unlock()
+	scope(id('d'), true)
+	if o := sample(10 * time.Second); lists() != 4 || len(o.Containers) != 4 {
+		t.Errorf("start: %d lists, %d containers", lists(), len(o.Containers))
+	}
+	sample(10 * time.Second)
+	if lists() != 4 {
+		t.Errorf("settled again: %d lists", lists())
+	}
+	// No cgroup tree to go by: a list every sample, as before.
+	s.cgroupRoot = filepath.Join(root, "yok")
+	sample(10 * time.Second)
+	sample(10 * time.Second)
+	if lists() != 6 {
+		t.Errorf("no tree: %d lists, want 6", lists())
+	}
+}
+
+func TestRunningContainers(t *testing.T) {
+	root := t.TempDir()
+	a, b := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	for _, p := range []string{"system.slice/docker-" + a + ".scope", "system.slice/docker.service", "system.slice/docker-kisa.scope",
+		"docker/" + b, "docker/buildkit"} {
+		os.MkdirAll(filepath.Join(root, p), 0o755)
+	}
+	ids, seen := runningContainers(root)
+	if !seen || len(ids) != 2 || !ids[a] || !ids[b] {
+		t.Errorf("ids %v, seen %v", ids, seen)
+	}
+	if _, seen := runningContainers(""); seen {
+		t.Error("no root: seen")
+	}
+	if _, seen := runningContainers(filepath.Join(root, "yok")); seen {
+		t.Error("missing root: seen")
 	}
 }
 

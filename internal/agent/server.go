@@ -572,6 +572,7 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 	regs := &Registries{ConfigDir: cfg.DockerConfig, MetaPath: cfg.RegistriesPath, Run: run.Exec{},
 		GitHubAPI: "https://api.github.com", HTTP: &http.Client{Timeout: 10 * time.Second}}
 	sampler := NewSampler(d, nil)
+	sampler.cgroupRoot = run.CgroupRoot // between lists, what runs is read from the cgroup tree
 	sampler.Alerts = NewAlerter()
 	sampler.Alerts.Certs = ops.Store.Certs
 	sampler.Alerts.Registries = regs.List

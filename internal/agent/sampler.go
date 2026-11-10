@@ -36,10 +36,12 @@ type SystemReader func(prev sysinfo.CPUTimes) (SystemMetrics, sysinfo.CPUTimes, 
 type Sampler struct {
 	docker     DockerAPI
 	readSystem SystemReader
-	// cgroupOf finds a process's cgroup directory, "" if it cannot; now is the clock CPU
-	// shares are timed by (tests swap both).
-	cgroupOf func(pid int) string
-	now      func() time.Time
+	// cgroupOf finds a process's cgroup directory, "" if it cannot; cgroupRoot is where
+	// the containers' cgroups are looked for between lists ("": nowhere, a list every
+	// sample; the agent sets run.CgroupRoot); now is the clock CPU shares are timed by.
+	cgroupOf   func(pid int) string
+	cgroupRoot string
+	now        func() time.Time
 	// History receives every periodic sample when set.
 	History *history.Store
 	// Alerts evaluates every periodic sample when set.
@@ -52,7 +54,15 @@ type Sampler struct {
 	marksMu  sync.Mutex
 	marks    map[string]cpuMark     // container ID → its last CPU reading
 	inspects map[string]inspectMark // container ID → its last inspect
+	list     []docker.Container     // dockerd's last container list, and when
+	listAt   time.Time
 }
+
+// listEvery is how long the sampler goes by its last container list while the cgroup
+// tree shows the same containers running. On Docker 29 with the containerd image store
+// a list (GET /containers/json) asks containerd about every container: ~18 ms of CPU
+// on a fast core, 40-50 ms on a server's, every 10 seconds (Faz S3b, measured).
+const listEvery = time.Minute
 
 // inspectMark is a container's last inspect, with the list entry it was made for.
 type inspectMark struct {
@@ -85,8 +95,8 @@ func NewSampler(d DockerAPI, rs SystemReader) *Sampler {
 	if rs == nil {
 		rs = ReadSystem
 	}
-	return &Sampler{docker: d, readSystem: rs, cgroupOf: run.CgroupOfPID, now: time.Now, marks: map[string]cpuMark{},
-		inspects: map[string]inspectMark{}}
+	return &Sampler{docker: d, readSystem: rs, cgroupOf: run.CgroupOfPID, now: time.Now,
+		marks: map[string]cpuMark{}, inspects: map[string]inspectMark{}}
 }
 
 // Run samples every interval until ctx is done.
@@ -138,7 +148,7 @@ func (s *Sampler) Sample(ctx context.Context) Overview {
 	}
 	o.System = sys
 
-	list, err := s.docker.Containers(ctx)
+	list, err := s.containers(ctx)
 	if err != nil {
 		o.Errors = append(o.Errors, "docker: "+err.Error())
 	}
@@ -231,6 +241,72 @@ func (s *Sampler) container(ctx context.Context, c docker.Container, memTotal ui
 	return info, nil
 }
 
+// containers is dockerd's container list, or the last one while it is under listEvery
+// old and the containers running are the ones it says: a start, a stop, a crash or a
+// new container shows in the cgroup tree at once, and the list is asked for again.
+// Where the tree cannot be read, dockerd is asked every time.
+func (s *Sampler) containers(ctx context.Context) ([]docker.Container, error) {
+	now := s.now()
+	running, seen := runningContainers(s.cgroupRoot)
+	s.marksMu.Lock()
+	list, at := s.list, s.listAt
+	s.marksMu.Unlock()
+	if seen && list != nil && now.Sub(at) < listEvery && sameRunning(list, running) {
+		return list, nil
+	}
+	list, err := s.docker.Containers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.marksMu.Lock()
+	s.list, s.listAt = list, now
+	s.marksMu.Unlock()
+	return list, nil
+}
+
+// runningContainers lists the IDs of the containers with a cgroup, running or paused:
+// systemd's system.slice/docker-<id>.scope, cgroupfs' docker/<id>. seen is false where
+// neither can be read.
+func runningContainers(root string) (map[string]bool, bool) {
+	ids, seen := map[string]bool{}, false
+	if root == "" {
+		return ids, false
+	}
+	if ents, err := os.ReadDir(root + "/system.slice"); err == nil {
+		seen = true
+		for _, e := range ents {
+			name, ok := strings.CutPrefix(e.Name(), "docker-")
+			if id, ok2 := strings.CutSuffix(name, ".scope"); ok && ok2 && len(id) == 64 {
+				ids[id] = true
+			}
+		}
+	}
+	if ents, err := os.ReadDir(root + "/docker"); err == nil {
+		seen = true
+		for _, e := range ents {
+			if e.IsDir() && len(e.Name()) == 64 {
+				ids[e.Name()] = true
+			}
+		}
+	}
+	return ids, seen
+}
+
+// sameRunning reports whether the containers a list says are running (or paused) are
+// the ones running.
+func sameRunning(list []docker.Container, running map[string]bool) bool {
+	n := 0
+	for _, c := range list {
+		if c.State == "running" || c.State == "paused" {
+			if !running[c.ID] {
+				return false
+			}
+			n++
+		}
+	}
+	return n == len(running)
+}
+
 // inspect asks dockerd about a container only when its list entry changed — a restart
 // ("Up 2 seconds"), a health change ("(unhealthy)"), an exit all show there — or the
 // last answer is inspectAge old. A container up for less than a minute is always asked:
@@ -241,7 +317,10 @@ func (s *Sampler) inspect(ctx context.Context, c docker.Container) (docker.Inspe
 	s.marksMu.Lock()
 	m, ok := s.inspects[c.ID]
 	s.marksMu.Unlock()
-	if ok && c.ID != "" && m.state == c.State && m.status == c.Status && now.Sub(m.at) < inspectAge && !strings.Contains(c.Status, "second") {
+	// A container with a healthcheck is asked every time: the list, kept up to a minute,
+	// would tell a health change late (an inspect costs dockerd little, a list a lot).
+	if ok && c.ID != "" && m.state == c.State && m.status == c.Status && now.Sub(m.at) < inspectAge &&
+		!strings.Contains(c.Status, "second") && m.in.State.Health == nil {
 		return m.in, nil
 	}
 	in, err := s.docker.Inspect(ctx, c.Name())
