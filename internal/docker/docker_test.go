@@ -118,6 +118,31 @@ func TestClientRequests(t *testing.T) {
 	}
 }
 
+func TestVersionAndImageUsage(t *testing.T) {
+	var got []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/version", func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.URL.String())
+		io.WriteString(w, `{"Version":"29.9.3","ApiVersion":"1.52"}`)
+	})
+	mux.HandleFunc("/system/df", func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.URL.String())
+		io.WriteString(w, `{"LayersSize":300,"Images":[{"Id":"sha256:a","RepoTags":["x:1"],"Size":200,"SharedSize":50,"Containers":1},{"Id":"sha256:b","RepoTags":[],"Size":100,"SharedSize":50,"Containers":0}]}`)
+	})
+	c := &Client{Doer: handlerDoer{mux}}
+	v, err := c.Version(context.Background())
+	if err != nil || v.Version != "29.9.3" || v.APIVersion != "1.52" {
+		t.Fatalf("version = %+v, %v", v, err)
+	}
+	u, err := c.ImageUsage(context.Background())
+	if err != nil || u.LayersSize != 300 || len(u.Images) != 2 || u.Images[1].Containers != 0 || u.Images[0].SharedSize != 50 {
+		t.Fatalf("usage = %+v, %v", u, err)
+	}
+	if want := "http://docker/version\nhttp://docker/system/df?type=image"; strings.Join(got, "\n") != want {
+		t.Errorf("requests:\n%s", strings.Join(got, "\n"))
+	}
+}
+
 func TestNetworkRequests(t *testing.T) {
 	var got []string
 	mux := http.NewServeMux()

@@ -134,6 +134,12 @@ type AgentAPI interface {
 	NotifyCancel(ctx context.Context, a agent.Actor) error
 	NotifyTest(ctx context.Context, a agent.Actor) error
 	NotifyRemove(ctx context.Context, a agent.Actor) error
+	DoctorStatus(ctx context.Context) (agent.DoctorStatus, error)
+	DoctorRun(ctx context.Context, a agent.Actor) error
+	UpdateStatus(ctx context.Context, brief bool) (agent.UpdateStatus, error)
+	UpdateCheck(ctx context.Context, a agent.Actor) error
+	UpdateApply(ctx context.Context, version string, a agent.Actor) (string, error)
+	UpdateBack(ctx context.Context, a agent.Actor) (string, error)
 }
 
 // AccessVerifier checks Cloudflare Access tokens. *cfaccess.Verifier implements it.
@@ -207,6 +213,12 @@ func (s *Server) Handler(via string) http.Handler {
 	mux.Handle("GET /containers/{name}/logs", s.requireSession(s.logs))
 	mux.Handle("GET /containers/{name}/restart", s.requireSession(s.restartConfirm))
 	mux.Handle("POST /containers/{name}/restart", s.requireSession(s.restart))
+	mux.Handle("GET /server/check", s.requireSession(s.checkPage))
+	mux.Handle("POST /server/check", s.requireSession(s.checkRun))
+	mux.Handle("GET /server/update", s.requireSession(s.updatePage))
+	mux.Handle("POST /server/update/check", s.requireSession(s.updateCheck))
+	mux.Handle("POST /server/update/apply", s.requireSession(s.updateApply))
+	mux.Handle("POST /server/update/back", s.requireSession(s.updateBack))
 	mux.Handle("GET /audit", s.requireSession(s.audit))
 	mux.Handle("GET /sites", s.requireSession(s.sitesList))
 	mux.Handle("GET /sites/new", s.requireSession(s.siteNew))

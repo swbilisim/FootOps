@@ -102,6 +102,9 @@ func TestJudge(t *testing.T) {
 			want: []string{"Çalışmıyor (container durmuş): blog"}},
 		"backup problems": {file: func(f *monitor.StatusFile) { f.Backup.Problems = []string{"Yedek gecikti"} }, color: yellow,
 			want: []string{"Yedek: Yedek gecikti"}},
+		"check problems": {file: func(f *monitor.StatusFile) {
+			f.Doctor = &monitor.StatusDoctor{Bad: 1, Problems: []string{"Standarttan farklı: SSH ayarları"}}
+		}, color: yellow, want: []string{"Kontrol: Standarttan farklı: SSH ayarları"}},
 		"disk full": {file: func(f *monitor.StatusFile) { f.Sys.DiskUsed = 34 << 30 }, color: yellow,
 			want: []string{"Disk %85 dolu (34,0 GB / 40,0 GB)"}},
 		"memory full": {file: func(f *monitor.StatusFile) { f.Sys.MemUsed = 3800 << 20 }, color: yellow,

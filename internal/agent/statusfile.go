@@ -70,6 +70,9 @@ type StatusWriter struct {
 	Server   string
 	HTTP     *http.Client
 	Log      *log.Logger
+	// Doctor is the last server check's part, Update a newer release's (nil: none).
+	Doctor func() *monitor.StatusDoctor
+	Update func() *monitor.StatusUpdate
 
 	now      func() time.Time
 	kickOnce sync.Once
@@ -197,6 +200,12 @@ func (w *StatusWriter) Build(ctx context.Context) StatusFile {
 		for _, a := range b.Alerts(now) {
 			out.Backup.Problems = append(out.Backup.Problems, a.Title)
 		}
+	}
+	if w.Doctor != nil {
+		out.Doctor = w.Doctor()
+	}
+	if w.Update != nil {
+		out.Update = w.Update()
 	}
 	return out
 }

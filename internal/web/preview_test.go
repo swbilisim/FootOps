@@ -30,11 +30,14 @@ import (
 	"github.com/swbilisim/FootOps/internal/auth"
 	"github.com/swbilisim/FootOps/internal/config"
 	"github.com/swbilisim/FootOps/internal/datafs"
+	"github.com/swbilisim/FootOps/internal/doctor"
 	"github.com/swbilisim/FootOps/internal/history"
 	"github.com/swbilisim/FootOps/internal/mongo"
+	"github.com/swbilisim/FootOps/internal/release"
 	"github.com/swbilisim/FootOps/internal/remote"
 	"github.com/swbilisim/FootOps/internal/run"
 	"github.com/swbilisim/FootOps/internal/sites"
+	"github.com/swbilisim/FootOps/internal/update"
 )
 
 type previewAgent struct{ fakeAgent }
@@ -871,4 +874,46 @@ func (p *previewAgent) ViewFind(ctx context.Context, site, view string, q agent.
 
 func (p *previewAgent) ViewDoc(ctx context.Context, site, view, coll, id string) (agent.DBDocument, error) {
 	return p.DBDoc(ctx, site, coll, id)
+}
+
+// The server check and updates (Faz U1, U3): a report with one of each level, a release
+// ready, the last update rolled back.
+func (p *previewAgent) DoctorStatus(context.Context) (agent.DoctorStatus, error) {
+	f := func(id, section, level, title, detail, fix string) doctor.Finding {
+		return doctor.Finding{ID: id, Section: section, Level: level, Title: title, Detail: detail, Fix: fix}
+	}
+	findings := []doctor.Finding{}
+	for _, n := range []string{"Temel paketler", "Sunucu adı", "Saat dilimi", "Takas alanı (swap)", "Güvenlik duvarı (UFW)", "fail2ban", "Docker", "Docker ayarları", "Çekirdek container'lar", "Panel servisleri"} {
+		findings = append(findings, f("step:"+n, "standard", doctor.OK, n, "", ""))
+	}
+	findings = append(findings,
+		f("step:ssh-hardening", "standard", doctor.Bad, "Standarttan farklı: SSH ayarları", "Kurulumun bu adımı: SSH: root ve şifreyle giriş kapalı, yalnız furkan anahtarla.", "sudo footops install (önceki cevaplarla; yalnız farklı olanı düzeltir)"),
+		f("reboot", "system", doctor.Info, "Yeniden başlatma bekliyor; sunucu kendiliğinden yeniden başlayacak (saat 04:00)", "Yeniden başlatma 5 saat önce istendi (linux-image-6.8.0-150-generic).", ""),
+		f("updates", "system", doctor.Info, "3 paket güncellemesi bekliyor", "Diğer: docker-ce, docker-ce-cli, containerd.io — kendiliğinden kurulmaz.", "SSH'den: sudo apt upgrade (Docker güncellenirken container'lar çalışmaya devam eder)"),
+		f("unattended", "system", doctor.OK, "Otomatik güvenlik güncellemeleri çalışıyor (son: 2 saat önce)", "", ""),
+		f("time", "network", doctor.OK, "Saat senkron (NTP)", "", ""),
+		f("ports", "network", doctor.Warn, "Beklenmeyen dinleyen port: tcp 8080 (node)", "Güvenlik duvarı (UFW) içeri girişi kapalı tuttuğu sürece dışarıdan ulaşılamaz; yine de ne olduğuna bak.", "sudo ss -tulnp ile süreci gör"),
+		f("images", "disk", doctor.Info, "7 imajı hiçbir container kullanmıyor (812,4 MB ile 2,1 GB arası)", "ghcr.io/ornek/magaza:<eski>, ghcr.io/buyuksehir-belediyesi/buyuksehir-belediyesi-kultur-merkezi:2026-10-30-main, etiketsiz 4f2c1d9e8a7b ve 4 tane daha.", ""),
+		f("accounts", "accounts", doctor.OK, "Yönetici hesabı, bulut hesapları ve sudo kuralları standartta", "", ""),
+		f("footops", "versions", doctor.OK, "FootOps v0.1.0", "", ""),
+		f("docker", "versions", doctor.Info, "Docker 29.9.3 — 29.9.5 çıkmış", "", "SSH'den: sudo apt upgrade (container'lar çalışmaya devam eder)"),
+		f("cloudflared", "versions", doctor.OK, "cloudflared 2026.10.3 (Cloudflare desteği bitişi: 2027-10)", "", ""))
+	at := time.Now().Add(-35 * time.Minute)
+	return agent.DoctorStatus{Report: &doctor.Report{Format: 1, Host: "h1", FootOps: "v0.1.0", Time: at, TookMS: 1840, Findings: findings},
+		Confirmed: map[string]bool{"step:ssh-hardening": true}, Next: time.Now().Add(20 * time.Hour), Tried: at}, nil
+}
+
+func (p *previewAgent) UpdateStatus(context.Context, bool) (agent.UpdateStatus, error) {
+	m := &release.Manifest{Version: "v0.2.0", Commit: "def5678", Date: "2026-11-12T10:00:00Z",
+		Notes: "Eski imajlar dağıtımdan sonra silinir.\nÇekirdeğin sağlık kontrolleri seyreldi: Docker'ın yükü azalır."}
+	return agent.UpdateStatus{Running: "v0.1.0", Latest: m, Newer: true, Checked: time.Now().Add(-2 * time.Hour), Next: time.Now().Add(22 * time.Hour),
+		Ready: &agent.UpdateReady{Version: "v0.2.0", At: time.Now().Add(-2 * time.Hour), Plan: update.Plan{
+			Steps: []update.PlanStep{{Name: "core-stack", Title: "Çekirdek container'lar", Change: true, Detail: "Çekirdek container'ları (Caddy, MongoDB, cloudflared) güncel ayarlarla çalıştır"},
+				{Name: "panel-binary", Title: "FootOps programı", Change: true, Detail: "footops programını /usr/local/bin/footops konumuna kur"}},
+			Impact: []string{"Caddy ve/veya MongoDB yeniden oluşturulur: siteler birkaç saniye (en çok ~10 sn) erişilemez, veritabanlı siteler veritabanına birkaç saniye ulaşamaz.",
+				"Panel birkaç saniye yeniden başlar; siteler etkilenmez."}}},
+		Run: &update.Run{From: "v0.1.0", To: "v0.1.1", Started: time.Now().Add(-26 * time.Hour), Finished: time.Now().Add(-26*time.Hour + 95*time.Second),
+			Phase: update.PhaseRolledBack, Err: "v0.1.1 90 sn içinde açılmadı (panel (footops-web) çalışmıyor)"},
+		Log:  []string{"== 2026-11-09 10:05:12 · footops v0.1.0 → v0.1.1", "[1/19] packages: already done", "[17/19] panel-binary: ok (412ms)", "[19/19] panel-services: ok (2.1s)", "✗ v0.1.1 90 sn içinde açılmadı (panel (footops-web) çalışmıyor)", "Önceki sürüme dönülüyor (v0.1.0)…", "✓ önceki sürüm (v0.1.0) yeniden çalışıyor"},
+		Prev: "v0.0.9"}, nil
 }

@@ -1,0 +1,77 @@
+{{template "top" .}}
+{{$st := .Data.St}}
+<a class="crumb" href="/">{{icon "back"}}Sunucu</a>
+<div class="page-head">
+  <div>
+    <h1>Güncelleme</h1>
+    <p class="sub">FootOps'un sürümleri GitHub'da yayınlanır ve Mac'te imzalanır. Sunucu günde bir yeni sürüme bakar; imzası tutan ve çalışandan yeni olanı indirip denetler, neyin değişeceğini önceden söyler. Kurulum burada onayla başlar; yeni sürüm açılmazsa önceki sürüme kendiliğinden döner.</p>
+  </div>
+  <div class="page-actions">
+    {{template "live"}}
+    <form method="post" action="/server/update/check">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <button type="submit" class="btn"{{if or $st.Checking $st.Applying}} disabled{{end}}>{{icon "restart"}}Şimdi denetle</button>
+    </form>
+  </div>
+</div>
+{{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>Agent'a ulaşılamadı: {{.}}</div></div>{{end}}
+<div data-live-id="update">
+{{with $st.Unverified}}<div class="notice bad">{{icon "alert"}}<div><strong>En yeni sürümün imzası tutmuyor; kurulmadı.</strong> {{.}}. GitHub'daki sürüme bakılmalı: FootOps'un anahtarıyla imzalanmamış ya da yolda değişmiş.</div></div>{{end}}
+{{if $st.Applying}}<div class="notice info" role="status">{{icon "info"}}<div>Güncelleme sürüyor. Panel birkaç saniye kapanıp yeni sürümle açılır; bu sayfa kendini yeniler.</div></div>{{end}}
+{{if $st.Checking}}<div class="notice info" role="status">{{icon "info"}}<div>Yeni sürüm denetleniyor…</div></div>{{end}}
+
+<div class="card stack">
+  <p><strong>Çalışan sürüm:</strong> <span class="mono">{{$st.Running}}</span>{{if not $st.Newer}}{{if $st.Latest}} · <span class="badge ok">güncel</span>{{end}}{{end}}</p>
+  {{with $st.Latest}}<p><strong>Yayındaki en yeni:</strong> <span class="mono">{{.Version}}</span> <span class="muted">({{.Commit}}, {{isoDay .Date}})</span></p>{{end}}
+  <p class="muted small">{{if $st.Checked.IsZero}}Henüz denetlenmedi.{{else}}Son denetim {{since $st.Checked}}.{{end}}{{if not $st.Next.IsZero}} Sonraki: {{when $st.Next}}.{{end}}</p>
+  {{with $st.CheckErr}}<div class="notice warn">{{icon "alert"}}<div>Son denetim olmadı: {{.}}</div></div>{{end}}
+</div>
+
+{{if $st.Newer}}{{with $st.Latest}}{{$v := .Version}}
+<div class="section-head"><h2>{{$v}}</h2></div>
+<div class="card stack">
+  {{with .Notes}}<p class="pre-wrap">{{.}}</p>{{end}}
+  {{with $st.Ready}}{{if eq .Version $v}}
+    {{if .PlanErr}}<div class="notice warn">{{icon "alert"}}<div>Güncellemenin planı çıkarılamadı: {{.PlanErr}}. Bir sonraki denetimde yeniden denenir; SSH'den: <span class="mono">sudo footops self-update</span></div></div>
+    {{else if .Plan.Interactive}}<div class="notice warn">{{icon "alert"}}<div>Bu sürümle terminalde soru soran ayarlar değişiyor ({{range $i, $t := .Plan.Interactive}}{{if $i}}, {{end}}{{$t}}{{end}}): panelden kurulmaz. SSH'den: <span class="mono">sudo footops self-update</span></div></div>
+    {{else}}
+      <p><strong>Güncellemede:</strong></p>
+      <ul class="plain">{{range .Plan.Impact}}<li>{{.}}</li>{{else}}<li>Yalnız FootOps'un programı değişir; siteler etkilenmez.</li>{{end}}</ul>
+      <details class="more"><summary>Değişecek kurulum adımları</summary>
+        <ul class="plain">{{range .Plan.Steps}}{{if .Change}}<li><strong>{{.Title}}</strong>{{with .Detail}} — {{.}}{{end}}{{with .Err}} <span class="muted">(denetim: {{.}})</span>{{end}}</li>{{end}}{{end}}</ul>
+      </details>
+      <form method="post" action="/server/update/apply">
+        <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+        <input type="hidden" name="version" value="{{$v}}">
+        <div class="form-actions"><button type="submit" class="primary"{{if $st.Applying}} disabled{{end}}>{{icon "download"}}{{$v}} sürümüne güncelle</button></div>
+      </form>
+      <p class="muted small">İndirildi ve imzası denetlendi ({{since .At}}). Yeni sürüm 90 saniyede açılmazsa önceki sürüme kendiliğinden dönülür; sonuç Telegram'a da gider.</p>
+    {{end}}
+  {{else}}<p class="muted">İndirilip denetlenmesi bekleniyor: <strong>Şimdi denetle</strong>.</p>{{end}}
+  {{else}}<p class="muted">İndirilip denetlenmesi bekleniyor: <strong>Şimdi denetle</strong>.</p>{{end}}
+</div>
+{{end}}{{end}}
+
+{{with $st.Run}}
+<div class="section-head"><h2>Son güncelleme</h2></div>
+<div class="card stack">
+  <p><span class="mono">{{.From}} → {{.To}}</span>{{if .Back}} <span class="muted">(önceki sürüme dönüş)</span>{{end}} · <span class="badge {{phaseClass .Phase}}">{{phaseTR .Phase}}</span></p>
+  <p class="muted small">Başladı {{ts .Started}}{{if not .Finished.IsZero}} · bitti {{ts .Finished}} ({{took (.Finished.Sub .Started)}}){{end}}</p>
+  {{with .Err}}<div class="notice {{if eq $st.Run.Phase "failed"}}bad{{else}}warn{{end}}">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
+  {{with $st.Log}}<details class="more"{{if $st.Applying}} open{{end}}><summary>Kayıt</summary><pre class="logs" data-follow>{{range .}}{{.}}
+{{end}}</pre></details>{{end}}
+</div>
+{{end}}
+
+{{with $st.Prev}}{{if not $st.Applying}}
+<details class="more">
+  <summary>Önceki sürüme dön ({{.}})…</summary>
+  <form method="post" action="/server/update/back" class="stack">
+    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+    <p>Son güncellemeden önce kurulu olan <span class="mono">{{.}}</span> geri kurulur (bu sunucuda saklanıyor). Panel birkaç saniye kapanır; çekirdek ayarları o sürümünkine döner.</p>
+    <div class="form-actions"><button type="submit" class="btn">{{icon "back"}}{{.}} sürümüne dön</button></div>
+  </form>
+</details>
+{{end}}{{end}}
+</div>
+{{template "bottom" .}}

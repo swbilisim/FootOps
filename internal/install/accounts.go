@@ -111,6 +111,18 @@ func freeAdminID(h Host) (int, error) {
 // accountNotes lists what the operator should put right about the accounts (nothing is
 // changed: an account in use cannot be renumbered from its own session).
 func accountNotes(h Host, admin string, mode SudoMode) []string {
+	var out []string
+	for _, n := range accountProblems(h, admin, mode) {
+		out = append(out, n.text)
+	}
+	return out
+}
+
+// accountNote is a note with a stable key: `footops doctor` makes findings of them.
+type accountNote struct{ key, text string }
+
+// accountProblems is accountNotes with a key for each note.
+func accountProblems(h Host, admin string, mode SudoMode) []accountNote {
 	users, err := readPasswd(h)
 	if err != nil {
 		return nil
@@ -120,7 +132,7 @@ func accountNotes(h Host, admin string, mode SudoMode) []string {
 	for _, m := range members["sudo"] {
 		sudoers[m] = true
 	}
-	var notes []string
+	var notes []accountNote
 	for _, u := range users {
 		if u.name == admin && (u.uid < adminMinID || u.gid < adminMinID) {
 			id, err := freeAdminID(h)
@@ -128,11 +140,11 @@ func accountNotes(h Host, admin string, mode SudoMode) []string {
 				id = adminMinID
 			}
 			group := groupName(h, u.gid)
-			notes = append(notes, fmt.Sprintf("Yönetici hesabı %s uid %d / gid %d ile: container'ların kullandığı aralıkta (Node imajları 1000, Next.js 1001). "+
+			notes = append(notes, accountNote{"uid", fmt.Sprintf("Yönetici hesabı %s uid %d / gid %d ile: container'ların kullandığı aralıkta (Node imajları 1000, Next.js 1001). "+
 				"Bu uid'le çalışan container'ların süreçleri sunucuda bu hesabın sayılır: SSH anahtarı çalınırsa sudo şifresi olmadan sitelerin sırları okunur. "+
 				"Düzeltme (bu hesabın oturumu kapalıyken, başka bir sudo hesabıyla): sudo usermod -u %d %s && sudo groupmod -g %d %s && "+
 				"sudo find %s -xdev -gid %d -exec chgrp -h %d {} + (yalnız ev klasörü: başka yerde aynı numara container dosyalarınındır)",
-				u.name, u.uid, u.gid, id, u.name, id, group, u.home, u.gid, id))
+				u.name, u.uid, u.gid, id, u.name, id, group, u.home, u.gid, id)})
 		}
 	}
 	for _, name := range cloudUsers {
@@ -144,14 +156,14 @@ func accountNotes(h Host, admin string, mode SudoMode) []string {
 			if sudoers[name] {
 				extra = ", sudo grubunda"
 			}
-			notes = append(notes, fmt.Sprintf("Bulut imajının hesabı %s duruyor (uid %d%s). Kullanılmıyorsa sil: sudo userdel -r %s", name, u.uid, extra, name))
+			notes = append(notes, accountNote{"cloud:" + name, fmt.Sprintf("Bulut imajının hesabı %s duruyor (uid %d%s). Kullanılmıyorsa sil: sudo userdel -r %s", name, u.uid, extra, name)})
 		}
 	}
 	for _, r := range nopasswdRules(h) {
 		if mode == SudoNoPassword && r.file == "/etc/sudoers.d/90-footops-"+admin {
 			continue // chosen at setup
 		}
-		notes = append(notes, fmt.Sprintf("Şifresiz sudo kuralı: %s → %s. Hesap kullanılmıyorsa dosyayı (ya da satırı) kaldır, sonra sudo visudo -c", r.file, r.line))
+		notes = append(notes, accountNote{"nopasswd:" + r.file, fmt.Sprintf("Şifresiz sudo kuralı: %s → %s. Hesap kullanılmıyorsa dosyayı (ya da satırı) kaldır, sonra sudo visudo -c", r.file, r.line)})
 	}
 	return notes
 }

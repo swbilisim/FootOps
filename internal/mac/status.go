@@ -420,6 +420,12 @@ func judge(srv server, sf, wf fetched, now time.Time) ServerStatus {
 		for _, p := range file.Backup.Problems {
 			add(yellow, "Yedek: %s", clip(clean(p), 200))
 		}
+		// The server check's alerts (Faz U1): the panel says how serious each is.
+		if d := file.Doctor; d != nil {
+			for _, p := range d.Problems {
+				add(yellow, "Kontrol: %s", clip(clean(p), 200))
+			}
+		}
 		if y := file.Sys; y != nil {
 			if p := percent(y.DiskUsed, y.DiskTotal); p >= diskFull {
 				add(yellow, "Disk %%%d dolu (%s / %s)", p, sizeTR(y.DiskUsed), sizeTR(y.DiskTotal))

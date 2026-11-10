@@ -1,27 +1,33 @@
-name: Release
+name: Release check
 
-# Push a tag like v0.1.0 to publish linux binaries and their SHA256SUMS.
+# A release is built and signed on the Mac (footops-mac yayin yap; panel-tasarim §31.2):
+# its private key never leaves the Mac. This rebuilds the published tag from the same
+# source with the same flags and checks the signed manifest describes exactly these
+# bytes: anyone can tell a release is this repository's code, and a mismatch shows here.
 on:
-  push:
-    tags: ["v*"]
+  release:
+    types: [published]
 
 permissions:
   contents: read
 
 jobs:
-  release:
+  rebuild:
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
+    env:
+      TAG: ${{ github.event.release.tag_name }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name }}
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - run: go test ./...
-      - name: Build
-        run: make linux VERSION="${GITHUB_REF_NAME}"
-      - name: Publish release
+      - name: Rebuild the release
+        run: make release-build RELEASE="$TAG"
+      - name: Fetch the published manifest and signature
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" dist/* --title "${GITHUB_REF_NAME}" --generate-notes
+        run: gh release download "$TAG" --dir dist/release --pattern 'footops-release.json*'
+      - name: Compare with the signed manifest
+        run: go run ./cmd/footops release-verify dist/release

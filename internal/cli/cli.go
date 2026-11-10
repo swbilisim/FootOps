@@ -3,6 +3,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -10,19 +11,25 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
+	"sort"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"golang.org/x/term"
 
 	"github.com/swbilisim/FootOps/internal/agent"
 	"github.com/swbilisim/FootOps/internal/config"
+	"github.com/swbilisim/FootOps/internal/docker"
+	"github.com/swbilisim/FootOps/internal/doctor"
 	"github.com/swbilisim/FootOps/internal/install"
+	"github.com/swbilisim/FootOps/internal/release"
 	"github.com/swbilisim/FootOps/internal/remote"
 	"github.com/swbilisim/FootOps/internal/run"
 	"github.com/swbilisim/FootOps/internal/staging"
-	"github.com/swbilisim/FootOps/internal/sysinfo"
+	"github.com/swbilisim/FootOps/internal/update"
 	"github.com/swbilisim/FootOps/internal/version"
 	"github.com/swbilisim/FootOps/internal/web"
 )
@@ -42,12 +49,10 @@ Commands:
   reset-2fa        Reset two-factor authentication (run as root over SSH)
   rotate-mongo-root  Give the MongoDB root user a new password (run as root)
   go-live          Make a server recovered from backups the live one (run as root)
-  self-update      Download, verify and install the latest release
+  self-update      Download, verify and install the latest release (--check: only look)
   version          Print version information
   help             Show this help
 `
-
-var errNotImplemented = errors.New("not implemented yet")
 
 // Run executes the command named in args[0] and returns the process exit code.
 func Run(args []string, stdout, stderr io.Writer) int {
@@ -63,13 +68,15 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	case "help", "--help", "-h":
 		fmt.Fprint(stdout, usage)
 	case "doctor":
-		err = runDoctor(stdout)
+		return runDoctor(args[1:], stdout, stderr)
 	case "data-pack", "data-extract", "data-fs", "data-zip", "data-gzip", "data-repack": // hidden: run by the agent only
 		err = runData(args[0], args[1:], stdout, stderr)
 	case "backup": // hidden until the panel's backup pages (Faz Y2)
 		err = runBackup(args[1:], os.Stdin, stdout, stderr)
 	case "rehearsal-rule": // hidden: run by footops-prova.service before Docker starts
 		err = runRehearsalRule(stdout)
+	case "release-verify": // hidden: CI checks the release it rebuilt (panel-tasarim §31.2)
+		err = runReleaseVerify(args[1:], stdout)
 	case "install":
 		err = runInstall(args[1:], stdout, stderr)
 		switch {
@@ -81,6 +88,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		case install.IsAborted(err):
 			fmt.Fprintf(stderr, "Kurulum durduruldu: %v\n", err)
 			return 1
+		case errors.Is(err, install.ErrRefused):
+			// An update's --auto that changed nothing: its overseer tells it by the status.
+			fmt.Fprintf(stderr, "footops install: %v\n", err)
+			return update.ExitRefused
 		}
 	case "agent":
 		err = runService(func(ctx context.Context, l *log.Logger) error {
@@ -91,15 +102,17 @@ func Run(args []string, stdout, stderr io.Writer) int {
 				DockerConfig: os.Getenv("DOCKER_CONFIG"), RegistriesPath: agent.DefaultRegistriesPath,
 				BackupDir: agent.DefaultBackupDir, BackupSecret: agent.DefaultBackupSecret, ToolsDir: agent.DefaultToolsDir,
 				ResticCache: agent.DefaultResticCache, NotifySecret: agent.DefaultNotifySecret, NotifyState: agent.DefaultNotifyState,
-				RehearsalPath: agent.DefaultRehearsalPath, RecoverDir: agent.DefaultRecoverDir, ExpiryState: agent.DefaultExpiryState}
+				RehearsalPath: agent.DefaultRehearsalPath, RecoverDir: agent.DefaultRecoverDir, ExpiryState: agent.DefaultExpiryState,
+				DoctorPath: agent.DefaultDoctorPath, UpdateDir: update.Dir}
 			if cfg.DockerConfig == "" {
 				cfg.DockerConfig = agent.DefaultDockerConfig
 			}
 			if p, err := config.Load(config.Path); err == nil {
 				cfg.PanelHost, cfg.ServerCode = p.PanelHost, p.ServerCode
 			}
-			// Only the integration test sets it (a systemd drop-in: root's to write).
+			// Only the integration test sets them (a systemd drop-in: root's to write).
 			cfg.NotifyAPI = os.Getenv("FOOTOPS_TELEGRAM_API")
+			cfg.ReleaseURL = os.Getenv("FOOTOPS_RELEASE_URL")
 			return agent.Main(ctx, cfg, l)
 		})
 	case "web":
@@ -113,7 +126,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	case "go-live":
 		err = runGoLive(stdout)
 	case "self-update":
-		err = errNotImplemented
+		err = runSelfUpdate(args[1:], os.Stdin, stdout, stderr)
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n\n%s", args[0], usage)
 		return 2
@@ -126,16 +142,82 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// runDoctor is a placeholder that reports memory sizing; full checks arrive with the installer.
-func runDoctor(out io.Writer) error {
-	mem, err := sysinfo.ReadMemory()
-	if err != nil {
-		return fmt.Errorf("read memory (doctor only runs on Linux): %w", err)
+// runDoctor checks this server against the FootOps standard (panel-tasarim §31.1). The
+// exit code is 1 when there is something to fix; with --json (the agent's) it is 0
+// whenever a report was written.
+func runDoctor(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	asJSON := fs.Bool("json", false, "write the report as JSON")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
 	}
-	want := sysinfo.RecommendSwap(mem.Total)
-	fmt.Fprintf(out, "RAM:  %s\n", sysinfo.HumanBytes(mem.Total))
-	fmt.Fprintf(out, "Swap: %s (recommended %s)\n", sysinfo.HumanBytes(mem.SwapTotal), sysinfo.HumanBytes(want))
-	fmt.Fprintf(out, "MongoDB cache: %.1f GB recommended\n", sysinfo.RecommendMongoCacheGB(mem.Total))
+	if os.Geteuid() != 0 {
+		fmt.Fprintln(stderr, "footops doctor: root olarak çalıştırılmalı: sudo footops doctor")
+		return 1
+	}
+	self, err := os.Executable()
+	if err == nil {
+		self, err = filepath.EvalSymlinks(self)
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "footops doctor: %v\n", err)
+		return 1
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), doctorTimeout)
+	defer cancel()
+	// Every command it runs only reads: safe to stop at the time limit.
+	r := install.Doctor(ctx, install.Host{Root: "/", Run: run.Exec{KillOnCancel: true}}, docker.New(docker.DefaultSocket), self)
+	if *asJSON {
+		if err := json.NewEncoder(stdout).Encode(r); err != nil {
+			fmt.Fprintf(stderr, "footops doctor: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	doctor.Render(stdout, r)
+	if len(r.Problems()) > 0 {
+		return 1
+	}
+	return 0
+}
+
+// doctorTimeout bounds a run; the agent's transient service gets a little more.
+const doctorTimeout = 4 * time.Minute
+
+// runReleaseVerify checks a release folder: the manifest's signature with this build's
+// keys, then each file the manifest lists, which must all be there.
+func runReleaseVerify(args []string, out io.Writer) error {
+	if len(args) != 1 {
+		return errors.New("kullanım: footops release-verify <klasör>")
+	}
+	man, err := os.ReadFile(filepath.Join(args[0], release.ManifestName))
+	if err != nil {
+		return err
+	}
+	sig, err := os.ReadFile(filepath.Join(args[0], release.SigName))
+	if err != nil {
+		return err
+	}
+	m, err := release.Verify(man, sig, release.Trusted())
+	if err != nil {
+		return err
+	}
+	names := make([]string, 0, len(m.Files))
+	for name := range m.Files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if err := m.Files[name].Check(filepath.Join(args[0], name)); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		fmt.Fprintf(out, "✓ %s %s\n", name, m.Files[name].SHA256)
+	}
+	fmt.Fprintf(out, "%s (%s): imza ve %d dosya tutuyor\n", m.Version, m.Commit, len(names))
 	return nil
 }
 
@@ -143,8 +225,31 @@ func runInstall(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("install", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dryRun := fs.Bool("dry-run", false, "only show what would change")
+	// An update's (panel-tasarim §31.3): what this binary would change, as JSON (--plan,
+	// only reads), and applying it with the saved answers, without a question (--auto).
+	plan := fs.Bool("plan", false, "")
+	auto := fs.Bool("auto", false, "")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *plan || *auto {
+		self, err := os.Executable()
+		if err == nil {
+			self, err = filepath.EvalSymlinks(self)
+		}
+		if err != nil {
+			return err
+		}
+		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+		defer cancel()
+		if *plan {
+			p, err := install.PlanUpdate(ctx, install.Host{Root: "/", Run: run.Exec{KillOnCancel: true}}, self)
+			if err != nil {
+				return err
+			}
+			return json.NewEncoder(stdout).Encode(p)
+		}
+		return install.ApplyUpdate(ctx, install.Host{Root: "/", Run: run.Exec{Log: stdout}}, self, stdout)
 	}
 
 	// Everything the installer prints and every command it runs goes to the log file;

@@ -286,7 +286,7 @@ type alertSummary struct {
 
 // navOf maps a template to its menu entry.
 var navOf = map[string]string{
-	"dashboard": "server", "container": "server", "logs": "server", "restart": "server",
+	"dashboard": "server", "container": "server", "logs": "server", "restart": "server", "check": "server", "update": "server",
 	"sites": "sites", "site": "sites", "site_new": "sites", "site_edit": "sites", "site_confirm": "sites", "site_unpark": "sites", "job": "sites",
 	"site_form": "sites", "site_review": "sites", "site_move": "sites", "site_dns": "sites", "registries": "sites", "registry_remove": "sites",
 	"import": "sites", "import_preview": "sites", "restore_confirm": "sites",
@@ -459,7 +459,23 @@ var funcs = template.FuncMap{
 			return fmt.Sprintf("%d gün önce", int(d.Hours()/24))
 		}
 	},
-	"ts": func(t time.Time) string { return t.Local().Format("2006-01-02 15:04:05") },
+	"ts":    func(t time.Time) string { return t.Local().Format("2006-01-02 15:04:05") },
+	"msDur": func(ms int64) time.Duration { return time.Duration(ms) * time.Millisecond },
+	// isoDay is a release's date (RFC 3339) as the panel writes days.
+	"isoDay": func(s string) string {
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			return t.Local().Format("02.01.2006")
+		}
+		return s
+	},
+	// An update's phase (Faz U3) in words and as a badge's color.
+	"phaseTR": func(p string) string {
+		return map[string]string{"applying": "sürüyor", "done": "kuruldu", "rolled-back": "açılmadı, önceki sürüme dönüldü",
+			"failed": "yarıda kaldı", "refused": "yapılmadı (hiçbir şey değişmedi)"}[p]
+	},
+	"phaseClass": func(p string) string {
+		return map[string]string{"done": "ok", "rolled-back": "warn", "refused": "warn", "failed": "bad"}[p]
+	},
 	// took is a short duration for job measurements: "350 ms", "4.2 sn", "3 dk 5 sn".
 	"took": func(d time.Duration) string {
 		switch {

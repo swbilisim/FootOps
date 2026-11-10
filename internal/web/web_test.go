@@ -25,17 +25,25 @@ import (
 )
 
 type fakeAgent struct {
-	mu        sync.Mutex
-	restarts  []string
-	actors    []agent.Actor
-	audit     []agent.AuditEntry
-	logLines  []string
-	created   []agent.CreateSiteRequest
-	createErr error
-	siteJobs  []string
-	jobDone   bool
-	alerts    []agent.Alert
-	updates   []agent.UpdateSiteRequest
+	mu sync.Mutex
+	// the server check (Faz U1) and updates (Faz U3)
+	doctor     agent.DoctorStatus
+	doctorRuns []agent.Actor
+	doctorErr  error
+	upd        agent.UpdateStatus
+	updBrief   []bool
+	updCalls   []string // check, apply <version>, back
+	updErr     error
+	restarts   []string
+	actors     []agent.Actor
+	audit      []agent.AuditEntry
+	logLines   []string
+	created    []agent.CreateSiteRequest
+	createErr  error
+	siteJobs   []string
+	jobDone    bool
+	alerts     []agent.Alert
+	updates    []agent.UpdateSiteRequest
 	// database copies
 	dbSite    bool
 	job       *agent.Job

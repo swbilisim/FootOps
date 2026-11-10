@@ -938,3 +938,48 @@ func (c *Client) PurgeRemoved(ctx context.Context, id, confirm string, a Actor) 
 	err := c.call(ctx, http.MethodPost, "/v1/removed/"+url.PathEscape(id)+"/purge", PurgeRequest{Confirm: confirm, Actor: a}, &r)
 	return r.JobID, err
 }
+
+// ---- the server check (Faz U1) ----
+
+func (c *Client) DoctorStatus(ctx context.Context) (DoctorStatus, error) {
+	var st DoctorStatus
+	err := c.call(ctx, http.MethodGet, "/v1/doctor", nil, &st)
+	return st, err
+}
+
+// DoctorRun starts a check at once.
+func (c *Client) DoctorRun(ctx context.Context, a Actor) error {
+	return c.call(ctx, http.MethodPost, "/v1/doctor/run", RestartRequest{Actor: a}, nil)
+}
+
+// ---- updates (Faz U3) ----
+
+// UpdateStatus is the Güncelleme page's; brief, the dashboard card's.
+func (c *Client) UpdateStatus(ctx context.Context, brief bool) (UpdateStatus, error) {
+	var st UpdateStatus
+	path := "/v1/update"
+	if brief {
+		path += "?brief=1"
+	}
+	err := c.call(ctx, http.MethodGet, path, nil, &st)
+	return st, err
+}
+
+// UpdateCheck looks for a newer release at once.
+func (c *Client) UpdateCheck(ctx context.Context, a Actor) error {
+	return c.call(ctx, http.MethodPost, "/v1/update/check", RestartRequest{Actor: a}, nil)
+}
+
+// UpdateApply starts the update to a ready release; UpdateBack going back to the kept
+// previous one. Both return the job.
+func (c *Client) UpdateApply(ctx context.Context, version string, a Actor) (string, error) {
+	var out JobResponse
+	err := c.call(ctx, http.MethodPost, "/v1/update/apply", UpdateRequest{Version: version, Actor: a}, &out)
+	return out.JobID, err
+}
+
+func (c *Client) UpdateBack(ctx context.Context, a Actor) (string, error) {
+	var out JobResponse
+	err := c.call(ctx, http.MethodPost, "/v1/update/back", UpdateRequest{Actor: a}, &out)
+	return out.JobID, err
+}

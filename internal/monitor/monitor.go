@@ -35,6 +35,26 @@ type StatusFile struct {
 	// Sys is the server itself as the agent last sampled it (Faz M: the Mac's menu bar
 	// shows it); none before the first sample.
 	Sys *StatusSys `json:"sys,omitempty"`
+	// Doctor is the last server check (Faz U1); none before the first.
+	Doctor *StatusDoctor `json:"doctor,omitempty"`
+	// Update is a newer FootOps release ready to install (Faz U3); none when current.
+	Update *StatusUpdate `json:"update,omitempty"`
+}
+
+// StatusUpdate is a newer release out; Ready: downloaded, checked and planned, to be
+// installed from the panel.
+type StatusUpdate struct {
+	Available string `json:"available"`
+	Ready     bool   `json:"ready,omitempty"`
+}
+
+// StatusDoctor is the last `footops doctor` run: its problems that are alerts (seen in
+// two runs in a row).
+type StatusDoctor struct {
+	Time     time.Time `json:"time"`
+	Warn     int       `json:"warn"`
+	Bad      int       `json:"bad"`
+	Problems []string  `json:"problems,omitempty"` // titles, serious first
 }
 
 // StatusSite is a site and the state of its container.

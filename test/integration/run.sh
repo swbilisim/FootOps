@@ -7,6 +7,8 @@
 #                                      it adds the certificate the others use)
 #   test/integration/run.sh m4         archives between this Mac and the panel (after y3; needs a
 #                                      MongoDB and its database tools on this Mac; not in the default list)
+#   test/integration/run.sh u1 u3      the server check; updates from signed releases (u3 builds
+#                                      and signs two releases with the test's own key)
 #   test/integration/run.sh clean      remove the container and its volumes
 #   docker stop footops-it             free the memory between runs (run.sh restarts it)
 #
@@ -35,8 +37,10 @@ aarch64 | arm64) goarch=arm64 ;;
 x86_64 | amd64) goarch=amd64 ;;
 *) echo "bilinmeyen mimari: $arch" >&2; exit 1 ;;
 esac
+# The test's builds trust a release key of the test's own (u3 signs its releases with it).
+PUB=$(cd ../.. && go run ./test/integration/relsign pub "$WORK/release-test.seed")
 (cd ../.. && CGO_ENABLED=0 GOOS=linux GOARCH=$goarch go build -trimpath \
-	-ldflags "-X github.com/swbilisim/FootOps/internal/version.Version=it-$(git rev-parse --short HEAD 2>/dev/null || echo dev)" \
+	-ldflags "-X github.com/swbilisim/FootOps/internal/version.Version=it-$(git rev-parse --short HEAD 2>/dev/null || echo dev) -X github.com/swbilisim/FootOps/internal/release.testKey=$PUB" \
 	-o "$WORK/footops" ./cmd/footops)
 
 docker build -q -t "$IMAGE" . >/dev/null
@@ -55,6 +59,6 @@ until docker exec "$NAME" systemctl is-system-running 2>/dev/null | grep -Eq 'ru
 docker cp "$WORK/footops" "$NAME:/root/footops"
 python3 install.py "$NAME" "$WORK/id_it.pub" "$WORK/login"
 docker exec "$NAME" rm -f /root/footops
-for s in ${*:-f0 f2 f2b f3 f4 f5 f6 y1 y2 y3 y4 y5 p1 s1}; do
+for s in ${*:-f0 f2 f2b f3 f4 f5 f6 y1 y2 y3 y4 y5 p1 s1 u1 u3}; do
 	python3 "$s.py" "$NAME" "$WORK/login"
 done

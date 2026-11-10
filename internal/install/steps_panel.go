@@ -20,7 +20,7 @@ import (
 
 const (
 	panelUser     = agent.PanelUser
-	panelBinPath  = "/usr/local/bin/footops"
+	panelBinPath  = BinPath
 	agentUnitPath = "/etc/systemd/system/footops-agent.service"
 	webUnitPath   = "/etc/systemd/system/footops-web.service"
 	provaUnitPath = "/etc/systemd/system/footops-prova.service"
@@ -350,9 +350,9 @@ ProtectSystem=strict
 ReadWritePaths=/var/lib/footops/web
 # Defence in depth: even if the web process were compromised it cannot read site and
 # database files, secrets, Docker's data, the audit log, documents kept for undo, the
-# backups' records and cache or what a recovery keeps for go-live (it asks the agent
-# instead).
-InaccessiblePaths=-/srv -/etc/footops/secrets -/var/lib/docker -/var/lib/containerd -/var/lib/footops/audit.jsonl -/var/lib/footops/audit.jsonl.1 -/var/lib/footops/dbedits -/var/lib/footops/backup -/var/lib/footops/recover -/var/cache/footops -/var/run/docker.sock
+# backups' records and cache, what a recovery keeps for go-live or the updates' binaries
+# (it asks the agent instead).
+InaccessiblePaths=-/srv -/etc/footops/secrets -/var/lib/docker -/var/lib/containerd -/var/lib/footops/audit.jsonl -/var/lib/footops/audit.jsonl.1 -/var/lib/footops/dbedits -/var/lib/footops/backup -/var/lib/footops/recover -/var/lib/footops/update -/var/cache/footops -/var/run/docker.sock
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes

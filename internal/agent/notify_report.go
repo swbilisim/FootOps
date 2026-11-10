@@ -20,6 +20,10 @@ type ServerReport struct {
 	SitesErr string
 	Backup   *BackupStatus // nil: no backups on this server
 	Alerts   []Alert
+	// Available is a newer FootOps release out (Faz U3), if any; AvailableReady: it can
+	// be installed from the panel.
+	Available      string
+	AvailableReady bool
 }
 
 // NewReport puts the report together from the agent's parts (backups may be nil).
@@ -98,6 +102,12 @@ func renderReport(prefix string, r ServerReport, now time.Time) string {
 		b.WriteString("\n⚠ Ölçülemeyen: " + clipMsg(strings.ToValidUTF8(strings.Join(errs, "; "), "?"), 300))
 	}
 	b.WriteString("\nFootOps " + version.Version)
+	switch {
+	case r.Available != "" && r.AvailableReady:
+		b.WriteString(" · " + r.Available + " hazır (panel: Sunucu → Güncelleme)")
+	case r.Available != "":
+		b.WriteString(" · " + r.Available + " çıktı (panel: Sunucu → Güncelleme)")
+	}
 	return b.String()
 }
 

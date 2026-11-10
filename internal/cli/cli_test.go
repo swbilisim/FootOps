@@ -15,6 +15,9 @@ func TestRunExitCodes(t *testing.T) {
 		{[]string{"version"}, 0},
 		{[]string{"help"}, 0},
 		{[]string{"install", "-h"}, 0},
+		{[]string{"self-update", "-h"}, 0},
+		{[]string{"doctor", "-h"}, 0},
+		{[]string{"release-verify"}, 1},
 		{[]string{"nope"}, 2},
 		{[]string{"web"}, 1},
 	}

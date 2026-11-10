@@ -67,6 +67,22 @@
 </section>
 {{end}}{{end}}
 
+<section class="stats care" aria-label="Bakım" data-live-id="care">
+  {{with .Data.Check}}
+  <a class="card stat link" href="/server/check">
+    <div class="label">{{icon "check"}}Kontrol{{if .Bad}}<span class="level bad">ciddi</span>{{else if .Warn}}<span class="level warn">uyarı</span>{{end}}</div>
+    <div class="value sm">{{if .Running}}sürüyor…{{else if not .Known}}<span class="muted">henüz yok</span>{{else if .Bad}}{{.Bad}} ciddi{{if .Warn}}, {{.Warn}} uyarı{{end}}{{else if .Warn}}{{.Warn}} uyarı{{else}}sorun yok{{end}}</div>
+    <div class="foot">{{if .Known}}son kontrol {{since .Time}}{{if .New}} · {{.New}} yeni bulgu{{end}}{{else}}sunucu standarda göre denetlenir{{end}}{{if .Failing}} · son kontrol çalışmadı{{end}}</div>
+  </a>
+  {{end}}
+  <a class="card stat link" href="/server/update">
+    {{$u := .Data.Update}}
+    <div class="label">{{icon "server"}}FootOps{{if and .Data.UpdateKnown $u.Newer}}<span class="level warn">yeni sürüm</span>{{end}}</div>
+    <div class="value sm mono">{{.Data.Version}}</div>
+    <div class="foot">{{if $u.Applying}}güncelleme sürüyor…{{else if and $u.Newer $u.Latest}}{{$u.Latest.Version}} hazır: Güncelleme{{else if $u.Latest}}güncel{{else}}çalışan sürüm{{end}}</div>
+  </a>
+</section>
+
 {{template "history" .Data.History}}
 
 <div class="section-head"><h2>Container'lar <span class="sub">{{len $o.Containers}}</span></h2></div>

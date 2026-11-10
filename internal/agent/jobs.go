@@ -92,6 +92,8 @@ var (
 		"backup.trial":   time.Hour, // a database into a temporary one, a few files
 		// Every site of a server from the bucket, its images from their registries.
 		"server.recover": 6 * time.Hour,
+		// An update's service (Faz U3) has 30 minutes; the job waits a little longer.
+		"server.update": 35 * time.Minute,
 	}
 )
 
@@ -272,6 +274,36 @@ func (j *Jobs) Start(spec JobSpec, fn func(ctx context.Context, t *Task) error, 
 		}
 	}()
 	return job.ID, nil
+}
+
+// Settle gives a job that ended with the agent — marked interrupted at the next start —
+// the outcome learnt since: an update's (Faz U3), which restarts the agent that started
+// it. Unknown, running or finished jobs are left as they are.
+func (j *Jobs) Settle(id, errMsg, step string) bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	job, ok := j.m[id]
+	if !ok || !job.Done || !job.Interrupted {
+		return false
+	}
+	job.Interrupted, job.Err = false, clipMsg(errMsg, 4000)
+	job.Steps = append(job.Steps, step)
+	j.saveLocked(job, true)
+	return true
+}
+
+// InterruptedSince lists the jobs of a kind cut off by an agent stop, started at or
+// after since.
+func (j *Jobs) InterruptedSince(kind string, since time.Time) []string {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	var out []string
+	for _, id := range j.order {
+		if job := j.m[id]; job != nil && job.Kind == kind && job.Interrupted && !job.Started.Before(since) {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // Cancel stops a running job that allows it.

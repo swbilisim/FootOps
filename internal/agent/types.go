@@ -124,6 +124,8 @@ type InstallCertRequest struct {
 type ServerInfo struct {
 	IPv4 []string `json:"ipv4"`
 	IPv6 []string `json:"ipv6"`
+	// FootOps is the agent's version: an update waits for the new one to say it.
+	FootOps string `json:"footops,omitempty"`
 }
 
 // CreateUploadRequest announces a file to be uploaded in chunks.

@@ -34,6 +34,13 @@ func printStatus(w io.Writer, st Status) {
 				fmt.Fprintf(w, " · son yedek %s", clock(last, now))
 			}
 			fmt.Fprintf(w, " · FootOps %s", clean(f.FootOps))
+			if u := f.Update; u != nil && u.Available != "" {
+				word := "çıktı"
+				if u.Ready {
+					word = "hazır"
+				}
+				fmt.Fprintf(w, " (%s %s)", clip(clean(u.Available), 40), word)
+			}
 		}
 		fmt.Fprintln(w)
 		if f := s.File; f != nil {

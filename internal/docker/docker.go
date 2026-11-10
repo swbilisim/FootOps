@@ -108,10 +108,20 @@ type Container struct {
 	ID      string            `json:"Id"`
 	Names   []string          `json:"Names"`
 	Image   string            `json:"Image"`
+	ImageID string            `json:"ImageID"`
 	State   string            `json:"State"`  // running, exited, restarting, ...
 	Status  string            `json:"Status"` // "Up 3 hours (healthy)"
 	Created int64             `json:"Created"`
 	Labels  map[string]string `json:"Labels"`
+	Ports   []Port            `json:"Ports"`
+}
+
+// Port is a container port; PublicPort is set when it is published on the host.
+type Port struct {
+	IP          string `json:"IP"`
+	PrivatePort int    `json:"PrivatePort"`
+	PublicPort  int    `json:"PublicPort"`
+	Type        string `json:"Type"` // tcp, udp
 }
 
 // Name returns the container name without the leading slash.
@@ -178,6 +188,42 @@ func (c *Client) Inspect(ctx context.Context, name string) (Inspect, error) {
 		return out, fmt.Errorf("invalid container name %q", name)
 	}
 	err := c.getJSON(ctx, "/containers/"+name+"/json", nil, &out)
+	return out, err
+}
+
+// Version is the engine's GET /version.
+type Version struct {
+	Version    string `json:"Version"`
+	APIVersion string `json:"ApiVersion"`
+}
+
+func (c *Client) Version(ctx context.Context) (Version, error) {
+	var out Version
+	err := c.getJSON(ctx, "/version", nil, &out)
+	return out, err
+}
+
+// ImageUsage is GET /system/df for images: sizes as `docker system df` shows them.
+type ImageUsage struct {
+	LayersSize int64        `json:"LayersSize"`
+	Images     []ImageEntry `json:"Images"`
+}
+
+// ImageEntry is an image of ImageUsage. Containers counts the containers made from it,
+// stopped ones too; SharedSize is the part of Size it shares with other images.
+type ImageEntry struct {
+	ID          string   `json:"Id"`
+	RepoTags    []string `json:"RepoTags"`
+	RepoDigests []string `json:"RepoDigests"`
+	Created     int64    `json:"Created"`
+	Size        int64    `json:"Size"`
+	SharedSize  int64    `json:"SharedSize"`
+	Containers  int      `json:"Containers"`
+}
+
+func (c *Client) ImageUsage(ctx context.Context) (ImageUsage, error) {
+	var out ImageUsage
+	err := c.getJSON(ctx, "/system/df", url.Values{"type": {"image"}}, &out)
 	return out, err
 }
 

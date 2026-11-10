@@ -4,7 +4,7 @@ DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 PKG     := github.com/swbilisim/FootOps/internal/version
 LDFLAGS := -s -w -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).Date=$(DATE)
 
-.PHONY: build linux footops-mac mac mac-install test vet check clean
+.PHONY: build linux release-build footops-mac mac mac-install test vet check clean
 
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o footops ./cmd/footops
@@ -15,6 +15,21 @@ linux:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$(LDFLAGS)" -o dist/footops_linux_amd64 ./cmd/footops
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "$(LDFLAGS)" -o dist/footops_linux_arm64 ./cmd/footops
 	cd dist && shasum -a 256 footops_linux_* > SHA256SUMS
+
+# A release's server binaries (panel-tasarim §31.2): the same bytes from the same commit
+# on the Mac, which signs them (footops-mac yayin yap), and in CI, which rebuilds the
+# published tag and compares. Nothing of the build machine goes in: no paths, no VCS
+# stamp, no build ID; the date is the commit's.
+RCOMMIT = $(shell git rev-parse --short=7 HEAD)
+RDATE   = $(shell TZ=UTC git log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ)
+release-build:
+	@case "$(RELEASE)" in v*.*.*) ;; *) echo "RELEASE=vX.Y.Z gerekli" >&2; exit 1 ;; esac
+	rm -rf dist/release && mkdir -p dist/release
+	for a in amd64 arm64; do \
+		CGO_ENABLED=0 GOOS=linux GOARCH=$$a GOAMD64=v1 GOARM64=v8.0 GOFLAGS= go build -trimpath -buildvcs=false \
+			-ldflags "-s -w -buildid= -X $(PKG).Version=$(RELEASE) -X $(PKG).Commit=$(RCOMMIT) -X $(PKG).Date=$(RDATE)" \
+			-o dist/release/footops_linux_$$a ./cmd/footops || exit 1; \
+	done
 
 # The Mac's command (panel-tasarim §29) for Apple silicon: dist/footops-mac
 footops-mac:

@@ -80,6 +80,24 @@ func actsFor(t SiteTerm, left int, ok bool, named bool) []siteAct {
 
 // SendSiteNotice tells the chat of a site's end date (Expiry.Check): left days before
 // it — 7, 3, the day itself (park?) or past it (park? again) — with buttons.
+// SendNotice sends a message of its own (Faz U3: a release out, an update's outcome)
+// with the server's prefix and, given a link, the panel page.
+func (n *Notifier) SendNotice(ctx context.Context, icon, text, link string) error {
+	n.init()
+	if n.Rehearsal.Active() {
+		return errNoNotify
+	}
+	cfg, err := n.config()
+	if err != nil {
+		return errNoNotify
+	}
+	msg := icon + " " + n.prefix() + " " + text
+	if u := n.panelURL(link); u != "" {
+		msg += "\n" + u
+	}
+	return n.send(ctx, cfg, clipMsg(msg, telegramMax))
+}
+
 func (n *Notifier) SendSiteNotice(ctx context.Context, t SiteTerm, left int, now time.Time) error {
 	n.init()
 	if n.Rehearsal.Active() {

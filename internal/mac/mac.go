@@ -6,6 +6,7 @@ package mac
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +24,7 @@ import (
 	"golang.org/x/sys/unix"
 	"golang.org/x/term"
 
+	"github.com/swbilisim/FootOps/internal/release"
 	"github.com/swbilisim/FootOps/internal/version"
 )
 
@@ -41,6 +43,8 @@ Kullanım: footops-mac <komut> [--json]
   ayar yaz           ayarları stdin'den JSON olarak alır, denetler ve yazar (FootOps.app'in Ayarlar'ı)
   sunucu <komut>     sunucu ekle / dene / şifresini yaz / bu Mac'ten kaldır; R2 erişimi
                      (yalnız bu Mac; ayrıntı: footops-mac sunucu yardim)
+  yayin <komut>      FootOps sürümü: imza anahtarı, derle + imzala + yayınla, doğrula
+                     (FootOps'un kod klasöründe; ayrıntı: footops-mac yayin yardim)
   surum              sürüm
 
   --json             FootOps.app için: tek JSON nesnesi (durum, ayar, yedek liste…) ya da satır satır
@@ -90,6 +94,12 @@ type env struct {
 	// folder out of Time Machine.
 	lost    func()
 	exclude func(dir string)
+
+	// Releases (yayin): signing is the release key's Keychain service, command runs
+	// git, go, make and gh in a folder, trusted the keys the servers trust.
+	signing Keychain
+	command func(ctx context.Context, dir, name string, args ...string) (string, error)
+	trusted func() map[string]ed25519.PublicKey
 }
 
 func defaultEnv(stdout, stderr io.Writer) *env {
@@ -113,7 +123,12 @@ func defaultEnv(stdout, stderr io.Writer) *env {
 	if mongoURI == "" {
 		mongoURI = defaultMongoURI
 	}
+	signService := os.Getenv("FOOTOPS_IMZA_SERVICE")
+	if signService == "" {
+		signService = "footops-imza"
+	}
 	e := &env{in: os.Stdin, out: stdout, errw: stderr, keychain: securityKeychain{Tool: "/usr/bin/security", Service: service},
+		signing: securityKeychain{Tool: "/usr/bin/security", Service: signService}, command: runCommand, trusted: release.Trusted,
 		settings: filepath.Join(dir, "FootOps", "ayarlar.json"),
 		r2:       func(account string) string { return "https://" + account + ".r2.cloudflarestorage.com" },
 		client:   client, probeTimeout: probeTimeout, now: time.Now,
@@ -220,7 +235,7 @@ func (e *env) run(ctx context.Context, args []string) int {
 		switch {
 		case a == "--json":
 			jsonOut = true
-		case strings.HasPrefix(a, "-") && cmd != "yedek" && cmd != "arsiv": // theirs are their own
+		case strings.HasPrefix(a, "-") && cmd != "yedek" && cmd != "arsiv" && cmd != "yayin": // theirs are their own
 			fmt.Fprintf(e.errw, "bilinmeyen seçenek: %s\n\n%s", a, usage)
 			return 2
 		default:
@@ -245,6 +260,12 @@ func (e *env) run(ctx context.Context, args []string) int {
 		err = e.settingsCmd(ctx, pos, jsonOut)
 	case "sunucu":
 		err = e.serverCmd(ctx, pos, jsonOut)
+	case "yayin":
+		if jsonOut {
+			err = fmt.Errorf("%w: yayin JSON yazmaz", errUsage)
+			break
+		}
+		err = e.releaseCmd(ctx, pos)
 	case "surum", "version", "--version", "-v":
 		fmt.Fprintf(e.out, "footops-mac %s %s/%s\n", version.String(), runtime.GOOS, runtime.GOARCH)
 	case "yardim", "help", "--help", "-h":
@@ -267,6 +288,8 @@ func (e *env) run(ctx context.Context, args []string) int {
 			fmt.Fprint(e.errw, archiveUsage)
 		case "sunucu":
 			fmt.Fprint(e.errw, serverUsage)
+		case "yayin":
+			fmt.Fprint(e.errw, releaseUsage)
 		default:
 			fmt.Fprint(e.errw, usage)
 		}

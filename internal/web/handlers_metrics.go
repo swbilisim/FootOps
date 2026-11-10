@@ -8,6 +8,7 @@ import (
 	"github.com/swbilisim/FootOps/internal/agent"
 	"github.com/swbilisim/FootOps/internal/docker"
 	"github.com/swbilisim/FootOps/internal/history"
+	"github.com/swbilisim/FootOps/internal/version"
 )
 
 // liveEvery is how often (seconds) live pages update; the agent samples every 10 s.
@@ -48,8 +49,12 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// The check's summary (Faz U1): a failed call only leaves its card empty.
+	doc, _ := s.agent.DoctorStatus(r.Context())
+	upd, uerr := s.agent.UpdateStatus(r.Context(), true)
 	s.render(w, r, "dashboard", map[string]any{"Title": "Sunucu", "O": o, "Err": errString(err), "History": hv,
-		"Live": liveEvery, "Refresh": 15, "Parked": parked})
+		"Live": liveEvery, "Refresh": 15, "Parked": parked, "Check": checkSummaryOf(doc), "Version": version.Version,
+		"Update": upd, "UpdateKnown": uerr == nil})
 }
 
 func serverCharts(sys agent.SystemMetrics, h agent.History) []template.HTML {

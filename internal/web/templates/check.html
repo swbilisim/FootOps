@@ -1,0 +1,59 @@
+{{template "top" .}}
+{{$st := .Data.St}}
+<a class="crumb" href="/">{{icon "back"}}Sunucu</a>
+<div class="page-head">
+  <div>
+    <h1>Sunucu kontrolü</h1>
+    <p class="sub">Sunucu, FootOps'un kurduğu standarda göre denetlenir: günde bir (08:30), agent açılınca ve buradan istenince. Kontrol hiçbir şeyi değiştirmez; uyarı ve ciddi bulgular iki kontrolde üst üste görülünce panel uyarısı olur ve Telegram'a gider.</p>
+  </div>
+  <div class="page-actions">
+    {{template "live"}}
+    <form method="post" action="/server/check">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <button type="submit" class="btn"{{if $st.Running}} disabled{{end}}>{{icon "restart"}}Şimdi kontrol et</button>
+    </form>
+  </div>
+</div>
+{{with .Data.Err}}<div class="notice bad">{{icon "alert"}}<div>Agent'a ulaşılamadı: {{.}}</div></div>{{end}}
+<div data-live-id="check">
+{{if $st.Running}}<div class="notice info" role="status">{{icon "info"}}<div>Kontrol sürüyor; birkaç saniye içinde sonuç burada.</div></div>{{end}}
+{{with $st.Err}}<div class="notice warn">{{icon "alert"}}<div>Son kontrol çalışmadı ({{when $st.Tried}}): {{.}}</div></div>{{end}}
+{{with $st.Report}}{{$r := .}}
+<div class="card stack">
+  <p><strong>Son kontrol {{when $r.Time}}</strong> · {{since $r.Time}} · {{took (msDur $r.TookMS)}} · footops {{$r.FootOps}}</p>
+  <p class="badges">
+    <span class="badge {{if $r.Problems}}{{if gt ($r.Count "bad") 0}}bad{{else}}warn{{end}}{{else}}ok{{end}}">{{if $r.Problems}}{{$r.Count "bad"}} ciddi · {{$r.Count "warn"}} uyarı{{else}}sorun yok{{end}}</span>
+    {{with $r.Count "info"}}<span class="badge">{{.}} bilgi</span>{{end}}
+  </p>
+  {{if not $st.Next.IsZero}}<p class="muted small">Sonraki kontrol: {{when $st.Next}}.</p>{{end}}
+</div>
+{{range $.Data.Sections}}
+<div class="section-head"><h2>{{.Title}}</h2></div>
+{{with .Items}}
+<ul class="alerts findings">
+  {{range .}}
+  <li class="{{.Level}}">
+    {{if eq .Level "info"}}{{icon "info"}}{{else}}{{icon "alert"}}{{end}}
+    <div>
+      <strong>{{.Title}}</strong>
+      {{with .Detail}}<span class="detail">{{.}}</span>{{end}}
+      {{with .Fix}}<span class="detail">Düzeltme: {{.}}</span>{{end}}
+    </div>
+    {{if .New}}<span class="when" title="Bir kontrol daha görürse uyarı olur">yeni</span>{{else if eq .Level "bad"}}<span class="when">ciddi</span>{{end}}
+  </li>
+  {{end}}
+</ul>
+{{end}}
+{{if .Fold}}
+<details class="more oklist-fold">
+  <summary>{{icon "check"}}{{len .OK}} adım standartta</summary>
+  <ul class="oklist">{{range .OK}}<li>{{icon "check"}}<span>{{.}}</span></li>{{end}}</ul>
+</details>
+{{else}}{{with .OK}}
+<ul class="oklist">{{range .}}<li>{{icon "check"}}<span>{{.}}</span></li>{{end}}</ul>
+{{end}}{{end}}
+{{end}}
+{{else}}{{if not $st.Running}}{{if not $st.Err}}<p class="muted">Henüz kontrol yapılmadı: agent açıldıktan 2 dakika sonra ilk kontrol yapılır.</p>{{end}}{{end}}
+{{end}}
+</div>
+{{template "bottom" .}}

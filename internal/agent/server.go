@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/user"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -18,10 +19,13 @@ import (
 	"github.com/swbilisim/FootOps/internal/config"
 	"github.com/swbilisim/FootOps/internal/docker"
 	"github.com/swbilisim/FootOps/internal/history"
+	"github.com/swbilisim/FootOps/internal/release"
 	"github.com/swbilisim/FootOps/internal/remote"
 	"github.com/swbilisim/FootOps/internal/run"
 	"github.com/swbilisim/FootOps/internal/sites"
 	"github.com/swbilisim/FootOps/internal/staging"
+	"github.com/swbilisim/FootOps/internal/update"
+	"github.com/swbilisim/FootOps/internal/version"
 )
 
 const (
@@ -61,6 +65,10 @@ type Server struct {
 	Rehearsal *Rehearsal
 	// Registries are the image registry logins docker pulls with.
 	Registries *Registries
+	// Doctor runs the server check (Faz U1), Updater the updates (Faz U3); nil in tests
+	// that do not need them.
+	Doctor  *Doctor
+	Updater *Updater
 	// AllowedUIDs may connect; everyone else gets 403. Checked against the kernel's
 	// peer credentials, not anything the client sends.
 	AllowedUIDs map[uint32]bool
@@ -220,6 +228,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/certs", s.installCert)
 	mux.HandleFunc("POST /v1/certs/{id}/remove", s.removeCert)
 	mux.HandleFunc("GET /v1/server", s.serverInfo)
+	mux.HandleFunc("GET /v1/doctor", s.doctorStatus)
+	mux.HandleFunc("POST /v1/doctor/run", s.doctorRun)
+	mux.HandleFunc("GET /v1/update", s.updateStatus)
+	mux.HandleFunc("POST /v1/update/check", s.updateCheck)
+	mux.HandleFunc("POST /v1/update/apply", s.updateApply)
+	mux.HandleFunc("POST /v1/update/back", s.updateBack)
 	return s.checkPeer(mux)
 }
 
@@ -462,6 +476,12 @@ type Config struct {
 	// ExpiryState keeps what the chat was told of the sites' end dates (Faz P1b);
 	// empty: memory only.
 	ExpiryState string
+	// DoctorPath keeps the last server check (Faz U1); empty: memory only.
+	DoctorPath string
+	// UpdateDir keeps the releases and the updates' records (Faz U3); empty: no
+	// updates. ReleaseURL replaces GitHub's releases (the integration test's stand-in).
+	UpdateDir  string
+	ReleaseURL string
 }
 
 // Main runs the agent until ctx is done.
@@ -500,7 +520,7 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 		RecoveryDir: cfg.RecoveryDir, Sites: ops, MigrationsDir: cfg.MigrationsDir, DBEditsDir: cfg.DBEditsDir}
 	// Made at start so the web process, which starts after the agent, has them hidden
 	// (InaccessiblePaths only covers paths that exist when a service starts).
-	for _, dir := range []string{cfg.DBEditsDir, cfg.BackupDir, cfg.ResticCache, cfg.RecoverDir} {
+	for _, dir := range []string{cfg.DBEditsDir, cfg.BackupDir, cfg.ResticCache, cfg.RecoverDir, cfg.UpdateDir} {
 		if dir == "" {
 			continue
 		}
@@ -521,6 +541,9 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 		jobs = j
 		for _, job := range interrupted {
 			logger.Printf("yarıda kalan iş: %s %s (%s)", job.Kind, job.Target, job.ID)
+			if job.Kind == "server.update" {
+				continue // the update restarts the agent: the Updater records how it went
+			}
 			// These restore into a temporary database (the trial restore too).
 			tempDBs = tempDBs || job.Kind == "import.check" || job.Kind == "migrate.copy" || job.Kind == "backup.trial"
 			_ = audit.Record(AuditEntry{Actor: job.Actor, Action: job.Kind, Target: job.Target, Detail: job.Err})
@@ -590,11 +613,45 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 			Report: NewReport(sampler, ops.Store.List, backups), Audit: audit}
 		sampler.Alerts.Extra = append(sampler.Alerts.Extra, notify.Alerts)
 	}
+	doc := &Doctor{Path: cfg.DoctorPath, Log: logger}
+	sampler.Alerts.Extra = append(sampler.Alerts.Extra, doc.Alerts)
 	var statusFile *StatusWriter
 	if backups != nil {
 		statusFile = &StatusWriter{Backups: backups, Sites: ops.Store.List, Server: backups.Server, Log: logger,
-			Overview: sampler.Latest}
+			Overview: sampler.Latest, Doctor: doc.StatusPart}
 		sampler.Alerts.Extra = append(sampler.Alerts.Extra, statusFile.Alerts)
+		doc.Changed = statusFile.Kick
+	}
+	go doc.Run(ctx)
+	var upd *Updater
+	if cfg.UpdateDir != "" {
+		base := cfg.ReleaseURL
+		if base == "" {
+			base = update.DefaultBase
+		}
+		code := cfg.ServerCode
+		if code == "" {
+			code = host
+		}
+		upd = &Updater{Dir: cfg.UpdateDir, Installed: update.InstalledBin, Source: update.Source{Base: base, HTTP: &http.Client{}, Keys: release.Trusted()},
+			Running: version.Version, Arch: runtime.GOARCH, Jobs: jobs, Audit: audit, Notify: notify, Server: code, Log: logger,
+			Plan: systemdPlan, Verify: verifyBinary, Start: startUnit}
+		sampler.Alerts.Extra = append(sampler.Alerts.Extra, upd.Alerts)
+		if statusFile != nil {
+			statusFile.Update = upd.StatusPart
+		}
+		if notify != nil && notify.Report != nil {
+			// /durum says a newer release is ready (set before the notifier runs).
+			report := notify.Report
+			notify.Report = func(ctx context.Context) ServerReport {
+				r := report(ctx)
+				if p := upd.StatusPart(); p != nil {
+					r.Available, r.AvailableReady = p.Available, p.Ready
+				}
+				return r
+			}
+		}
+		go upd.Run(ctx)
 	}
 	// End dates and parking (Faz P1b): the panel and the chat park and bring back sites
 	// through it; a parked site's stopped container is no alert.
@@ -711,6 +768,8 @@ func Main(ctx context.Context, cfg Config, logger *log.Logger) error {
 		Recovery:    recovery,
 		Rehearsal:   rehearsal,
 		Registries:  regs,
+		Doctor:      doc,
+		Updater:     upd,
 		AllowedUIDs: map[uint32]bool{0: true, uint32(uid): true},
 		Log:         logger,
 	}
@@ -1327,7 +1386,9 @@ func (s *Server) removeCert(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serverInfo(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, publicAddrs())
+	info := publicAddrs()
+	info.FootOps = version.Version
+	writeJSON(w, http.StatusOK, info)
 }
 
 // publicAddrs lists public addresses of this host, for DNS instructions.
