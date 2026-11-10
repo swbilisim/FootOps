@@ -129,6 +129,10 @@ func TestPurge(t *testing.T) {
 	if _, err := os.Stat(filepath.Dir(dir)); !os.IsNotExist(err) {
 		t.Errorf("empty _removed kept: %v", err)
 	}
+	// It was the group's last site: the group goes with it.
+	if _, err := os.Stat(filepath.Join(d.root, "srv/musteri")); !os.IsNotExist(err) || !strings.Contains(steps, "grubun klasörü de silindi") {
+		t.Errorf("empty group kept: %v\n%s", err, steps)
+	}
 	for _, base := range []string{d.data.DBEditsDir, d.data.MigrationsDir} {
 		if _, err := os.Stat(filepath.Join(base, "magaza")); !os.IsNotExist(err) {
 			t.Errorf("%s kept", base)
@@ -200,6 +204,9 @@ func TestPurgeKeepsWhatIsNotItsOwn(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(d.root, "srv/musteri/magaza")); err != nil {
 		t.Errorf("new site's folder: %v", err)
+	}
+	if steps := strings.Join(d.task.job.Steps, "\n"); strings.Contains(steps, "grubun klasörü") {
+		t.Errorf("a group with a site said to go:\n%s", steps)
 	}
 }
 

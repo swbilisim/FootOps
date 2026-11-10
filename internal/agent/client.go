@@ -170,6 +170,13 @@ func (c *Client) Sites(ctx context.Context) ([]SiteStatus, error) {
 	return out, err
 }
 
+// Groups lists the groups: the folders under /srv sites are kept in.
+func (c *Client) Groups(ctx context.Context) ([]string, error) {
+	var out []string
+	err := c.call(ctx, http.MethodGet, "/v1/groups", nil, &out)
+	return out, err
+}
+
 func (c *Client) CreateSite(ctx context.Context, req CreateSiteRequest) (string, error) {
 	var r JobResponse
 	err := c.call(ctx, http.MethodPost, "/v1/sites", req, &r)

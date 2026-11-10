@@ -437,7 +437,9 @@ func TestMoveSite(t *testing.T) {
 	if _, ok := e.net.networks["prj_musteri_enisparta"]; ok {
 		t.Error("old network left")
 	}
-	if e.run.ran("--file /srv/kisisel/enisparta/compose.yaml up --detach --remove-orphans") != 1 {
+	// Recreated by force: a site without a persistent directory differs only in the
+	// external network's name, which compose does not take for a change.
+	if e.run.ran("--file /srv/kisisel/enisparta/compose.yaml up --detach --remove-orphans --force-recreate") != 1 {
 		t.Errorf("calls:\n%s", strings.Join(e.run.calls, "\n"))
 	}
 	// The old container is stopped before its directory moves, so no restart can create
@@ -445,6 +447,37 @@ func TestMoveSite(t *testing.T) {
 	stop, up := callIndex(e.run.calls, "--file /srv/musteri/enisparta/compose.yaml stop"), callIndex(e.run.calls, "/srv/kisisel/enisparta/compose.yaml up")
 	if stop < 0 || stop > up {
 		t.Errorf("stop %d, up %d:\n%s", stop, up, strings.Join(e.run.calls, "\n"))
+	}
+	// kisisel was not there: the move made it; musteri had no other site: it went.
+	if st, err := os.Stat(filepath.Join(e.root, "/srv/kisisel")); err != nil || st.Mode().Perm() != 0o700 {
+		t.Errorf("new group: %v %v", st, err)
+	}
+	if _, err := os.Stat(filepath.Join(e.root, "/srv/musteri")); !errors.Is(err, os.ErrNotExist) {
+		t.Error("empty group left")
+	}
+	steps := strings.Join(e.steps, "\n")
+	if !strings.Contains(steps, "Yeni grup: /srv/kisisel") || !strings.Contains(steps, "musteri grubunda site kalmadı") {
+		t.Errorf("steps:\n%s", steps)
+	}
+	if g, _ := e.ops.Store.Groups(); len(g) != 1 || g[0] != "kisisel" {
+		t.Errorf("groups = %v", g)
+	}
+}
+
+// A group that still holds something (a removed site's folder) stays when a site moves
+// out of it; a group that was there is not "new".
+func TestMoveKeepsGroupThatIsNotEmpty(t *testing.T) {
+	e := createdSite(t)
+	os.MkdirAll(filepath.Join(e.root, "/srv/musteri/_removed/eski-20261101-120000"), 0o700)
+	os.MkdirAll(filepath.Join(e.root, "/srv/kisisel"), 0o700)
+	if err := e.ops.Move(context.Background(), "enisparta", "kisisel", e.progress); err != nil {
+		t.Fatalf("move: %v\n%s", err, strings.Join(e.steps, "\n"))
+	}
+	if _, err := os.Stat(filepath.Join(e.root, "/srv/musteri/_removed/eski-20261101-120000")); err != nil {
+		t.Errorf("group with a removed site: %v", err)
+	}
+	if steps := strings.Join(e.steps, "\n"); strings.Contains(steps, "Yeni grup") || strings.Contains(steps, "site kalmadı") {
+		t.Errorf("steps:\n%s", steps)
 	}
 }
 
@@ -474,9 +507,9 @@ func TestMoveRollsBackWhenNewContainerCrashes(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	stopNew := callIndex(e.run.calls, "--file /srv/kisisel/enisparta/compose.yaml stop")
-	upOld := callIndex(e.run.calls, "--file /srv/musteri/enisparta/compose.yaml up")
+	upOld := callIndex(e.run.calls, "--file /srv/musteri/enisparta/compose.yaml up --detach --remove-orphans --force-recreate")
 	if stopNew < 0 || upOld < stopNew {
-		t.Errorf("new container not stopped before the old one started:\n%s", strings.Join(e.run.calls, "\n"))
+		t.Errorf("new container not stopped before the old one was made again:\n%s", strings.Join(e.run.calls, "\n"))
 	}
 	if b, err := os.ReadFile(filepath.Join(e.root, "/srv/musteri/enisparta/data/photo.jpg")); err != nil || string(b) != "jpeg" {
 		t.Errorf("data not back: %v", err)
@@ -544,6 +577,7 @@ func TestRedeployRewritesComposeAfterCutShortMove(t *testing.T) {
 	if err := os.Rename(filepath.Join(e.root, "/srv/musteri/enisparta"), filepath.Join(e.root, "/srv/kisisel/enisparta")); err != nil {
 		t.Fatal(err)
 	}
+	e.net.ctrNets = []string{"prj_musteri_enisparta"} // the container is where the move left it
 	e.ops.Reconcile(context.Background())
 	if err := e.ops.Redeploy(context.Background(), "enisparta", e.progress); err != nil {
 		t.Fatalf("redeploy: %v\n%s", err, strings.Join(e.steps, "\n"))
@@ -556,11 +590,71 @@ func TestRedeployRewritesComposeAfterCutShortMove(t *testing.T) {
 	if !strings.Contains(strings.Join(e.steps, "\n"), "yeniden yazıldı") {
 		t.Errorf("steps:\n%s", strings.Join(e.steps, "\n"))
 	}
-	// Nothing to rewrite the next time.
-	e.steps = nil
+	// The rewritten file's container is made again: compose alone would start the old one.
+	if e.run.ran("/srv/kisisel/enisparta/compose.yaml up --detach --remove-orphans --force-recreate") != 1 {
+		t.Errorf("not recreated:\n%s", strings.Join(e.run.calls, "\n"))
+	}
+	// Nothing to rewrite the next time, and the container is on the site's network.
+	e.net.ctrNets = []string{"prj_kisisel_enisparta"}
+	e.steps, e.run.calls = nil, nil
 	e.ops.Redeploy(context.Background(), "enisparta", e.progress)
-	if strings.Contains(strings.Join(e.steps, "\n"), "yeniden yazıldı") {
-		t.Error("an unchanged compose.yaml was rewritten")
+	if strings.Contains(strings.Join(e.steps, "\n"), "yeniden yazıldı") || e.run.ran("--force-recreate") != 0 {
+		t.Errorf("an unchanged compose.yaml was rewritten:\n%s", strings.Join(e.run.calls, "\n"))
+	}
+}
+
+// Start (after data work) puts a cut-short move right the same way: the container is
+// still on the old group's network, so it is made again, whether compose.yaml had to be
+// rewritten first or not (the move may have been cut short just after writing it).
+func TestStartRecreatesAfterCutShortMove(t *testing.T) {
+	e := createdSite(t)
+	os.MkdirAll(filepath.Join(e.root, "/srv/kisisel"), 0o700)
+	if err := os.Rename(filepath.Join(e.root, "/srv/musteri/enisparta"), filepath.Join(e.root, "/srv/kisisel/enisparta")); err != nil {
+		t.Fatal(err)
+	}
+	e.net.ctrNets = []string{"prj_musteri_enisparta"}
+	if err := e.ops.Start(context.Background(), "enisparta"); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if e.run.ran("/srv/kisisel/enisparta/compose.yaml up --detach --force-recreate") != 1 {
+		t.Errorf("not recreated:\n%s", strings.Join(e.run.calls, "\n"))
+	}
+	// compose.yaml is right now; the container, say, still is not (cut short again).
+	e.run.calls = nil
+	if err := e.ops.Redeploy(context.Background(), "enisparta", e.progress); err != nil {
+		t.Fatalf("redeploy: %v", err)
+	}
+	if e.run.ran("/srv/kisisel/enisparta/compose.yaml up --detach --remove-orphans --force-recreate") != 1 {
+		t.Errorf("redeploy with compose.yaml already rewritten:\n%s", strings.Join(e.run.calls, "\n"))
+	}
+	// On the site's network: nothing forced.
+	e.net.ctrNets = []string{"prj_kisisel_enisparta"}
+	e.run.calls = nil
+	if err := e.ops.Start(context.Background(), "enisparta"); err != nil || e.run.ran("--force-recreate") != 0 {
+		t.Errorf("second start: %v\n%s", err, strings.Join(e.run.calls, "\n"))
+	}
+	u := updateFrom(specFor("enisparta"))
+	u.MaxBodyMB = 5
+	e.net.ctrNets = []string{"prj_musteri_enisparta"}
+	e.run.calls = nil
+	if err := e.ops.Update(context.Background(), "enisparta", u, e.progress); err != nil || e.run.ran("up --detach --remove-orphans --force-recreate") != 1 {
+		t.Errorf("update on the old network: %v\n%s", err, strings.Join(e.run.calls, "\n"))
+	}
+}
+
+// A move that fails before its container is made again leaves the old one to be
+// started, not made again: on a full disk compose could stop it and not make another.
+func TestMoveRollsBackBeforeRecreate(t *testing.T) {
+	e := createdSite(t)
+	e.run.fail["/srv/musteri/enisparta/compose.yaml stop"] = errors.New("exit status 1")
+	if err := e.ops.Move(context.Background(), "enisparta", "kisisel", e.progress); err == nil {
+		t.Fatal("move succeeded")
+	}
+	if e.run.ran("/srv/musteri/enisparta/compose.yaml up --detach --remove-orphans") != 1 || e.run.ran("--force-recreate") != 0 {
+		t.Errorf("calls:\n%s", strings.Join(e.run.calls, "\n"))
+	}
+	if _, err := os.Stat(filepath.Join(e.root, "/srv/kisisel")); !errors.Is(err, os.ErrNotExist) {
+		t.Error("a group was made for a move that never got that far")
 	}
 }
 
@@ -575,8 +669,8 @@ func TestMoveRollsBack(t *testing.T) {
 	if b, err := os.ReadFile(filepath.Join(dir, "data/photo.jpg")); err != nil || string(b) != "jpeg" {
 		t.Errorf("data not back: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(e.root, "/srv/kisisel/enisparta")); !errors.Is(err, os.ErrNotExist) {
-		t.Error("new directory left")
+	if _, err := os.Stat(filepath.Join(e.root, "/srv/kisisel")); !errors.Is(err, os.ErrNotExist) {
+		t.Error("new group left") // the move made it, the rollback takes it away
 	}
 	if compose := readFile(t, filepath.Join(dir, "compose.yaml")); !strings.Contains(compose, "name: prj_musteri_enisparta") {
 		t.Errorf("compose not restored:\n%s", compose)
@@ -600,10 +694,14 @@ func TestMoveRollsBack(t *testing.T) {
 
 func TestCheckMove(t *testing.T) {
 	e := createdSite(t)
-	for group, want := range map[string]string{"musteri": "zaten", "random": "grup şunlardan", "": "grup şunlardan"} {
+	for group, want := range map[string]string{"musteri": "zaten", " MUSTERI ": "zaten", "random!": "grup adı", "": "grup adı", "core": "ayrılmış"} {
 		if _, _, err := e.ops.CheckMove("enisparta", group); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%q: %v", group, err)
 		}
+	}
+	// Any group a name fits, there or not: a move to one not there makes it.
+	if _, next, err := e.ops.CheckMove("enisparta", " Yeni-Grup "); err != nil || next.Group != "yeni-grup" {
+		t.Errorf("new group: %v %v", next.Group, err)
 	}
 	os.MkdirAll(filepath.Join(e.root, "/srv/kisisel/enisparta"), 0o755)
 	if _, _, err := e.ops.CheckMove("enisparta", "kisisel"); err == nil || !strings.Contains(err.Error(), "zaten var") {

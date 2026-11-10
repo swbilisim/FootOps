@@ -62,7 +62,7 @@ func (o *SiteOps) Start(ctx context.Context, name string) error {
 		return err
 	}
 	base := o.restartBaseline(ctx, spec)
-	if err := o.compose(ctx, spec, "up", "--detach"); err != nil {
+	if err := o.compose(ctx, spec, o.upArgs(ctx, spec, "--detach")...); err != nil {
 		return fmt.Errorf("site başlatılamadı: %w", err)
 	}
 	return o.waitListening(ctx, spec, base)

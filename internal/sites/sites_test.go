@@ -31,7 +31,9 @@ func TestValidate(t *testing.T) {
 		"bad name":         func(s *Spec, _ map[string]string) { s.Name = "En Isparta" },
 		"reserved name":    func(s *Spec, _ map[string]string) { s.Name = "mongo" },
 		"footops prefix":   func(s *Spec, _ map[string]string) { s.Name = "footops-x" },
-		"unknown group":    func(s *Spec, _ map[string]string) { s.Group = "random" },
+		"bad group":        func(s *Spec, _ map[string]string) { s.Group = "_removed" },
+		"reserved group":   func(s *Spec, _ map[string]string) { s.Group = "core" },
+		"no group":         func(s *Spec, _ map[string]string) { s.Group = "" },
 		"no domains":       func(s *Spec, _ map[string]string) { s.Domains = nil },
 		"bad domain":       func(s *Spec, _ map[string]string) { s.Domains = []string{"localhost"} },
 		"bad image":        func(s *Spec, _ map[string]string) { s.Image = "ghcr.io/x; rm -rf /" },
@@ -177,6 +179,26 @@ func TestCertStoreAndCaddyBlock(t *testing.T) {
 			t.Errorf("caddy block misses %q:\n%s", want, block)
 		}
 	}
+	// A site's own cap; the default is not written into footops.json.
+	s.MaxBodyMB = 5
+	if block := CaddyBlock(s, got); !strings.Contains(block, "\t\tmax_size 5MiB\n") || s.BodyMB() != 5 {
+		t.Errorf("5 MB:\n%s", block)
+	}
+	s.MaxBodyMB = DefaultBodyMB
+	s.Normalize()
+	if meta, _ := s.MarshalMeta(); s.MaxBodyMB != 0 || s.BodyMB() != 100 || strings.Contains(string(meta), "max_body_mb") {
+		t.Errorf("default written down: %s", meta)
+	}
+}
+
+func TestValidateBody(t *testing.T) {
+	for mb, ok := range map[int]bool{0: true, 1: true, 5: true, 100: true, 101: false, -1: false} {
+		s := validSpec()
+		s.MaxBodyMB = mb
+		if err := s.Validate(nil); (err == nil) != ok {
+			t.Errorf("%d MB: %v", mb, err)
+		}
+	}
 }
 
 func TestStoreListAndConflicts(t *testing.T) {
@@ -222,6 +244,128 @@ func TestStoreListGroupFromDirectory(t *testing.T) {
 	got, err := st.Get(a.Name)
 	if err != nil || got.Group != "kisisel" || got.Dir() != "/srv/kisisel/enisparta" || got.Network() != "prj_kisisel_enisparta" {
 		t.Fatalf("got %+v, %v", got, err)
+	}
+}
+
+func TestCheckGroup(t *testing.T) {
+	for _, g := range []string{"musteri", "kisisel", "posmerkezi", "yeni-grup", "a1b", "x2026"} {
+		if err := CheckGroup(g); err != nil {
+			t.Errorf("%q: %v", g, err)
+		}
+	}
+	for _, g := range []string{"", "ab", "Musteri", "1grup", "grup-", "_removed", ".git", "lost+found", "core", "mongo", "footops", "footops-x",
+		"müşteri", "a/b", "..", strings.Repeat("a", 33)} {
+		if err := CheckGroup(g); err == nil {
+			t.Errorf("%q: accepted", g)
+		}
+	}
+}
+
+// The groups are the folders under /srv a group's name fits: not core, nor a file, a
+// symbolic link or anything a group could not be called.
+func TestStoreGroups(t *testing.T) {
+	st := Store{Root: t.TempDir()}
+	if g, err := st.Groups(); err != nil || len(g) != 0 {
+		t.Fatalf("no /srv: %v %v", g, err)
+	}
+	srv := filepath.Join(st.Root, SrvDir)
+	for _, d := range []string{"core", "musteri", "kisisel", "_removed", ".cache", "lost+found", "Buyuk", "yeni-grup"} {
+		if err := os.MkdirAll(filepath.Join(srv, d), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	os.WriteFile(filepath.Join(srv, "dosya"), nil, 0o600)
+	os.Symlink(filepath.Join(srv, "dosya"), filepath.Join(srv, "dosyaya"))
+	os.Symlink(filepath.Join(srv, "yok"), filepath.Join(srv, "kirik"))
+	// Another name for a group already listed: its sites would be listed twice.
+	os.Symlink(filepath.Join(srv, "musteri"), filepath.Join(srv, "baglanti"))
+	g, err := st.Groups()
+	if err != nil || strings.Join(g, ",") != "kisisel,musteri,yeni-grup" {
+		t.Fatalf("groups = %v, %v", g, err)
+	}
+	// A group moved to another disk and linked back keeps its sites listed (and backed
+	// up), and is never removed, empty or not.
+	disk := t.TempDir()
+	os.Symlink(disk, filepath.Join(srv, "tasindi"))
+	if g, _ := st.Groups(); strings.Join(g, ",") != "kisisel,musteri,tasindi,yeni-grup" {
+		t.Fatalf("with a linked group: %v", g)
+	}
+	if made, err := st.MakeGroup("tasindi"); made || err != nil {
+		t.Errorf("make on a linked group: %v %v", made, err)
+	}
+	if st.DropGroup("tasindi") {
+		t.Error("a linked group dropped")
+	}
+	if _, err := os.Lstat(filepath.Join(srv, "tasindi")); err != nil {
+		t.Errorf("link gone: %v", err)
+	}
+
+	// A site in a group the old fixed list did not have is listed like any other.
+	a := validSpec()
+	a.Group = "yeni-grup"
+	if err := st.WriteMeta(a); err != nil {
+		t.Fatal(err)
+	}
+	b := validSpec()
+	b.Name, b.Domains = "baska", []string{"baska.example.com"}
+	if err := st.WriteMeta(b); err != nil {
+		t.Fatal(err)
+	}
+	c := validSpec()
+	c.Name, c.Group, c.Domains = "uzakta", "tasindi", []string{"uzakta.example.com"}
+	if err := st.WriteMeta(c); err != nil {
+		t.Fatal(err)
+	}
+	list, err := st.List()
+	if err != nil || len(list) != 3 || list[0].Name != "baska" || list[0].Group != "musteri" || list[1].Group != "tasindi" || list[2].Group != "yeni-grup" {
+		t.Fatalf("list = %+v, %v", list, err)
+	}
+	if _, err := os.Stat(filepath.Join(disk, "uzakta", MetaFile)); err != nil {
+		t.Errorf("site in the linked group not on the other disk: %v", err)
+	}
+}
+
+func TestMakeAndDropGroup(t *testing.T) {
+	st := Store{Root: t.TempDir()}
+	made, err := st.MakeGroup("yeni")
+	dir := filepath.Join(st.Root, SrvDir, "yeni")
+	if fi, serr := os.Stat(dir); err != nil || !made || serr != nil || fi.Mode().Perm() != 0o700 {
+		t.Fatalf("make: %v %v %v", made, err, serr)
+	}
+	if made, err := st.MakeGroup("yeni"); err != nil || made {
+		t.Errorf("again: %v %v", made, err)
+	}
+	if _, err := st.MakeGroup("core"); err == nil {
+		t.Error("core made")
+	}
+	os.WriteFile(filepath.Join(st.Root, SrvDir, "dosya"), nil, 0o600)
+	if _, err := st.MakeGroup("dosya"); err == nil {
+		t.Error("a file taken for a group")
+	}
+
+	// A site, or a removed site's folder, keeps the group; an empty _removed does not.
+	site := filepath.Join(dir, "site", MetaFile)
+	os.MkdirAll(filepath.Dir(site), 0o700)
+	os.WriteFile(site, []byte("{}"), 0o600)
+	if st.DropGroup("yeni") {
+		t.Fatal("dropped with a site in it")
+	}
+	os.RemoveAll(filepath.Dir(site))
+	os.MkdirAll(filepath.Join(dir, RemovedDir, "site-20261110-120000"), 0o700)
+	if st.DropGroup("yeni") {
+		t.Fatal("dropped with a removed site in it")
+	}
+	os.Remove(filepath.Join(dir, RemovedDir, "site-20261110-120000"))
+	if !st.DropGroup("yeni") {
+		t.Fatal("empty group kept")
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("still there: %v", err)
+	}
+	// Never anything but a group's folder.
+	os.MkdirAll(filepath.Join(st.Root, SrvDir, "core"), 0o755)
+	if st.DropGroup("core") || st.DropGroup("../srv") {
+		t.Error("dropped what is no group")
 	}
 }
 

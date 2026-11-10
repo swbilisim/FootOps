@@ -74,7 +74,8 @@ func TestEditSiteForm(t *testing.T) {
 	tok := e.login(t, c)
 
 	resp, body := c.do("GET", "/sites/enisparta/edit", nil)
-	if resp.StatusCode != 200 || !strings.Contains(body, `value="NODE_ENV"`) || !strings.Contains(body, ">enisparta.com</textarea>") || !strings.Contains(body, `value="256"`) {
+	if resp.StatusCode != 200 || !strings.Contains(body, `value="NODE_ENV"`) || !strings.Contains(body, ">enisparta.com</textarea>") || !strings.Contains(body, `value="256"`) ||
+		!strings.Contains(body, `name="max_body_mb" value="100"`) {
 		t.Fatalf("form: %d\n%s", resp.StatusCode, body)
 	}
 	if resp, _ := c.do("POST", "/sites/enisparta/edit", url.Values{"image": {"x"}}); resp.StatusCode != http.StatusForbidden {
@@ -83,7 +84,7 @@ func TestEditSiteForm(t *testing.T) {
 
 	form := url.Values{
 		"csrf": {tok}, "domains": {"enisparta.com\nshop.enisparta.com"}, "image": {"ghcr.io/x/enisparta:v2"},
-		"port": {"8080"}, "memory_mb": {"512"}, "data_mount": {""}, "env": {"NEW=1\nNODE_ENV=staging"}, "unset": {"NODE_ENV", "OLD"},
+		"port": {"8080"}, "memory_mb": {"512"}, "max_body_mb": {" 5 "}, "data_mount": {""}, "env": {"NEW=1\nNODE_ENV=staging"}, "unset": {"NODE_ENV", "OLD"},
 	}
 	// What the new-site review would warn about must be seen once on a live site too.
 	resp, body = c.do("POST", "/sites/enisparta/edit", form)
@@ -97,7 +98,7 @@ func TestEditSiteForm(t *testing.T) {
 		t.Fatalf("update: %d %s", resp.StatusCode, resp.Header.Get("Location"))
 	}
 	u := e.agent.updates[0]
-	if len(u.Update.Domains) != 2 || u.Update.Port != 8080 || u.Update.MemoryMB != 512 || u.Update.Set["NEW"] != "1" ||
+	if len(u.Update.Domains) != 2 || u.Update.Port != 8080 || u.Update.MemoryMB != 512 || u.Update.MaxBodyMB != 5 || u.Update.Set["NEW"] != "1" ||
 		strings.Join(u.Update.Unset, ",") != "NODE_ENV,OLD" || u.Actor.User != "furkan" {
 		t.Errorf("request = %+v", u)
 	}
@@ -108,6 +109,25 @@ func TestEditSiteForm(t *testing.T) {
 	})
 	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "değişiklik yok") || !strings.Contains(body, `value="NODE_ENV" checked`) {
 		t.Errorf("problems: %d\n%s", resp.StatusCode, body)
+	}
+	if u := e.agent.updates[len(e.agent.updates)-1]; u.Update.MaxBodyMB != 0 { // left out: the default
+		t.Errorf("no field: %d", u.Update.MaxBodyMB)
+	}
+	resp, body = c.do("POST", "/sites/enisparta/edit", url.Values{
+		"csrf": {tok}, "domains": {"enisparta.com"}, "image": {"img"}, "port": {"3000"}, "memory_mb": {"256"}, "max_body_mb": {"beş"},
+	})
+	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "En büyük istek 1-100 MB arasında bir sayı olmalı") || !strings.Contains(body, `name="max_body_mb" value="beş"`) {
+		t.Errorf("not a number: %d\n%s", resp.StatusCode, body)
+	}
+	// 0 typed for "no uploads" is not taken for the default 100.
+	n := len(e.agent.updates)
+	for _, v := range []string{"0", "101", "-5"} {
+		resp, _ = c.do("POST", "/sites/enisparta/edit", url.Values{
+			"csrf": {tok}, "domains": {"enisparta.com"}, "image": {"img"}, "port": {"3000"}, "memory_mb": {"256"}, "max_body_mb": {v},
+		})
+		if resp.StatusCode != http.StatusUnprocessableEntity || len(e.agent.updates) != n {
+			t.Errorf("%q: %d", v, resp.StatusCode)
+		}
 	}
 	if resp, _ := c.do("GET", "/sites/nope/edit", nil); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("unknown site: %d", resp.StatusCode)

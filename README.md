@@ -130,7 +130,11 @@ style-src 'self'`. Pages work without it and fall back to a plain refresh.
 What the panel shows:
 
 - **Server and containers:** CPU, RAM, swap, disk, load and per-container CPU, memory
-  (against its limit), restarts and health, updating themselves every 10 seconds.
+  (against its limit), restarts and health, updating themselves every 10 seconds. A
+  container's CPU and memory are read from its cgroup files, as `docker stats` computes
+  them (CPU: share of one core over the 10 seconds); dockerd's stats request, which cost
+  it a few milliseconds and a second or two of waiting per container, is left for where
+  those files cannot be read.
   Background refreshes do not count as activity, so an open tab still logs out after 30
   idle minutes.
 - **History:** the agent keeps one point per minute for a day and one per hour for a
@@ -172,8 +176,18 @@ A site is a container image served under one or more domains. From the panel
    zone (`*.example.com` + `example.com`, 15 years). The panel checks that the key
    matches and shows which names it covers.
 2. **New site**: name, group (`/srv/<group>/<name>`), domains, image (e.g. from GHCR),
-   app port, memory limit, optional persistent directory, optional MongoDB database,
-   environment variables.
+   app port, memory limit, largest request body, optional persistent directory, optional
+   MongoDB database, environment variables.
+
+**Groups** are the folders under `/srv` (`core` is FootOps's own): the form offers the
+ones there and takes a new name too, which makes the group's folder (root-only, `0700`).
+A group goes with its last site: moving that site elsewhere, or removing it for good,
+removes the empty folder.
+
+**Largest request body** (MB, 1-100; 100 by default, what Cloudflare's Free and Pro
+plans let through): Caddy answers a larger request `413` before the app has read more,
+so an app that buffers bodies cannot be made to hold a large one. A site that takes no
+uploads needs a few MB at most. Changing it touches only Caddy, not the container.
 
 The agent then runs the steps as a background job (the page follows its progress) and
 undoes everything if any step fails:
@@ -190,8 +204,8 @@ undoes everything if any step fails:
 | Caddy | site block with the matching certificate, `caddy validate` before `caddy reload` |
 | check | an HTTPS request through Caddy must reach the app |
 
-**Edit** changes domains, image, port, memory limit, the persistent directory and
-environment variables. Current values are never sent to the browser: variables are added,
+**Edit** changes domains, image, port, memory limit, the largest request body, the
+persistent directory and environment variables. Current values are never sent to the browser: variables are added,
 replaced or removed by name, and the audit log records only names. The database variable
 stays managed by FootOps. If the site does not come back with the new settings, the old
 files are restored and the old container is started again.

@@ -37,6 +37,7 @@ type AgentAPI interface {
 	RecordAuth(ctx context.Context, e agent.AuditEntry) error
 	AuditTail(ctx context.Context, limit int) ([]agent.AuditEntry, error)
 	Sites(ctx context.Context) ([]agent.SiteStatus, error)
+	Groups(ctx context.Context) ([]string, error)
 	CreateSite(ctx context.Context, req agent.CreateSiteRequest) (string, error)
 	CheckSite(ctx context.Context, req agent.CreateSiteRequest) (sites.Spec, error)
 	CheckImage(ctx context.Context, image string, a agent.Actor) (string, error)

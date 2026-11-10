@@ -9,16 +9,17 @@
   </div>
 </div>
 
-<div class="notice info">{{icon "folder"}}<div>Site <strong>{{$s.Group}}</strong> grubuna kurulacak: <span class="mono">/srv/{{$s.Group}}/{{$s.Name}}</span></div></div>
+<div class="notice {{if .Data.NewGroup}}warn{{else}}info{{end}}">{{icon "folder"}}<div>Site <strong>{{$s.Group}}</strong> grubuna kurulacak: <span class="mono">/srv/{{$s.Group}}/{{$s.Name}}</span>{{if .Data.NewGroup}}<br><strong>{{$s.Group}} yeni bir grup:</strong> sunucuda böyle bir grup yok, site kurulurken açılır. Var olan bir grubu kastettiysen geri dönüp düzelt{{with .Data.Groups}} ({{range $i, $g := .}}{{if $i}}, {{end}}{{$g}}{{end}}){{end}}.{{end}}</div></div>
 
 {{range .Data.Warnings}}<div class="notice warn">{{icon "alert"}}<div>{{.}}</div></div>{{end}}
 
 <div class="section-head"><h2>Oluşturulacaklar</h2></div>
 <div class="table-wrap">
 <table class="kv">
-  <tr><th>Klasör</th><td class="mono">/srv/{{$s.Group}}/{{$s.Name}}</td></tr>
+  <tr><th>Klasör</th><td><span class="mono">/srv/{{$s.Group}}/{{$s.Name}}</span>{{if .Data.NewGroup}} <span class="muted small">(yeni grup)</span>{{end}}</td></tr>
   <tr><th>Docker ağı</th><td class="mono">{{$s.Network}}</td></tr>
   <tr><th>Container</th><td><span class="mono">{{$s.Name}}</span> · imaj <span class="mono">{{$s.Image}}</span> · port {{$s.Port}} · en çok {{$s.MemoryMB}} MB</td></tr>
+  <tr><th>En büyük istek</th><td>{{$s.BodyMB}} MB <span class="muted small">(büyüğü Caddy'de 413 ile reddedilir)</span></td></tr>
   <tr><th>Kalıcı klasör</th><td>{{if $s.DataMount}}<span class="mono">/srv/{{$s.Group}}/{{$s.Name}}/data → {{$s.DataMount}}</span>{{else}}yok{{end}}</td></tr>
   <tr><th>Veritabanı</th><td>{{if $s.Database}}MongoDB <span class="mono">{{$s.Name}}</span>, kullanıcı <span class="mono">{{$s.Name}}</span> (rastgele şifre), adres <span class="mono">{{$s.DBVar}}</span> değişkeninde{{else}}yok{{end}}</td></tr>
   <tr><th>Alan adları</th><td>{{range $i, $d := .Data.Domains}}{{if $i}}<br>{{end}}<span class="mono">{{.Domain}}</span> <span class="muted small">sertifika: {{or .Cert "—"}}</span>{{end}}</td></tr>

@@ -56,7 +56,7 @@ var reRemovedID = regexp.MustCompile(`^(.+)-([0-9]{8}-[0-9]{6})$`)
 const removedSizeCap = 500_000
 
 func (d *DataOps) removedDir(group, id string) string {
-	return filepath.Join(d.Store.Root, sites.SrvDir, group, "_removed", id)
+	return filepath.Join(d.Store.Root, sites.SrvDir, group, sites.RemovedDir, id)
 }
 
 // Removed lists the removed sites, newest first; detail adds the folder's and the
@@ -71,9 +71,13 @@ func (d *DataOps) Removed(ctx context.Context, detail bool) ([]RemovedSite, erro
 	for _, s := range list {
 		current[s.Name] = true
 	}
+	groups, err := d.Store.Groups()
+	if err != nil {
+		return nil, err
+	}
 	var out []RemovedSite
-	for _, g := range sites.Groups {
-		ents, err := os.ReadDir(filepath.Join(d.Store.Root, sites.SrvDir, g, "_removed"))
+	for _, g := range groups {
+		ents, err := os.ReadDir(filepath.Join(d.Store.Root, sites.SrvDir, g, sites.RemovedDir))
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
@@ -194,8 +198,9 @@ func folderSize(dir string) (bytes, files int64) {
 // removedKept reports whether a removed site of this name is still kept (not removed
 // for good): its database copies keep their newest, like a site's.
 func (d *DataOps) removedKept(site string) bool {
-	for _, g := range sites.Groups {
-		ents, err := os.ReadDir(filepath.Join(d.Store.Root, sites.SrvDir, g, "_removed"))
+	groups, _ := d.Store.Groups()
+	for _, g := range groups {
+		ents, err := os.ReadDir(filepath.Join(d.Store.Root, sites.SrvDir, g, sites.RemovedDir))
 		if err != nil {
 			continue
 		}
@@ -313,8 +318,10 @@ func (d *DataOps) Purge(ctx context.Context, t *Task, r RemovedSite, actor Actor
 	if err := os.RemoveAll(dir); err != nil {
 		return strings.Join(detail, ", "), fmt.Errorf("klasör silinemedi: %w", err)
 	}
-	t.Step(fmt.Sprintf("✓ Klasör silindi: %s (%s)", filepath.Join(sites.SrvDir, r.Group, "_removed", r.ID), humanBytes(r.Bytes)))
-	_ = os.Remove(filepath.Dir(dir)) // the group's _removed, once empty
+	t.Step(fmt.Sprintf("✓ Klasör silindi: %s (%s)", filepath.Join(sites.SrvDir, r.Group, sites.RemovedDir, r.ID), humanBytes(r.Bytes)))
+	if d.Store.DropGroup(r.Group) { // the group's _removed goes once empty, the group with it
+		t.Step("✓ " + r.Group + " grubunda site kalmadı; grubun klasörü de silindi: " + sites.GroupDir(r.Group))
+	}
 	detail = append(detail, "klasör "+humanBytes(r.Bytes))
 	if r.Image != "" && imageInUse {
 		t.Step("ℹ İmaj bırakıldı (çalışan bir site de kullanıyor): " + r.Image)

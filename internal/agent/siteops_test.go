@@ -35,7 +35,8 @@ type fakeNet struct {
 	status   string                         // overrides the reported status ("restarting")
 	health   string                         // reported healthcheck status, if set
 	restarts int
-	image    string // image ID reported for site containers
+	image    string   // image ID reported for site containers
+	ctrNets  []string // networks reported for site containers (none: not said)
 	log      []string
 }
 
@@ -125,6 +126,16 @@ func (f *fakeNet) Inspect(_ context.Context, name string) (docker.Inspect, error
 		in.State.Health = &struct {
 			Status string `json:"Status"`
 		}{f.health}
+	}
+	for _, n := range f.ctrNets {
+		if in.NetworkSettings.Networks == nil {
+			in.NetworkSettings.Networks = map[string]struct {
+				IPAddress string `json:"IPAddress"`
+			}{}
+		}
+		in.NetworkSettings.Networks[n] = struct {
+			IPAddress string `json:"IPAddress"`
+		}{"10.200.1.2"}
 	}
 	return in, nil
 }
@@ -356,12 +367,40 @@ func TestCreateSite(t *testing.T) {
 	if last := e.steps[len(e.steps)-1]; !strings.Contains(last, "Site hazır") {
 		t.Errorf("last step = %q", last)
 	}
+	// The first site of a group makes the group's folder, private like the others.
+	if st, err := os.Stat(filepath.Join(e.root, "/srv/musteri")); err != nil || st.Mode().Perm() != 0o700 {
+		t.Errorf("group folder: %v %v", st, err)
+	}
+	if !strings.Contains(strings.Join(e.steps, "\n"), "Yeni grup: /srv/musteri") {
+		t.Errorf("steps:\n%s", strings.Join(e.steps, "\n"))
+	}
+	// A second site in it does not.
+	e.steps = nil
+	crt, key := certPair(t, "ikinci.example.com")
+	if _, err := e.ops.InstallCert(context.Background(), crt, key); err != nil {
+		t.Fatal(err)
+	}
+	sp := specFor("ikinci")
+	sp.Domains = []string{"ikinci.example.com"}
+	if err := e.ops.Create(context.Background(), sp, nil, e.progress); err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if strings.Contains(strings.Join(e.steps, "\n"), "Yeni grup") {
+		t.Errorf("steps:\n%s", strings.Join(e.steps, "\n"))
+	}
+	if g, _ := e.ops.Store.Groups(); len(g) != 1 || g[0] != "musteri" {
+		t.Errorf("groups = %v", g)
+	}
 }
 
 func assertRolledBack(t *testing.T, e *opsEnv) {
 	t.Helper()
 	if _, err := os.Stat(filepath.Join(e.root, "/srv/musteri/enisparta")); !errors.Is(err, os.ErrNotExist) {
 		t.Error("site directory left behind")
+	}
+	// The group this create made goes with it.
+	if _, err := os.Stat(filepath.Join(e.root, "/srv/musteri")); !errors.Is(err, os.ErrNotExist) {
+		t.Error("group directory left behind")
 	}
 	if _, ok := e.net.networks["prj_musteri_enisparta"]; ok {
 		t.Error("network left behind")

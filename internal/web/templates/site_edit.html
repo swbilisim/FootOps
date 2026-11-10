@@ -35,6 +35,10 @@
         <input name="memory_mb" value="{{$f.MemoryMB}}" inputmode="numeric" required>
         <span class="hint">aşarsa container yeniden başlatılır</span>
       </label>
+      <label class="field"><span>En büyük istek (MB)</span>
+        <input name="max_body_mb" value="{{$f.MaxBodyMB}}" inputmode="numeric">
+        <span class="hint">büyüğü uygulamaya ulaşmadan reddedilir (413); dosya yüklemeyen sitede 2-5 yeter, en çok 100</span>
+      </label>
     </div>
     <label class="field"><span>Kalıcı klasör (isteğe bağlı)</span>
       <input name="data_mount" value="{{$f.DataMount}}" placeholder="/app/uploads" class="mono" autocapitalize="off" spellcheck="false">
@@ -67,7 +71,7 @@
     {{end}}
   </fieldset>
 
-  <div class="notice info">{{icon "info"}}<div>Kaydedince container yeni ayarlarla yeniden oluşturulur (birkaç saniye kesinti). Site ayağa kalkmazsa eski ayarlara otomatik dönülür.</div></div>
+  <div class="notice info">{{icon "info"}}<div>Kaydedince container yeni ayarlarla yeniden oluşturulur (birkaç saniye kesinti); yalnız en büyük istek değiştiyse container'a dokunulmaz, kesinti olmaz. Site ayağa kalkmazsa eski ayarlara otomatik dönülür.</div></div>
   <div class="form-actions">
     <button type="submit" class="primary">Kaydet ve uygula</button>
     <a class="btn" href="/sites/{{$s.Name}}">Vazgeç</a>

@@ -117,6 +117,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/audit", s.auditTail)
 	mux.HandleFunc("POST /v1/audit", s.auditRecord)
 	mux.HandleFunc("GET /v1/sites", s.listSites)
+	mux.HandleFunc("GET /v1/groups", s.listGroups)
 	mux.HandleFunc("POST /v1/sites", s.createSite)
 	mux.HandleFunc("POST /v1/sites/check", s.checkSite)
 	mux.HandleFunc("POST /v1/sites/{name}/move", s.moveSite)
@@ -921,6 +922,16 @@ func (s *Server) listSites(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// listGroups lists the groups (the folders under /srv) for the forms that name one.
+func (s *Server) listGroups(w http.ResponseWriter, r *http.Request) {
+	groups, err := s.Sites.Store.Groups()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, append([]string{}, groups...))
 }
 
 func (s *Server) createSite(w http.ResponseWriter, r *http.Request) {

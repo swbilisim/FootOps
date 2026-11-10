@@ -2,8 +2,10 @@ package web
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -27,15 +29,30 @@ func (s *Server) sitesList(w http.ResponseWriter, r *http.Request) {
 // siteEditForm is the edit form, kept as strings like siteForm. Env holds only new or
 // changed variables: current values are never sent to the browser.
 type siteEditForm struct {
-	Domains, Image, Port, MemoryMB, DataMount, Env string
-	Unset                                          map[string]bool
-	EnvAck                                         bool // the notes on Env were seen
+	Domains, Image, Port, MemoryMB, MaxBodyMB, DataMount, Env string
+	Unset                                                     map[string]bool
+	EnvAck                                                    bool // the notes on Env were seen
 }
 
 func editFormFor(sp sites.Spec) siteEditForm {
 	return siteEditForm{Domains: strings.Join(sp.Domains, "\n"), Image: sp.Image, Port: strconv.Itoa(sp.Port),
-		MemoryMB: strconv.Itoa(sp.MemoryMB), DataMount: sp.DataMount, Unset: map[string]bool{}}
+		MemoryMB: strconv.Itoa(sp.MemoryMB), MaxBodyMB: strconv.Itoa(sp.BodyMB()), DataMount: sp.DataMount, Unset: map[string]bool{}}
 }
+
+// bodyMB reads the largest request field: empty is the default (0 to the agent); a
+// number must be 1-100 — 0 typed for "no uploads" is not taken for the default 100.
+func bodyMB(v string) (int, error) {
+	if v = strings.TrimSpace(v); v == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 || n > sites.DefaultBodyMB {
+		return 0, errBodyMB
+	}
+	return n, nil
+}
+
+var errBodyMB = fmt.Errorf("En büyük istek 1-%d MB arasında bir sayı olmalı (boş bırakılırsa %d)", sites.DefaultBodyMB, sites.DefaultBodyMB)
 
 func (s *Server) siteEdit(w http.ResponseWriter, r *http.Request) {
 	st, ok := s.findSite(w, r)
@@ -52,8 +69,8 @@ func (s *Server) siteUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	f := siteEditForm{
 		Domains: r.PostFormValue("domains"), Image: r.PostFormValue("image"), Port: r.PostFormValue("port"),
-		MemoryMB: r.PostFormValue("memory_mb"), DataMount: r.PostFormValue("data_mount"), Env: r.PostFormValue("env"),
-		Unset: map[string]bool{}, EnvAck: r.PostFormValue("env_ack") == "on",
+		MemoryMB: r.PostFormValue("memory_mb"), MaxBodyMB: r.PostFormValue("max_body_mb"), DataMount: r.PostFormValue("data_mount"),
+		Env: r.PostFormValue("env"), Unset: map[string]bool{}, EnvAck: r.PostFormValue("env_ack") == "on",
 	}
 	for _, k := range r.PostForm["unset"] {
 		f.Unset[k] = true
@@ -75,6 +92,11 @@ func (s *Server) siteUpdate(w http.ResponseWriter, r *http.Request) {
 		again("Port ve bellek sayı olmalı")
 		return
 	}
+	body, err := bodyMB(f.MaxBodyMB)
+	if err != nil {
+		again(err.Error())
+		return
+	}
 	// A live site gets no review page: what the new site flow would warn about (a cut
 	// comment, turned escapes, localhost, a development mode) is shown here and must be
 	// acknowledged once.
@@ -89,7 +111,7 @@ func (s *Server) siteUpdate(w http.ResponseWriter, r *http.Request) {
 		again("Ortam değişkenlerinde dikkat edilecekler var: aşağıdaki notlara bak, uygunsa “Gördüm” kutusunu işaretleyip tekrar kaydet.")
 		return
 	}
-	u := agent.SiteUpdate{Domains: strings.Fields(f.Domains), Image: f.Image, Port: port, MemoryMB: mem,
+	u := agent.SiteUpdate{Domains: strings.Fields(f.Domains), Image: f.Image, Port: port, MemoryMB: mem, MaxBodyMB: body,
 		DataMount: f.DataMount, Set: set, Unset: sites.SortedKeys(boolKeys(f.Unset))}
 	id, err := s.agent.UpdateSite(r.Context(), st.Spec.Name, agent.UpdateSiteRequest{Update: u, Actor: s.actor(r)})
 	if err != nil {
@@ -173,7 +195,13 @@ func (s *Server) siteMoveForm(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.render(w, r, "site_move", map[string]any{"Title": st.Spec.Name + " grubunu değiştir", "S": st, "Groups": sites.Groups})
+	s.render(w, r, "site_move", map[string]any{"Title": st.Spec.Name + " grubunu değiştir", "S": st, "Groups": s.otherGroups(r, st.Spec.Group)})
+}
+
+// otherGroups are the groups a site in group g can move to.
+func (s *Server) otherGroups(r *http.Request, g string) []string {
+	groups, _ := s.agent.Groups(r.Context()) // without them the form still takes a group typed in
+	return slices.DeleteFunc(groups, func(x string) bool { return x == g })
 }
 
 func (s *Server) siteMove(w http.ResponseWriter, r *http.Request) {
@@ -184,7 +212,7 @@ func (s *Server) siteMove(w http.ResponseWriter, r *http.Request) {
 	group := r.PostFormValue("group")
 	again := func(problems ...string) {
 		s.renderStatus(w, r, http.StatusUnprocessableEntity, "site_move", map[string]any{"Title": st.Spec.Name + " grubunu değiştir",
-			"S": st, "Groups": sites.Groups, "Group": group, "Problems": problems})
+			"S": st, "Groups": s.otherGroups(r, st.Spec.Group), "Group": group, "Problems": problems})
 	}
 	if r.PostFormValue("confirm") != st.Spec.Name {
 		again("Onay için site adını aynen yaz.")

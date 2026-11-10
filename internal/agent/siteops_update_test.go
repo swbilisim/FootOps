@@ -95,6 +95,51 @@ func TestUpdateOnlyEnvSkipsPullAndCaddy(t *testing.T) {
 	}
 }
 
+// The request body cap is Caddy's alone: the container is left as it is, the site's
+// block gets the new cap.
+func TestUpdateBodyCap(t *testing.T) {
+	e := created(t)
+	compose := readFile(t, filepath.Join(e.root, "/srv/musteri/enisparta/compose.yaml"))
+	u := updateFrom(specFor("enisparta"))
+	u.MaxBodyMB = 5
+	changes, err := e.ops.CheckUpdate("enisparta", u)
+	if err != nil || strings.Join(changes, "; ") != "en büyük istek 100 → 5 MB" {
+		t.Fatalf("changes = %v, %v", changes, err)
+	}
+	if err := e.ops.Update(context.Background(), "enisparta", u, e.progress); err != nil {
+		t.Fatalf("update: %v\n%s", err, strings.Join(e.steps, "\n"))
+	}
+	caddy := readFile(t, filepath.Join(e.root, core.CaddySitesDir, "enisparta.caddy"))
+	if !strings.Contains(caddy, "max_size 5MiB") || e.run.ran("caddy reload") != 1 || e.run.ran("pull") != 0 {
+		t.Errorf("caddy:\n%s\ncalls:\n%s", caddy, strings.Join(e.run.calls, "\n"))
+	}
+	if after := readFile(t, filepath.Join(e.root, "/srv/musteri/enisparta/compose.yaml")); after != compose {
+		t.Errorf("compose.yaml changed:\n%s", after)
+	}
+	if sp, _ := e.ops.Store.Get("enisparta"); sp.MaxBodyMB != 5 || sp.BodyMB() != 5 {
+		t.Errorf("spec: %+v", sp)
+	}
+	// Back to the default: nothing written down for it, the block as before.
+	u.MaxBodyMB = 100
+	if err := e.ops.Update(context.Background(), "enisparta", u, e.progress); err != nil {
+		t.Fatalf("back: %v", err)
+	}
+	if sp, _ := e.ops.Store.Get("enisparta"); sp.MaxBodyMB != 0 || !strings.Contains(readFile(t, filepath.Join(e.root, core.CaddySitesDir, "enisparta.caddy")), "max_size 100MiB") {
+		t.Errorf("default: %+v", sp)
+	}
+	if _, err := e.ops.CheckUpdate("enisparta", u); err == nil || !strings.Contains(err.Error(), "değişiklik yok") {
+		t.Errorf("same cap again: %v", err)
+	}
+	u.MaxBodyMB = 0 // an empty field: the default, the same
+	if _, err := e.ops.CheckUpdate("enisparta", u); err == nil || !strings.Contains(err.Error(), "değişiklik yok") {
+		t.Errorf("empty field: %v", err)
+	}
+	u.MaxBodyMB = 101
+	if _, err := e.ops.CheckUpdate("enisparta", u); err == nil || !strings.Contains(err.Error(), "en büyük istek") {
+		t.Errorf("over the cap: %v", err)
+	}
+}
+
 func TestUpdateRejects(t *testing.T) {
 	e := created(t)
 	other := specFor("other")

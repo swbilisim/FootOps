@@ -21,6 +21,7 @@ type SiteUpdate struct {
 	Image     string            `json:"image"`
 	Port      int               `json:"port"`
 	MemoryMB  int               `json:"memory_mb"`
+	MaxBodyMB int               `json:"max_body_mb"` // 0: sites.DefaultBodyMB
 	DataMount string            `json:"data_mount"`
 	Set       map[string]string `json:"set,omitempty"`
 	Unset     []string          `json:"unset,omitempty"`
@@ -55,6 +56,7 @@ func (o *SiteOps) planUpdate(name string, u SiteUpdate) (updatePlan, error) {
 	}
 	next := cur
 	next.Domains, next.Image, next.Port, next.MemoryMB, next.DataMount = u.Domains, u.Image, u.Port, u.MemoryMB, u.DataMount
+	next.MaxBodyMB = u.MaxBodyMB
 	next.Normalize()
 
 	var problems []string
@@ -95,6 +97,9 @@ func (o *SiteOps) planUpdate(name string, u SiteUpdate) (updatePlan, error) {
 	}
 	if next.MemoryMB != cur.MemoryMB {
 		changes = append(changes, fmt.Sprintf("bellek %d → %d MB", cur.MemoryMB, next.MemoryMB))
+	}
+	if next.BodyMB() != cur.BodyMB() {
+		changes = append(changes, fmt.Sprintf("en büyük istek %d → %d MB", cur.BodyMB(), next.BodyMB()))
 	}
 	if next.DataMount != cur.DataMount {
 		changes = append(changes, "kalıcı klasör: "+orNone(next.DataMount))
@@ -252,7 +257,7 @@ func (o *SiteOps) Update(ctx context.Context, name string, u SiteUpdate, progres
 			}
 		}
 	}
-	if err := o.compose(ctx, next, "up", "--detach", "--remove-orphans"); err != nil {
+	if err := o.compose(ctx, next, o.upArgs(ctx, next, "--detach", "--remove-orphans")...); err != nil {
 		return fmt.Errorf("container güncellenemedi: %w", err)
 	}
 	done("Container yeni ayarlarla başlatıldı")

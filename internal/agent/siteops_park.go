@@ -189,7 +189,7 @@ func (o *SiteOps) Unpark(ctx context.Context, name, expires string, progress Pro
 		return err
 	}
 	base := o.restartBaseline(ctx, spec)
-	if err := o.compose(ctx, spec, "up", "--detach"); err != nil {
+	if err := o.compose(ctx, spec, o.upArgs(ctx, spec, "--detach")...); err != nil {
 		return fmt.Errorf("container başlatılamadı: %w", err)
 	}
 	if err := o.waitListening(ctx, spec, base); err != nil {

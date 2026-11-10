@@ -23,9 +23,10 @@ func (o *SiteOps) CheckMove(name, group string) (sites.Spec, sites.Spec, error) 
 	}
 	next := cur
 	next.Group = strings.ToLower(strings.TrimSpace(group))
+	if err := sites.CheckGroup(next.Group); err != nil {
+		return cur, next, err
+	}
 	switch {
-	case !sites.ValidGroup(next.Group):
-		return cur, next, fmt.Errorf("grup şunlardan biri olmalı: %s", strings.Join(sites.Groups, ", "))
 	case next.Group == cur.Group:
 		return cur, next, fmt.Errorf("%s zaten %s grubunda", name, cur.Group)
 	}
@@ -76,7 +77,7 @@ func (o *SiteOps) Move(ctx context.Context, name, group string, progress Progres
 	// already exist (an earlier move cut short), and is then left as it was.
 	var createdNet bool
 	var connected []string
-	stopped, moved, written, recreated, caddyChanged := false, false, false, false, false
+	stopped, newGroup, moved, written, recreated, caddyChanged := false, false, false, false, false, false
 	defer func() {
 		if err == nil {
 			return
@@ -113,8 +114,18 @@ func (o *SiteOps) Move(ctx context.Context, name, group string, progress Progres
 		if moved {
 			fail("klasör", os.Rename(nextDir, curDir))
 		}
+		if newGroup {
+			o.Store.DropGroup(next.Group)
+		}
 		if stopped {
-			if e := o.compose(bg, cur, "up", "--detach", "--remove-orphans"); e != nil {
+			// Once the new container was being made, the one there may be it, which compose
+			// would only start again on the new network (see below): forced then. Before
+			// that the old container is as it was and only needs starting.
+			up := []string{"up", "--detach", "--remove-orphans"}
+			if recreated {
+				up = append(up, "--force-recreate")
+			}
+			if e := o.compose(bg, cur, up...); e != nil {
 				fail("eski container", e)
 			} else {
 				fail("eski container", o.waitListening(bg, cur, base))
@@ -171,8 +182,11 @@ func (o *SiteOps) Move(ctx context.Context, name, group string, progress Progres
 		return fmt.Errorf("site durdurulamadı: %w", err)
 	}
 	done("Site durduruldu (birkaç saniye cevap vermeyecek)")
-	if err := os.MkdirAll(filepath.Dir(nextDir), 0o755); err != nil {
+	if newGroup, err = o.Store.MakeGroup(next.Group); err != nil {
 		return err
+	}
+	if newGroup {
+		done("Yeni grup: " + sites.GroupDir(next.Group))
 	}
 	if err := os.Rename(curDir, nextDir); err != nil {
 		return fmt.Errorf("klasör taşınamadı: %w", err)
@@ -191,7 +205,10 @@ func (o *SiteOps) Move(ctx context.Context, name, group string, progress Progres
 	done("compose.yaml ve footops.json güncellendi")
 
 	recreated = true
-	if err := o.compose(ctx, next, "up", "--detach", "--remove-orphans"); err != nil {
+	// Forced: without a persistent directory nothing in the service names the group, only
+	// the external network does, and compose would start the old container again on the
+	// old network (Compose v5 does).
+	if err := o.compose(ctx, next, "up", "--detach", "--remove-orphans", "--force-recreate"); err != nil {
 		return fmt.Errorf("container yeni ağda başlatılamadı: %w", err)
 	}
 	if err := o.waitListening(ctx, next, base); err != nil {
@@ -223,6 +240,9 @@ func (o *SiteOps) Move(ctx context.Context, name, group string, progress Progres
 		progress("⚠ Eski ağ silinemedi (zararsız): " + err.Error())
 	} else {
 		done("Eski ağ silindi: " + cur.Network())
+	}
+	if o.Store.DropGroup(cur.Group) {
+		done(cur.Group + " grubunda site kalmadı; grubun klasörü silindi")
 	}
 	return nil
 }
@@ -267,4 +287,18 @@ func (o *SiteOps) syncCompose(s sites.Spec, progress Progress) error {
 		progress("ℹ compose.yaml site kaydına göre yeniden yazıldı (klasör, ağ)")
 	}
 	return nil
+}
+
+// upArgs are `compose up` with args for s, forced when its container is on networks but
+// not on the site's own: a move cut short, before or after compose.yaml was rewritten.
+// Compose does not take a renamed external network for a change; left to itself it
+// would start that container again where it was, out of Caddy's reach.
+func (o *SiteOps) upArgs(ctx context.Context, s sites.Spec, args ...string) []string {
+	up := append([]string{"up"}, args...)
+	if in, err := o.Docker.Inspect(ctx, s.Container()); err == nil && len(in.NetworkSettings.Networks) > 0 {
+		if _, ok := in.NetworkSettings.Networks[s.Network()]; !ok {
+			up = append(up, "--force-recreate")
+		}
+	}
+	return up
 }

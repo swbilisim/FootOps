@@ -22,6 +22,7 @@ type fakeF6 struct {
 	images   []string
 	moves    []string // name/group/confirm
 	moveErr  error
+	groups   []string // nil: kisisel, musteri
 	dns      []agent.DomainCheck
 	regs     []agent.RegistryLogin
 	logins   []string // host/user/token
@@ -39,6 +40,15 @@ func (f *fakeAgent) CheckSite(_ context.Context, req agent.CreateSiteRequest) (s
 	sp := req.Spec
 	sp.Normalize()
 	return sp, nil
+}
+
+func (f *fakeAgent) Groups(context.Context) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.f6.groups == nil {
+		return []string{"kisisel", "musteri"}, nil
+	}
+	return append([]string(nil), f.f6.groups...), nil
 }
 
 func (f *fakeAgent) CheckImage(_ context.Context, image string, a agent.Actor) (string, error) {
@@ -119,8 +129,8 @@ func TestNewSiteFlow(t *testing.T) {
 	}
 
 	_, body = c.do("GET", "/sites/new/form?check=imgjob1&tpl=nextjs", nil)
-	for _, want := range []string{`name="port" value="4000"`, `name="data_mount" value="/app/uploads"`, `name="memory_mb" value="512"`,
-		`<option value="" selected disabled>`, "İmaj kontrol edildi", `name="database" checked`, `list="dbvars"`, `data-env-file="env"`, "envfile.js"} {
+	for _, want := range []string{`name="port" value="4000"`, `name="data_mount" value="/app/uploads"`, `name="memory_mb" value="512"`, `name="max_body_mb" value="100"`,
+		`name="group" value="" list="groups"`, `<option value="kisisel"><option value="musteri">`, `pattern="[a-z][a-z0-9\-]{1,30}[a-z0-9]"`, "İmaj kontrol edildi", `name="database" checked`, `list="dbvars"`, `data-env-file="env"`, "envfile.js"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("form misses %q", want)
 		}
@@ -128,7 +138,7 @@ func TestNewSiteFlow(t *testing.T) {
 
 	envText := "export NODE_ENV=production\nSECRET=\"s3cr3t value\"\nMONGODB_URI=mongodb://localhost:27017/magaza\nNEXT_PUBLIC_API=http://localhost:3000\n"
 	form := url.Values{"csrf": {tok}, "template": {"nextjs"}, "check": {"imgjob1"}, "name": {"magaza"}, "group": {"kisisel"},
-		"domains": {"magaza.example.com"}, "image": {"ghcr.io/ornek/magaza:main"}, "port": {"3000"}, "memory_mb": {"512"},
+		"domains": {"magaza.example.com"}, "image": {"ghcr.io/ornek/magaza:main"}, "port": {"3000"}, "memory_mb": {"512"}, "max_body_mb": {"20"},
 		"data_mount": {"/app/uploads"}, "database": {"on"}, "db_var": {"MONGODB_URI"}, "env": {envText}}
 	resp, _ = c.do("POST", "/sites/new/form", form)
 	m := reReview.FindStringSubmatch(resp.Header.Get("Location"))
@@ -138,12 +148,15 @@ func TestNewSiteFlow(t *testing.T) {
 	if env := e.agent.f6.checked[0].Env; env["SECRET"] != "s3cr3t value" || env["MONGODB_URI"] != "" || len(env) != 3 {
 		t.Errorf("checked env = %v", env)
 	}
+	if mb := e.agent.f6.checked[0].Spec.MaxBodyMB; mb != 20 {
+		t.Errorf("body cap = %d", mb)
+	}
 
 	resp, body = c.do("GET", m[0], nil)
 	if resp.StatusCode != 200 {
 		t.Fatalf("review: %d", resp.StatusCode)
 	}
-	for _, want := range []string{"/srv/kisisel/magaza", "prj_kisisel_magaza", "SECRET", "12 karakter", "localhost içeriyor",
+	for _, want := range []string{"/srv/kisisel/magaza", "prj_kisisel_magaza", "SECRET", "12 karakter", "localhost içeriyor", "<td>20 MB",
 		"derlemede koda gömülür", "MONGODB_URI ortam değişkenlerinde vardı (satır 3)", "İmaj 4000 portunu bildiriyor", "203.0.113.10"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("review misses %q", want)
@@ -215,7 +228,7 @@ func TestNewSiteFormProblems(t *testing.T) {
 	e.agent.f6.checkErr = &agent.Error{Status: 422, Message: "sorunlar", Problems: []string{"<b>magaza.example.com</b> için sertifika yok"}}
 	resp, body = c.do("POST", "/sites/new/form", form)
 	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "&lt;b&gt;magaza.example.com&lt;/b&gt; için sertifika yok") ||
-		!strings.Contains(body, `value="magaza"`) || !strings.Contains(body, `<option value="musteri" selected>`) {
+		!strings.Contains(body, `value="magaza"`) || !strings.Contains(body, `name="group" value="musteri"`) {
 		t.Errorf("agent problems: %d", resp.StatusCode)
 	}
 	if len(e.agent.created) != 0 {
@@ -309,7 +322,7 @@ func TestSiteMovePage(t *testing.T) {
 	}
 	e.agent.f6.moveErr = &agent.Error{Status: 409, Message: "bu sitede yarım kalmış bir geri yükleme var"}
 	resp, body = c.do("POST", "/sites/enisparta/move", url.Values{"csrf": {tok}, "group": {"kisisel"}, "confirm": {"enisparta"}})
-	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "yarım kalmış") || !strings.Contains(body, `<option value="kisisel" selected>`) {
+	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "yarım kalmış") || !strings.Contains(body, `name="group" value="kisisel"`) {
 		t.Errorf("agent refusal: %d", resp.StatusCode)
 	}
 }
@@ -377,6 +390,32 @@ func TestPendingStore(t *testing.T) {
 	}
 }
 
+// A group typed in that the server does not have is said on the review page: it will
+// be made (and a typo can still be put right there).
+func TestReviewSaysNewGroup(t *testing.T) {
+	e := newEnv(t)
+	c := e.client(t, false)
+	tok := e.login(t, c)
+	for group, isNew := range map[string]bool{"musteri": false, " Yeni-Grup ": true} {
+		form := url.Values{"csrf": {tok}, "template": {"node"}, "name": {"magaza"}, "group": {group}, "domains": {"magaza.example.com"},
+			"image": {"img"}, "port": {"3000"}, "memory_mb": {"384"}}
+		resp, _ := c.do("POST", "/sites/new/form", form)
+		_, body := c.do("GET", resp.Header.Get("Location"), nil)
+		said := strings.Contains(body, "yeni-grup yeni bir grup:") && strings.Contains(body, "(kisisel, musteri)") && strings.Contains(body, `class="notice warn"`)
+		if said != isNew || !strings.Contains(body, "/srv/"+strings.ToLower(strings.TrimSpace(group))+"/magaza") {
+			t.Errorf("%q: new group said %v\n%s", group, said, body)
+		}
+	}
+	// A server with no group yet: whatever is typed is new.
+	e.agent.f6.groups = []string{}
+	form := url.Values{"csrf": {tok}, "template": {"node"}, "name": {"magaza"}, "group": {"kisisel"}, "domains": {"magaza.example.com"},
+		"image": {"img"}, "port": {"3000"}, "memory_mb": {"384"}}
+	resp, _ := c.do("POST", "/sites/new/form", form)
+	if _, body := c.do("GET", resp.Header.Get("Location"), nil); !strings.Contains(body, "kisisel yeni bir grup:") {
+		t.Errorf("no groups on the server: every group is new\n%s", body)
+	}
+}
+
 // A create the agent refuses (a name taken since the review) brings the form back as
 // typed, with the reason.
 func TestNewSiteCreateRefusedKeepsForm(t *testing.T) {
@@ -390,7 +429,7 @@ func TestNewSiteCreateRefusedKeepsForm(t *testing.T) {
 	e.agent.createErr = &agent.Error{Status: 422, Message: "sorunlar", Problems: []string{"\"magaza\" adında bir site zaten var"}}
 	resp, body := c.do("POST", review, url.Values{"csrf": {tok}, "action": {"create"}})
 	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "adında bir site zaten var") ||
-		!strings.Contains(body, ">TOKEN=abc123</textarea>") || !strings.Contains(body, `<option value="musteri" selected>`) {
+		!strings.Contains(body, ">TOKEN=abc123</textarea>") || !strings.Contains(body, `name="group" value="musteri"`) {
 		t.Errorf("refused create: %d", resp.StatusCode)
 	}
 }

@@ -16,10 +16,84 @@ type Store struct{ Root string }
 
 func (st Store) path(p string) string { return filepath.Join(st.Root, p) }
 
+// Groups lists the groups: the folders under /srv that a group's name fits (so not
+// core, nor anything starting with _ or .), sites in them or not, in order. A symbolic
+// link to a folder counts too (a group moved to another disk keeps its sites listed and
+// backed up), unless it leads to a folder already listed: another name for the same
+// group would list its sites twice.
+func (st Store) Groups() ([]string, error) {
+	entries, err := os.ReadDir(st.path(SrvDir))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, links := range []bool{false, true} { // folders first: they keep their names
+		for _, e := range entries {
+			if !ValidGroup(e.Name()) || (e.Type()&fs.ModeSymlink != 0) != links {
+				continue
+			}
+			p := st.path(GroupDir(e.Name()))
+			if fi, err := os.Stat(p); err != nil || !fi.IsDir() {
+				continue
+			}
+			if real, err := filepath.EvalSymlinks(p); err == nil && !seen[real] {
+				seen[real] = true
+				out = append(out, e.Name())
+			}
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// MakeGroup makes a group's folder if it is not there yet, private like the others
+// (0700), and reports whether it did.
+func (st Store) MakeGroup(g string) (bool, error) {
+	if err := CheckGroup(g); err != nil {
+		return false, err
+	}
+	if err := os.MkdirAll(st.path(SrvDir), 0o755); err != nil {
+		return false, err
+	}
+	err := os.Mkdir(st.path(GroupDir(g)), 0o700)
+	if errors.Is(err, fs.ErrExist) {
+		if fi, serr := os.Stat(st.path(GroupDir(g))); serr != nil || !fi.IsDir() {
+			return false, fmt.Errorf("%s bir klasör değil", GroupDir(g))
+		}
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// DropGroup removes a group's folder once nothing is left in it, no site and no removed
+// site (an empty _removed goes too), and reports whether it did: a group goes with its
+// last site. A group that is a link to a folder elsewhere is left as it is.
+func (st Store) DropGroup(g string) bool {
+	if !ValidGroup(g) {
+		return false
+	}
+	dir := st.path(GroupDir(g))
+	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() {
+		return false
+	}
+	if fi, err := os.Lstat(filepath.Join(dir, RemovedDir)); err == nil && fi.IsDir() {
+		_ = os.Remove(filepath.Join(dir, RemovedDir)) // only if empty
+	}
+	return os.Remove(dir) == nil
+}
+
 // List returns every site that has a footops.json, sorted by group and name.
 func (st Store) List() ([]Spec, error) {
+	groups, err := st.Groups()
+	if err != nil {
+		return nil, err
+	}
 	var out []Spec
-	for _, g := range Groups {
+	for _, g := range groups {
 		entries, err := os.ReadDir(st.path(filepath.Join(SrvDir, g)))
 		if errors.Is(err, fs.ErrNotExist) {
 			continue

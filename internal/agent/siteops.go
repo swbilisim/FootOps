@@ -192,8 +192,13 @@ func (o *SiteOps) CreateWith(ctx context.Context, spec sites.Spec, env map[strin
 	bg := func() context.Context { return context.Background() }
 
 	dir := o.path(spec.Dir())
-	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+	newGroup, err := o.Store.MakeGroup(spec.Group)
+	if err != nil {
 		return nil, err
+	}
+	if newGroup {
+		undo = append(undo, func() { o.Store.DropGroup(spec.Group) })
+		done("Yeni grup: " + sites.GroupDir(spec.Group))
 	}
 	if err := os.Mkdir(dir, 0o750); err != nil {
 		return nil, err
@@ -382,7 +387,7 @@ func (o *SiteOps) Redeploy(ctx context.Context, name string, progress Progress) 
 	}
 	progress("✓ İmaj indirildi: " + spec.Image)
 	base := o.restartBaseline(ctx, spec)
-	if err := o.compose(ctx, spec, "up", "--detach", "--remove-orphans"); err != nil {
+	if err := o.compose(ctx, spec, o.upArgs(ctx, spec, "--detach", "--remove-orphans")...); err != nil {
 		return err
 	}
 	progress("✓ Container güncellendi")
@@ -429,7 +434,7 @@ func (o *SiteOps) Remove(ctx context.Context, name string, progress Progress) er
 		return err
 	}
 	progress("✓ Ağ silindi")
-	dst := filepath.Join(sites.SrvDir, spec.Group, "_removed", spec.Name+"-"+o.now().UTC().Format("20060102-150405"))
+	dst := filepath.Join(sites.SrvDir, spec.Group, sites.RemovedDir, spec.Name+"-"+o.now().UTC().Format("20060102-150405"))
 	if err := os.MkdirAll(o.path(filepath.Dir(dst)), 0o750); err != nil {
 		return err
 	}

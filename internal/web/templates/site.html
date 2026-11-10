@@ -36,6 +36,7 @@
   <tr><th>İmaj</th><td class="mono">{{$s.Image}}</td></tr>
   <tr><th>Uygulama portu</th><td>{{$s.Port}}</td></tr>
   <tr><th>Bellek sınırı</th><td>{{$s.MemoryMB}} MB</td></tr>
+  <tr><th>En büyük istek</th><td>{{$s.BodyMB}} MB</td></tr>
   <tr><th>Kalıcı klasör</th><td>{{if $s.DataMount}}<span class="mono">/srv/{{$s.Group}}/{{$s.Name}}/data → {{$s.DataMount}}</span> · <a href="/sites/{{$s.Name}}/files">dosyaları yönet</a>{{else}}yok{{end}}</td></tr>
   <tr><th>Veritabanı</th><td>{{if $s.Database}}MongoDB <span class="mono">{{$s.Name}}</span> (kullanıcı <span class="mono">{{$s.Name}}</span>), adres <span class="mono">{{$s.DBVar}}</span> değişkeninde · <a href="/sites/{{$s.Name}}/db">verileri gör</a>{{else}}yok{{end}}</td></tr>
   <tr><th>Ortam değişkenleri</th><td class="mono">{{range $i, $k := $s.EnvKeys}}{{if $i}}, {{end}}{{$k}}{{else}}—{{end}}</td></tr>

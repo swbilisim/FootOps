@@ -42,14 +42,14 @@ func templateByID(id string) siteTemplate {
 // siteForm is the new-site form, kept as strings so a rejected form is shown again
 // exactly as typed.
 type siteForm struct {
-	Template, Check                                                    string
-	Name, Group, Domains, Image, Port, MemoryMB, DataMount, DBVar, Env string
-	Database                                                           bool
+	Template, Check                                                               string
+	Name, Group, Domains, Image, Port, MemoryMB, MaxBodyMB, DataMount, DBVar, Env string
+	Database                                                                      bool
 }
 
 func formFor(tpl siteTemplate, image string, info *agent.ImageInfo) siteForm {
 	f := siteForm{Template: tpl.ID, Image: image, Port: strconv.Itoa(tpl.Port), MemoryMB: strconv.Itoa(tpl.MemoryMB),
-		Database: tpl.Database, DBVar: "MONGODB_URI"}
+		MaxBodyMB: strconv.Itoa(sites.DefaultBodyMB), Database: tpl.Database, DBVar: "MONGODB_URI"}
 	if info != nil {
 		f.Image = info.Image
 		if p := info.SuggestPort(); p > 0 {
@@ -120,7 +120,8 @@ func (s *Server) siteNewForm(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) renderForm(w http.ResponseWriter, r *http.Request, status int, f siteForm, info *agent.ImageInfo, problems []string) {
-	s.renderStatus(w, r, status, "site_form", map[string]any{"Title": "Yeni site", "F": f, "Groups": sites.Groups,
+	groups, _ := s.agent.Groups(r.Context()) // without them the form still takes a group typed in
+	s.renderStatus(w, r, status, "site_form", map[string]any{"Title": "Yeni site", "F": f, "Groups": groups,
 		"DBVars": sites.DBVars, "Info": info, "Tpl": templateByID(f.Template), "Problems": problems, "EnvFile": true})
 }
 
@@ -129,8 +130,8 @@ func readSiteForm(r *http.Request) siteForm {
 		Template: r.PostFormValue("template"), Check: r.PostFormValue("check"),
 		Name: r.PostFormValue("name"), Group: r.PostFormValue("group"), Domains: r.PostFormValue("domains"),
 		Image: r.PostFormValue("image"), Port: r.PostFormValue("port"), MemoryMB: r.PostFormValue("memory_mb"),
-		DataMount: r.PostFormValue("data_mount"), DBVar: r.PostFormValue("db_var"), Env: r.PostFormValue("env"),
-		Database: r.PostFormValue("database") == "on",
+		MaxBodyMB: r.PostFormValue("max_body_mb"), DataMount: r.PostFormValue("data_mount"), DBVar: r.PostFormValue("db_var"),
+		Env: r.PostFormValue("env"), Database: r.PostFormValue("database") == "on",
 	}
 }
 
@@ -151,9 +152,14 @@ func (s *Server) siteNewReview(w http.ResponseWriter, r *http.Request) {
 		again("Port ve bellek sayı olmalı")
 		return
 	}
+	body, err := bodyMB(f.MaxBodyMB)
+	if err != nil {
+		again(err.Error())
+		return
+	}
 	spec := sites.Spec{
 		Name: f.Name, Group: f.Group, Domains: strings.Fields(f.Domains), Image: f.Image,
-		Port: port, MemoryMB: mem, DataMount: f.DataMount, Database: f.Database, DBVar: f.DBVar,
+		Port: port, MemoryMB: mem, MaxBodyMB: body, DataMount: f.DataMount, Database: f.Database, DBVar: f.DBVar,
 	}
 	spec.Normalize()
 	// A local .env usually has its own database address (localhost): the site gets the
@@ -225,8 +231,10 @@ func (s *Server) siteNewReviewPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	srv, _ := s.agent.Server(r.Context())
+	groups, gerr := s.agent.Groups(r.Context())
 	s.render(w, r, "site_review", map[string]any{"Title": "Yeni site: özet", "ID": r.PathValue("id"), "S": sp,
 		"Env": sites.DescribeEnv(ps.entries, sp), "Notes": ps.notes, "Info": info, "Warnings": warnings,
+		"Groups": groups, "NewGroup": gerr == nil && !slices.Contains(groups, sp.Group),
 		"Domains": dc, "DNS": dnsRecords(sp.Domains, certs, firstOf(srv.IPv4))})
 }
 

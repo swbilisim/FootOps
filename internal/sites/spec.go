@@ -8,6 +8,9 @@
 //	data/          optional persistent directory mounted into the container
 //
 // The files on disk are the source of truth; the agent never keeps site state elsewhere.
+// That goes for the groups too: they are the folders under /srv (Store.Groups). A site
+// made or moved into a group that is not there yet makes its folder, and a group goes
+// with its last site (Store.DropGroup).
 package sites
 
 import (
@@ -21,11 +24,9 @@ import (
 	"time"
 )
 
-// Groups are the fixed top-level folders under /srv.
-var Groups = []string{"botaniksan", "posmerkezi", "startup", "musteri", "kuleonu", "kisisel"}
-
 const (
 	SrvDir       = "/srv"
+	RemovedDir   = "_removed" // /srv/<group>/_removed/<name>-<when>: a removed site's folder
 	MetaFile     = "footops.json"
 	ComposeFile  = "compose.yaml"
 	DataDir      = "data"
@@ -37,6 +38,11 @@ const (
 	defaultDBVar = "MONGODB_URI"
 )
 
+// DefaultBodyMB is the largest request body Caddy passes to a site that sets none, and
+// the most a site may set: what Cloudflare lets through on the Free and Pro plans
+// (100 MB), so nothing that works through Cloudflare is refused unless the site asks.
+const DefaultBodyMB = 100
+
 // Spec is a site as the operator defines it.
 type Spec struct {
 	Name     string   `json:"name"`
@@ -45,6 +51,10 @@ type Spec struct {
 	Image    string   `json:"image"`
 	Port     int      `json:"port"`
 	MemoryMB int      `json:"memory_mb"`
+	// MaxBodyMB caps a request's body at Caddy, in MB (MiB): a larger one is answered
+	// 413 before any of it reaches the app, which might hold it all in memory. 0 is
+	// DefaultBodyMB; a site that takes no uploads needs a few MB at most.
+	MaxBodyMB int `json:"max_body_mb,omitempty"`
 	// DataMount is the path inside the container where /srv/<group>/<name>/data is
 	// mounted (uploads etc.). Empty means no persistent directory.
 	DataMount string `json:"data_mount,omitempty"`
@@ -77,6 +87,14 @@ type ParkState struct {
 
 // IsParked reports whether the site is parked.
 func (s Spec) IsParked() bool { return s.Parked != nil }
+
+// BodyMB is the largest request body the site takes, in MB.
+func (s Spec) BodyMB() int {
+	if s.MaxBodyMB == 0 {
+		return DefaultBodyMB
+	}
+	return s.MaxBodyMB
+}
 
 // Dir is the site's directory on the host.
 func (s Spec) Dir() string { return path.Join(SrvDir, s.Group, s.Name) }
@@ -124,6 +142,9 @@ func (s *Spec) Normalize() {
 	if !s.Database {
 		s.DBVar = ""
 	}
+	if s.MaxBodyMB == DefaultBodyMB {
+		s.MaxBodyMB = 0 // the default is not written down: footops.json stays as it was
+	}
 	seen := map[string]bool{}
 	var ds []string
 	for _, d := range s.Domains {
@@ -146,8 +167,8 @@ func (s Spec) Validate(env map[string]string) error {
 	} else if reserved[s.Name] || strings.HasPrefix(s.Name, "footops") {
 		add("%q ayrılmış bir ad", s.Name)
 	}
-	if !validGroup(s.Group) {
-		add("grup şunlardan biri olmalı: %s", strings.Join(Groups, ", "))
+	if err := CheckGroup(s.Group); err != nil {
+		add("%v", err)
 	}
 	if len(s.Domains) == 0 {
 		add("en az bir alan adı gerekli")
@@ -168,6 +189,9 @@ func (s Spec) Validate(env map[string]string) error {
 	}
 	if s.MemoryMB < minMemoryMB || s.MemoryMB > maxMemoryMB {
 		add("bellek sınırı %d-%d MB arasında olmalı", minMemoryMB, maxMemoryMB)
+	}
+	if s.MaxBodyMB < 0 || s.MaxBodyMB > DefaultBodyMB {
+		add("en büyük istek 1-%d MB arasında olmalı", DefaultBodyMB)
 	}
 	if s.DataMount != "" && (!reMount.MatchString(s.DataMount) || strings.Contains(s.DataMount, "..") || s.DataMount == "/") {
 		add("kalıcı klasör yolu mutlak bir yol olmalı (örn. /app/uploads)")
@@ -266,17 +290,23 @@ func ValidDataURL(u string) bool {
 	return true
 }
 
-// ValidGroup reports whether g is one of the fixed groups.
-func ValidGroup(g string) bool { return validGroup(g) }
-
-func validGroup(g string) bool {
-	for _, x := range Groups {
-		if x == g {
-			return true
-		}
+// CheckGroup tells why g cannot name a group, nil if it can: a group's name follows the
+// rule of a site's, and core (FootOps's own folder under /srv) is not one.
+func CheckGroup(g string) error {
+	switch {
+	case !reName.MatchString(g):
+		return errors.New("grup adı 3-32 karakter: küçük harf, rakam ve tire; harfle başlamalı")
+	case reserved[g] || strings.HasPrefix(g, "footops"):
+		return fmt.Errorf("%q ayrılmış bir ad, grup olamaz", g)
 	}
-	return false
+	return nil
 }
+
+// ValidGroup reports whether g can name a group.
+func ValidGroup(g string) bool { return CheckGroup(g) == nil }
+
+// GroupDir is a group's folder on the host.
+func GroupDir(g string) string { return path.Join(SrvDir, g) }
 
 // ValidateDomain accepts a lower-case host name with at least two labels.
 func ValidateDomain(d string) error {
