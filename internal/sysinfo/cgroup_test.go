@@ -30,9 +30,14 @@ func TestReadCgroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.CPU != 24910249*time.Microsecond || c.MemUsage != 149852160-61972480 || c.MemLimit != 402653184 {
+	if c.CPU != 24910249*time.Microsecond || c.MemUsage != 149852160-61972480 || c.MemLimit != 402653184 || c.OOMKills != 0 {
 		t.Errorf("cgroup = %+v", c)
 	}
+	writeCgroup(t, dir, map[string]string{"memory.events": "low 0\nhigh 0\nmax 12\noom 2\noom_kill 2\noom_group_kill 0\n"})
+	if c, err := ReadCgroup(dir); err != nil || c.OOMKills != 2 {
+		t.Errorf("oom kills: %+v %v", c, err)
+	}
+	os.Remove(filepath.Join(dir, "memory.events"))
 
 	// No limit; a cache larger than the usage (it can be, briefly) is not taken off.
 	writeCgroup(t, dir, map[string]string{"memory.max": "max\n", "memory.stat": "inactive_file 999999999999\n"})

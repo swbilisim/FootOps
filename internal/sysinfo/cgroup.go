@@ -12,15 +12,18 @@ import (
 
 // Cgroup is what a cgroup (v2) directory tells about the processes in it: their CPU
 // time so far, their memory as `docker stats` counts it (usage less the page cache the
-// kernel would drop first, inactive_file) and the memory limit (0: none).
+// kernel would drop first, inactive_file), the memory limit (0: none) and how many of
+// its processes the kernel killed for want of memory (memory.events, if there).
 type Cgroup struct {
 	CPU      time.Duration
 	MemUsage uint64
 	MemLimit uint64
+	OOMKills uint64
 }
 
-// ReadCgroup reads a cgroup v2 directory: cpu.stat, memory.current, memory.stat and
-// memory.max. These are the files dockerd itself reads for a container's stats.
+// ReadCgroup reads a cgroup v2 directory: cpu.stat, memory.current, memory.stat,
+// memory.max and memory.events. These are the files dockerd itself reads for a
+// container's stats.
 func ReadCgroup(dir string) (Cgroup, error) {
 	var c Cgroup
 	b, err := os.ReadFile(filepath.Join(dir, "cpu.stat"))
@@ -56,6 +59,9 @@ func ReadCgroup(dir string) (Cgroup, error) {
 		if c.MemLimit, err = strconv.ParseUint(v, 10, 64); err != nil {
 			return c, fmt.Errorf("memory.max: %w", err)
 		}
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "memory.events")); err == nil {
+		c.OOMKills, _ = keyedValue(string(b), "oom_kill")
 	}
 	return c, nil
 }

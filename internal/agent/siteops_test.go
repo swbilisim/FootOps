@@ -37,6 +37,8 @@ type fakeNet struct {
 	restarts int
 	image    string   // image ID reported for site containers
 	ctrNets  []string // networks reported for site containers (none: not said)
+	stale    []string // networks Caddy and MongoDB are configured for but not on (stopped)
+	members  int      // NetworkMembers requests
 	log      []string
 }
 
@@ -59,6 +61,7 @@ func (f *fakeNet) CreateNetwork(_ context.Context, name string, _ map[string]str
 func (f *fakeNet) NetworkMembers(_ context.Context, name string) (map[string]bool, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.members++
 	n, ok := f.networks[name]
 	if !ok {
 		return nil, false, nil
@@ -127,15 +130,20 @@ func (f *fakeNet) Inspect(_ context.Context, name string) (docker.Inspect, error
 			Status string `json:"Status"`
 		}{f.health}
 	}
-	for _, n := range f.ctrNets {
-		if in.NetworkSettings.Networks == nil {
-			in.NetworkSettings.Networks = map[string]struct {
-				IPAddress string `json:"IPAddress"`
-			}{}
+	in.NetworkSettings.Networks = map[string]docker.Endpoint{}
+	if name == caddyContainer || name == mongoContainer { // the core: where it is attached
+		for n, m := range f.networks {
+			if _, ok := m[name]; ok {
+				in.NetworkSettings.Networks[n] = docker.Endpoint{IPAddress: "10.200.1.3", EndpointID: "ep-" + n}
+			}
 		}
-		in.NetworkSettings.Networks[n] = struct {
-			IPAddress string `json:"IPAddress"`
-		}{"10.200.1.2"}
+		for _, n := range f.stale {
+			in.NetworkSettings.Networks[n] = docker.Endpoint{}
+		}
+		return in, nil
+	}
+	for _, n := range f.ctrNets {
+		in.NetworkSettings.Networks[n] = docker.Endpoint{IPAddress: "10.200.1.2", EndpointID: "ep-" + n}
 	}
 	return in, nil
 }
@@ -517,6 +525,30 @@ func TestReconcileReattaches(t *testing.T) {
 	}
 	if a := m["footops-mongo"]; len(a) != 1 || a[0] != "mongo" {
 		t.Errorf("mongo not reattached with alias: %v", a)
+	}
+	// All as it should be: Caddy's and MongoDB's own networks say so, no site's network
+	// is asked (every 10 seconds, a request a site was costly).
+	e.net.members = 0
+	if errs := e.ops.Reconcile(context.Background()); len(errs) != 0 || e.net.members != 0 {
+		t.Errorf("settled: %v, %d network requests", errs, e.net.members)
+	}
+	// MongoDB alone gone from a database site's network: that site is looked at again.
+	delete(e.net.networks["prj_musteri_enisparta"], "footops-mongo")
+	if errs := e.ops.Reconcile(context.Background()); len(errs) != 0 || e.net.members != 1 {
+		t.Errorf("mongo missing: %v, %d network requests", errs, e.net.members)
+	}
+	if a := e.net.networks["prj_musteri_enisparta"]["footops-mongo"]; len(a) != 1 || a[0] != "mongo" {
+		t.Errorf("mongo not reattached: %v", a)
+	}
+	// A site's network gone altogether (pruned while Caddy was stopped: Caddy still names
+	// it, with no endpoint) is made again, and Caddy put on it.
+	delete(e.net.networks, "prj_musteri_enisparta")
+	e.net.stale = []string{"prj_musteri_enisparta"}
+	if errs := e.ops.Reconcile(context.Background()); len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	if _, ok := e.net.networks["prj_musteri_enisparta"]["footops-caddy"]; !ok {
+		t.Errorf("network not made again with Caddy on it: %v", e.net.networks)
 	}
 }
 

@@ -49,9 +49,21 @@ type Sampler struct {
 	last    Overview
 	prevCPU sysinfo.CPUTimes
 
-	marksMu sync.Mutex
-	marks   map[string]cpuMark // container ID → its last CPU reading
+	marksMu  sync.Mutex
+	marks    map[string]cpuMark     // container ID → its last CPU reading
+	inspects map[string]inspectMark // container ID → its last inspect
 }
+
+// inspectMark is a container's last inspect, with the list entry it was made for.
+type inspectMark struct {
+	state, status string
+	in            docker.Inspect
+	at            time.Time
+}
+
+// inspectAge is how long an inspect stands while the container's list entry stays
+// the same.
+const inspectAge = 5 * time.Minute
 
 // cpuMark is a container's last CPU reading, with the process it was of: a container
 // started again counts its CPU time from 0.
@@ -59,6 +71,7 @@ type cpuMark struct {
 	pid int
 	dir string // its cgroup
 	cpu time.Duration
+	oom uint64 // processes killed for memory so far
 	at  time.Time
 	pct float64 // the share it gave
 }
@@ -72,7 +85,8 @@ func NewSampler(d DockerAPI, rs SystemReader) *Sampler {
 	if rs == nil {
 		rs = ReadSystem
 	}
-	return &Sampler{docker: d, readSystem: rs, cgroupOf: run.CgroupOfPID, now: time.Now, marks: map[string]cpuMark{}}
+	return &Sampler{docker: d, readSystem: rs, cgroupOf: run.CgroupOfPID, now: time.Now, marks: map[string]cpuMark{},
+		inspects: map[string]inspectMark{}}
 }
 
 // Run samples every interval until ctx is done.
@@ -186,7 +200,7 @@ func (s *Sampler) container(ctx context.Context, c docker.Container, memTotal ui
 		State:   c.State,
 		Project: c.Labels["com.docker.compose.project"],
 	}
-	in, err := s.docker.Inspect(ctx, info.Name)
+	in, err := s.inspect(ctx, c)
 	if err != nil {
 		return info, err
 	}
@@ -199,7 +213,10 @@ func (s *Sampler) container(ctx context.Context, c docker.Container, memTotal ui
 	if !in.State.Running {
 		return info, nil
 	}
-	if cpu, cg, ok := s.fromCgroup(c.ID, in.State.Pid, info.StartedAt); ok {
+	if cpu, cg, stale, ok := s.fromCgroup(c.ID, in.State.Pid, info.StartedAt); ok {
+		if stale {
+			s.dropInspect(c.ID) // asked again next time
+		}
 		info.CPUPercent, info.MemUsage, info.MemLimit = cpu, cg.MemUsage, cg.MemLimit
 		if info.MemLimit == 0 || memTotal > 0 && info.MemLimit > memTotal {
 			info.MemLimit = memTotal // no limit: the server's memory, as dockerd gives it
@@ -214,13 +231,69 @@ func (s *Sampler) container(ctx context.Context, c docker.Container, memTotal ui
 	return info, nil
 }
 
+// inspect asks dockerd about a container only when its list entry changed — a restart
+// ("Up 2 seconds"), a health change ("(unhealthy)"), an exit all show there — or the
+// last answer is inspectAge old. A container up for less than a minute is always asked:
+// its entry could read the same across a restart. On a server's slow cores the
+// inspects of every container cost dockerd tens of milliseconds a sample (Faz S3b).
+func (s *Sampler) inspect(ctx context.Context, c docker.Container) (docker.Inspect, error) {
+	now := s.now()
+	s.marksMu.Lock()
+	m, ok := s.inspects[c.ID]
+	s.marksMu.Unlock()
+	if ok && c.ID != "" && m.state == c.State && m.status == c.Status && now.Sub(m.at) < inspectAge && !strings.Contains(c.Status, "second") {
+		return m.in, nil
+	}
+	in, err := s.docker.Inspect(ctx, c.Name())
+	if err != nil {
+		s.dropInspect(c.ID)
+		return in, err
+	}
+	// Kept only if it tells what the list entry does: a change in between (or another
+	// container under the name now) is asked about again next time.
+	if in.ID == c.ID && in.State.Status == c.State && healthShown(in, c.Status) {
+		s.marksMu.Lock()
+		s.inspects[c.ID] = inspectMark{state: c.State, status: c.Status, in: in, at: now}
+		s.marksMu.Unlock()
+	} else {
+		s.dropInspect(c.ID)
+	}
+	return in, nil
+}
+
+func (s *Sampler) dropInspect(id string) {
+	s.marksMu.Lock()
+	delete(s.inspects, id)
+	s.marksMu.Unlock()
+}
+
+// healthShown reports whether a list entry's Status ("Up 2 hours (healthy)") says the
+// health the inspect does.
+func healthShown(in docker.Inspect, status string) bool {
+	want := ""
+	if h := in.State.Health; h != nil {
+		switch h.Status {
+		case "starting":
+			want = "(health: starting)"
+		case "healthy", "unhealthy":
+			want = "(" + h.Status + ")"
+		}
+	}
+	if want == "" {
+		return !strings.Contains(status, "health")
+	}
+	return strings.Contains(status, want)
+}
+
 // fromCgroup reads a running container's cgroup; ok is false where it cannot (no cgroup
 // v2, or the container stopped just now). The CPU is the share of one core it used since
 // the last sample, as `docker stats` gives it, but over the whole interval: 0 the first
-// time it is seen.
-func (s *Sampler) fromCgroup(id string, pid int, started time.Time) (float64, sysinfo.Cgroup, bool) {
+// time it is seen. stale says the inspect behind pid is out of date though the list
+// entry did not change: the kernel killed a process for memory (dockerd marks the
+// container OOMKilled, running or not), or the CPU count went back (it started again).
+func (s *Sampler) fromCgroup(id string, pid int, started time.Time) (float64, sysinfo.Cgroup, bool, bool) {
 	if pid <= 0 || id == "" {
-		return 0, sysinfo.Cgroup{}, false
+		return 0, sysinfo.Cgroup{}, false, false
 	}
 	s.marksMu.Lock()
 	prev, had := s.marks[id]
@@ -230,15 +303,16 @@ func (s *Sampler) fromCgroup(id string, pid int, started time.Time) (float64, sy
 		dir = containerCgroup(s.cgroupOf(pid), id)
 	}
 	if dir == "" {
-		return 0, sysinfo.Cgroup{}, false
+		return 0, sysinfo.Cgroup{}, false, false
 	}
 	cg, err := sysinfo.ReadCgroup(dir)
 	now := s.now()
 	if err != nil {
-		return 0, sysinfo.Cgroup{}, false
+		return 0, sysinfo.Cgroup{}, false, false
 	}
-	if had && prev.pid == pid && now.Sub(prev.at) < minCPUWindow {
-		return prev.pct, cg, true // the mark stays: the next share spans from it
+	stale := had && prev.pid == pid && (cg.OOMKills > prev.oom || cg.CPU < prev.cpu)
+	if had && prev.pid == pid && now.Sub(prev.at) < minCPUWindow && !stale {
+		return prev.pct, cg, false, true // the mark stays: the next share spans from it
 	}
 	var cpu float64
 	switch {
@@ -248,9 +322,9 @@ func (s *Sampler) fromCgroup(id string, pid int, started time.Time) (float64, sy
 		cpu = float64(cg.CPU) / float64(now.Sub(started)) * 100 // started again since: all of it is since then
 	}
 	s.marksMu.Lock()
-	s.marks[id] = cpuMark{pid: pid, dir: dir, cpu: cg.CPU, at: now, pct: cpu}
+	s.marks[id] = cpuMark{pid: pid, dir: dir, cpu: cg.CPU, oom: cg.OOMKills, at: now, pct: cpu}
 	s.marksMu.Unlock()
-	return cpu, cg, true
+	return cpu, cg, stale, true
 }
 
 // containerCgroup is the cgroup of the container as a whole: its process's, or the
@@ -272,6 +346,11 @@ func (s *Sampler) forgetMarks(before time.Time) {
 	for id, m := range s.marks {
 		if m.at.Before(before) {
 			delete(s.marks, id)
+		}
+	}
+	for id, m := range s.inspects {
+		if m.at.Before(before) {
+			delete(s.inspects, id)
 		}
 	}
 }

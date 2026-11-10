@@ -231,6 +231,24 @@ if ours < 75 or theirs < 75 or abs(ours - theirs) > 25:
     fail("one busy core: agent %.1f%%, docker stats %.1f%%" % (ours, theirs))
 ok("bir çekirdek meşgulken: agent %%%.0f, docker stats %%%.0f (aynı ölçek: 100 = bir çekirdek)" % (ours, theirs))
 
+# ---- Caddy made again (an upgrade of the core stack) loses its site networks: the
+# agent finds that from Caddy's own networks and attaches it again within its 10 s ----
+before = set(sh("docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' footops-caddy").split())
+if "prj_%s_%s" % (G2, NAME) not in before:
+    fail("Caddy not on the site's network: %s" % before)
+caddy_id = sh("docker inspect -f '{{.Id}}' footops-caddy").strip()
+t0 = time.time()
+sh("docker compose -f /srv/core/compose.yaml up -d --force-recreate --no-deps caddy >/dev/null 2>&1")
+after = sh("docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' footops-caddy").split()
+if sh("docker inspect -f '{{.Id}}' footops-caddy").strip() == caddy_id:
+    fail("Caddy was not made again")
+wait(lambda: set(sh("docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' footops-caddy").split()) >= before,
+     "Caddy attached to the site networks again", timeout=60)
+wait(lambda: get() == "200", "the site through the new Caddy", timeout=60)
+measure["caddy_reattach_s"] = round(time.time() - t0, 1)
+ok("Caddy yeniden oluşturuldu (%d ağla başladı): agent %d site ağına %.0f sn içinde yeniden bağladı, site 200"
+   % (len(after), len(before) - 1, measure["caddy_reattach_s"]))
+
 # ---- the last site of a group removed for good: the group goes ----
 steps = remove_and_purge()
 if exists("/srv/" + G2) or G2 in groups() or "grubun klasörü de silindi" not in steps or not exists("/srv/musteri"):

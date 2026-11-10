@@ -155,10 +155,15 @@ type Inspect struct {
 		Memory int64 `json:"Memory"`
 	} `json:"HostConfig"`
 	NetworkSettings struct {
-		Networks map[string]struct {
-			IPAddress string `json:"IPAddress"`
-		} `json:"Networks"`
+		Networks map[string]Endpoint `json:"Networks"`
 	} `json:"NetworkSettings"`
+}
+
+// Endpoint is a container's place on a network. A container that is not running keeps
+// the networks it is configured for, with no EndpointID: it is not on them.
+type Endpoint struct {
+	IPAddress  string `json:"IPAddress"`
+	EndpointID string `json:"EndpointID"`
 }
 
 var reName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)

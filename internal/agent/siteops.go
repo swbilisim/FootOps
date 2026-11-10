@@ -459,8 +459,27 @@ func (o *SiteOps) Reconcile(ctx context.Context) []error {
 	if err != nil {
 		return []error{err}
 	}
+	// The networks Caddy and MongoDB are on, from one inspect each: asking every site's
+	// network was a request a site every 10 seconds, costly on a server's slow cores
+	// (Faz S3b). Only a live endpoint counts: a container that is not running still
+	// names the networks it is configured for, one of which may be gone (pruned). A site
+	// whose networks look right is left alone; the others go the long way below.
+	on := map[string]map[string]bool{}
+	for _, c := range []string{caddyContainer, mongoContainer} {
+		if in, err := o.Docker.Inspect(ctx, c); err == nil {
+			on[c] = map[string]bool{}
+			for n, ep := range in.NetworkSettings.Networks {
+				if ep.EndpointID != "" {
+					on[c][n] = true
+				}
+			}
+		}
+	}
 	var errs []error
 	for _, s := range list {
+		if on[caddyContainer][s.Network()] && (!s.Database || on[mongoContainer][s.Network()]) {
+			continue
+		}
 		members, exists, err := o.Docker.NetworkMembers(ctx, s.Network())
 		if err != nil {
 			errs = append(errs, err)
