@@ -596,6 +596,8 @@ var (
 		"backup.list": "Yedek listesi okunuyor", "backup.open": "Yedek incelemeye açılıyor",
 		"backup.restore": "Yedekten geri yükleme", "backup.export": "Yedekten arşiv",
 		"site.purge": "Kalıcı siliniyor", "site.park": "Parka alınıyor", "site.unpark": "Yayına alınıyor",
+		"backup.trial": "Deneme geri yüklemesi", "images.prune": "Kullanılmayan imajlar siliniyor",
+		"server.update": "FootOps güncelleniyor", "server.recover": "Sunucu kurtarılıyor",
 	}
 	reasonNames = map[string]string{"manual": "elle", "before-import": "içe aktarmadan önce", "before-restore": "geri yüklemeden önce",
 		"before-migrate": "taşımadan önce", "before-purge": "kalıcı silmeden önce"}

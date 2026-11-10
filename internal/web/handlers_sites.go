@@ -290,6 +290,16 @@ func (s *Server) job(w http.ResponseWriter, r *http.Request) {
 			data["Back"], data["BackLabel"], data["Nav"] = "/sites/"+j.Target+"/backup", j.Target+" yedekleri", "sites"
 		}
 	}
+	// The server's jobs belong to its pages; their targets — the images, a release, a
+	// bucket — are no site names either.
+	switch j.Kind {
+	case "images.prune":
+		data["Back"], data["BackLabel"], data["Nav"] = "/server/check", "Sunucu kontrolü", "server"
+	case "server.update":
+		data["Back"], data["BackLabel"], data["Nav"] = "/server/update", "Güncelleme", "server"
+	case "server.recover":
+		data["Back"], data["BackLabel"], data["Nav"] = "/backup", "Yedekleme", "backup"
+	}
 	s.render(w, r, "job", data)
 }
 

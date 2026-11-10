@@ -130,3 +130,23 @@ func TestImagesPruneButton(t *testing.T) {
 		t.Error("prune button with nothing to remove")
 	}
 }
+
+// The server's jobs lead back to its pages: their targets are no site names.
+func TestServerJobLinks(t *testing.T) {
+	e := newEnv(t)
+	c := e.client(t, true)
+	e.login(t, c)
+	for _, tc := range []struct{ kind, target, title, back, nav string }{
+		{"images.prune", "imajlar", "<h1>Kullanılmayan imajlar siliniyor</h1>", `href="/server/check"`, `href="/" aria-current`},
+		{"server.update", "v0.2.0", "<h1>FootOps güncelleniyor: v0.2.0</h1>", `href="/server/update"`, `href="/" aria-current`},
+		{"server.recover", "footops-h1", "<h1>Sunucu kurtarılıyor: footops-h1</h1>", `href="/backup"`, `href="/backup" aria-current`},
+	} {
+		e.agent.job = &agent.Job{ID: "j1", Kind: tc.kind, Target: tc.target, Done: true, Steps: []string{"✓ bitti"}}
+		_, body := c.do("GET", "/jobs/j1", nil)
+		if !strings.Contains(body, tc.title) || !strings.Contains(body, `class="crumb" `+tc.back) ||
+			!strings.Contains(body, `class="btn primary" `+tc.back) || !strings.Contains(body, tc.nav) ||
+			strings.Contains(body, "/sites/"+tc.target) || strings.Contains(body, "Siteye git") {
+			t.Errorf("%s %s:\n%s", tc.kind, tc.target, body)
+		}
+	}
+}
