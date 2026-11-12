@@ -243,3 +243,15 @@ func TestReleaseMake(t *testing.T) {
 		}
 	}
 }
+
+// A release folder is not the Mac's: an unknown key ID in its signature line is quoted
+// in the error, so its escape sequences cannot rewrite the Terminal's "✗" line.
+func TestReleaseCheckQuotesUnknownKey(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, release.ManifestName), []byte("{\"format\":1}\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, release.SigName), []byte("footops-imza-1 \x1b[2K\x1b[1G✓ AAAA\n"), 0o644)
+	e, _, errb := releaseEnv(t)
+	if code := e.run(context.Background(), []string{"yayin", "dogrula", dir}); code == 0 || bytes.Contains(errb.Bytes(), []byte{0x1b}) {
+		t.Errorf("exit %d, stderr %q", code, errb.String())
+	}
+}

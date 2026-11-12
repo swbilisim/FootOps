@@ -347,7 +347,7 @@ public struct WatcherDomain: Decodable, Sendable, Equatable {
 
 /// One domain visited from the Mac, next to what the watcher last said of it.
 public struct Probe: Decodable, Sendable, Equatable, Identifiable {
-    public var id: String { domain }
+    public var id: String { server + "/" + domain }
     public var domain: String
     public var server: String
     public var serverName: String

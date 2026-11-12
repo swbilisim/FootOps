@@ -8,12 +8,14 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/swbilisim/FootOps/internal/monitor"
@@ -123,13 +125,16 @@ type ProbeRun struct {
 
 // targets lists what to visit: the domains of each server's status file, its sites
 // switched off on purpose left out; then, for a server whose file could not be read,
-// the watcher's list. A domain listed twice is visited once, for the first.
+// the watcher's list. A domain is visited once for each server that lists it, under that
+// server's own watcher view: one server's file cannot take another server's row. One
+// listed by several servers is named in the notes.
 func targets(st Status, only map[string]bool) ([]Probe, []Skipped, []string) {
 	list := []Probe{}
 	var skipped []Skipped
 	var notes []string
-	seen := map[string]bool{}
-	var invalid []string
+	seen := map[string]bool{}    // server and domain
+	first := map[string]string{} // domain: the first server listing it
+	var invalid, shared []string
 	servers := make([]ServerStatus, 0, len(st.Servers))
 	for _, s := range st.Servers {
 		if len(only) == 0 || only[s.Code] {
@@ -146,8 +151,13 @@ func targets(st Status, only map[string]bool) ([]Probe, []Skipped, []string) {
 			switch {
 			case !ok:
 				invalid = append(invalid, clip(domain, 80))
-			case !seen[name]:
-				seen[name] = true
+			case !seen[s.Code+" "+name]:
+				seen[s.Code+" "+name] = true
+				if by, dup := first[name]; !dup {
+					first[name] = s.Name
+				} else if by != s.Name {
+					shared = append(shared, name+" ("+by+", "+s.Name+")")
+				}
 				list = append(list, Probe{Domain: name, Server: s.Code, ServerName: s.Name, Site: site, Watcher: watcher})
 			}
 		}
@@ -183,6 +193,9 @@ func targets(st Status, only map[string]bool) ([]Probe, []Skipped, []string) {
 	if len(invalid) > 0 {
 		notes = append(notes, "alan adına benzemediği için yoklanmadı: "+strings.Join(invalid, ", "))
 	}
+	if len(shared) > 0 {
+		notes = append(notes, "birden çok sunucunun listelediği alan adı (her biri kendi adına yoklandı): "+strings.Join(shared, ", "))
+	}
 	return list, skipped, notes
 }
 
@@ -198,9 +211,31 @@ func domainName(s string) (string, bool) {
 	return name, len(name) >= 4 && len(name) <= 253 && reDomain.MatchString(name)
 }
 
+// publicAddr refuses what a server's word must not reach: the Mac's own network. It runs
+// on the address actually dialed, after DNS, so a name pointing inward is refused too.
+func publicAddr(_, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return err
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return err
+	}
+	ip = ip.Unmap()
+	if !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() ||
+		sharedSpace.Contains(ip) || (ip.Is4() && ip.As4()[0] == 0) {
+		return fmt.Errorf("%s bu Mac'in kendi ağında: yoklanmadı", ip)
+	}
+	return nil
+}
+
+var sharedSpace = netip.MustParsePrefix("100.64.0.0/10")
+
 func newProbeClient(timeout time.Duration) *http.Client {
-	dialer := &net.Dialer{Timeout: timeout}
-	tr := &http.Transport{Proxy: http.ProxyFromEnvironment, DialContext: dialer.DialContext, ForceAttemptHTTP2: true,
+	dialer := &net.Dialer{Timeout: timeout, Control: publicAddr}
+	// No proxy: the address checked is the one visited.
+	tr := &http.Transport{DialContext: dialer.DialContext, ForceAttemptHTTP2: true,
 		TLSHandshakeTimeout: timeout, MaxIdleConnsPerHost: 1}
 	// Redirects not followed: a redirect is an answer.
 	return &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}

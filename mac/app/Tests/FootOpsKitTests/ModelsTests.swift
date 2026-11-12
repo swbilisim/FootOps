@@ -147,6 +147,7 @@ final class ModelsTests: XCTestCase {
         XCTAssertEqual(Fmt.size(512 << 20), "512 MB")
         XCTAssertEqual(Fmt.percent(1_552_867_328, of: 4_005_429_248), 39)
         XCTAssertEqual(Fmt.percent(1, of: 0), 0)
+        XCTAssertEqual(Fmt.percent(UInt64.max, of: 1), 999) // a server's figures, not trapped
         XCTAssertEqual(Fmt.duration(ms: 665), "665 ms")
         XCTAssertEqual(Fmt.duration(ms: 2840), "2,8 sn")
         XCTAssertEqual(Fmt.span(20), "1 dk")

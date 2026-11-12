@@ -80,7 +80,7 @@ func Verify(manifest, sig []byte, keys map[string]ed25519.PublicKey) (Manifest, 
 	}
 	pub, ok := keys[f[1]]
 	if !ok {
-		return m, fmt.Errorf("%w (%s)", ErrUntrusted, clip(f[1], 32))
+		return m, fmt.Errorf("%w (%q)", ErrUntrusted, clip(f[1], 32))
 	}
 	raw, err := base64.StdEncoding.DecodeString(f[2])
 	if err != nil || len(raw) != ed25519.SignatureSize {

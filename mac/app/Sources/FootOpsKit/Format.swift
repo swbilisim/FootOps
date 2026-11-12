@@ -44,7 +44,8 @@ public enum Fmt {
     }
 
     public static func percent(_ used: UInt64, of total: UInt64) -> Int {
-        total == 0 ? 0 : Int((100 * Double(used) / Double(total)).rounded())
+        // Capped: a server's file may claim any figures, and Int(Double) traps past Int.max.
+        total == 0 ? 0 : Int(min(100 * Double(used) / Double(total), 999).rounded())
     }
 
     /// "665 ms" under a second, "2,8 sn" above.

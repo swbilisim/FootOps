@@ -263,7 +263,7 @@ func (e *env) checkArchive(ctx context.Context, asked string, onBytes func(done,
 		return nil, readErr(p, err)
 	}
 	defer f.Close()
-	k := &checked{info: ArchiveInfo{Path: p, Name: filepath.Base(p), Size: fi.Size()}}
+	k := &checked{info: ArchiveInfo{Path: p, Name: clean(filepath.Base(p)), Size: fi.Size()}}
 	in := ctxReader{ctx, &countingReader{r: bufio.NewReaderSize(f, 256<<10), total: fi.Size(), on: onBytes}}
 	switch kind {
 	case archive.Tar:

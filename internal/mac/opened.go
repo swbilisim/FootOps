@@ -170,8 +170,19 @@ func opening(dir string) bool {
 
 // folderEntry is the line of a folder being opened, partial.
 func (e *env) folderEntry(m *openMark, dir, server, site string, at time.Time, kept bool) openedEntry {
-	return openedEntry{ID: m.id, Kind: "folder", Path: dir, Server: server, Site: site, Time: at,
-		At: e.now().UTC().Truncate(time.Second), Partial: true, Kept: kept}
+	now := e.now().UTC().Truncate(time.Second)
+	return openedEntry{ID: m.id, Kind: "folder", Path: dir, Server: server, Site: site, Time: listTime(at, now),
+		At: now, Partial: true, Kept: kept}
+}
+
+// listTime is a backup's or an archive's own time as the list keeps it: in UTC, or the
+// opening time when it lies beyond the years the app reads (the server or the archive
+// chose it, and the app reads the list whole).
+func listTime(t, opened time.Time) time.Time {
+	if u, ok := saneTime(t); ok {
+		return u
+	}
+	return opened
 }
 
 // beginOpened puts a folder about to be filled on the list, partial.
@@ -215,7 +226,7 @@ func (e *env) noteDatabase(res OpenResult) error {
 		// Loaded anew: one line.
 		l.Items = dropWhere(l.Items, func(it openedEntry) bool { return it.Kind == "database" && it.Name == db.Name })
 		l.Items = append(l.Items, openedEntry{ID: newID(), Kind: "database", Name: db.Name, Server: res.Server, Site: res.Site,
-			Archive: res.Archive, Time: res.Parts[partDB].Time, At: now})
+			Archive: res.Archive, Time: listTime(res.Parts[partDB].Time, now), At: now})
 		return true
 	})
 }
@@ -380,8 +391,9 @@ func (e *env) openedView(ctx context.Context) (OpenedView, error) {
 			old := now.Sub(it.At) > openedOld
 			switch it.Kind {
 			case "folder":
-				f := OpenedFolder{Path: it.Path, Server: it.Server, ServerName: serverName(it.Server), Site: it.Site, Archive: it.Archive,
-					Time: it.Time, At: it.At, Old: old, Partial: it.Partial}
+				// Lines an older footops-mac wrote may hold an archive's name or time as it came.
+				f := OpenedFolder{Path: it.Path, Server: it.Server, ServerName: serverName(it.Server), Site: it.Site, Archive: clean(it.Archive),
+					Time: listTime(it.Time, it.At), At: it.At, Old: old, Partial: it.Partial}
 				if err := looked[it.ID]; err != nil {
 					f.Error = "bakılamadı: " + clip(err.Error(), 200)
 				} else {
@@ -392,7 +404,7 @@ func (e *env) openedView(ctx context.Context) (OpenedView, error) {
 			case "database":
 				listed[it.Name] = true
 				v.Databases = append(v.Databases, OpenedDatabase{Name: it.Name, Server: it.Server, ServerName: serverName(it.Server),
-					Site: it.Site, Archive: it.Archive, Time: it.Time, At: it.At, Bytes: dbs[it.Name], Registered: true, Old: old})
+					Site: it.Site, Archive: clean(it.Archive), Time: listTime(it.Time, it.At), At: it.At, Bytes: dbs[it.Name], Registered: true, Old: old})
 			}
 		}
 		return len(l.Items) != before

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -43,7 +44,9 @@ func texts(s ServerStatus) string {
 }
 
 // A status file is a server's word: its names reach the menu clean of control and
-// format characters (U+202E turns a name around) and no longer than a line.
+// format characters (U+202E turns a name around) and no longer than a line, and the
+// server's name for itself is not taken (it could pass for another server): with no
+// name in the settings, the code in capitals.
 func TestJudgeCleansNames(t *testing.T) {
 	now := testNow
 	f := goodFile(now)
@@ -52,7 +55,7 @@ func TestJudgeCleansNames(t *testing.T) {
 	f.Sites[0].Name = strings.Repeat("uzun", 30)
 	f.Sites[1].Domains = []string{"blog.example\u200f"}
 	s := judge(server{Code: "h1", Bucket: "footops-h1"}, asFetched(f, now.Add(-time.Minute)), asFetched(goodBeat(now), now), now)
-	if s.Name != "H1?kot" || s.File.FootOps != "abc1234?[31m" || len(s.Sites[0].Name) != 64+len("…") ||
+	if s.Name != "H1" || s.File.FootOps != "abc1234?[31m" || len(s.Sites[0].Name) != 64+len("…") ||
 		s.Sites[1].Domains[0].Name != "blog.example?" {
 		t.Errorf("%q %q %q %q", s.Name, s.File.FootOps, s.Sites[0].Name, s.Sites[1].Domains[0].Name)
 	}
@@ -333,5 +336,62 @@ func TestStatusStopped(t *testing.T) {
 	cancel()
 	if code := e.run(ctx, []string{"durum", "--json"}); code != 1 || strings.TrimSpace(out.String()) != `{"event":"error","message":"durduruldu"}` {
 		t.Errorf("stopped: %d %s", code, out)
+	}
+}
+
+// A server chooses its own zone and year. Ordinary ones come out in UTC; one beyond the
+// years the app reads costs that server its row, and the answer is still written for
+// every server (Go would not encode a zone hour of 24).
+func TestJudgeTimes(t *testing.T) {
+	now := testNow
+	with := func(set func(m map[string]any)) fetched {
+		var m map[string]any
+		_ = json.Unmarshal(asFetched(goodFile(now), time.Time{}).data, &m)
+		set(m)
+		data, _ := json.Marshal(m)
+		return fetched{data: data, at: now.Add(-time.Minute)}
+	}
+	beat := asFetched(goodBeat(now), now)
+	good := judge(server{Code: "h1", Bucket: "footops-h1"}, asFetched(goodFile(now), now.Add(-time.Minute)), beat, now)
+	s := judge(server{Code: "a", Bucket: "footops-a"}, with(func(m map[string]any) { m["time"] = "2026-11-09T09:58:00+24:00" }), beat, now)
+	if s.File == nil || s.File.Time.Location() != time.UTC || !s.File.Time.Equal(time.Date(2026, 11, 8, 9, 58, 0, 0, time.UTC)) {
+		t.Fatalf("zone +24:00: %+v %q", s.File, s.FileError)
+	}
+	if _, err := json.Marshal(Status{Servers: []ServerStatus{bounded(s), bounded(good)}}); err != nil {
+		t.Errorf("answer not written: %v", err)
+	}
+	for name, set := range map[string]func(m map[string]any){
+		"year 0":     func(m map[string]any) { m["time"] = "0000-01-01T00:00:00Z" },
+		"year 10000": func(m map[string]any) { m["time"] = "9999-12-31T23:59:59-23:59" },
+		"nested":     func(m map[string]any) { m["sys"].(map[string]any)["time"] = "0000-01-01T00:00:00Z" },
+	} {
+		s := judge(server{Code: "a", Bucket: "footops-a"}, with(set), beat, now)
+		if s.File != nil || s.FileError == "" {
+			t.Errorf("%s: file taken", name)
+		}
+		if _, err := json.Marshal(Status{Servers: []ServerStatus{bounded(s), bounded(good)}}); err != nil {
+			t.Errorf("%s: answer not written: %v", name, err)
+		}
+	}
+}
+
+// One server's part of the answer is bounded: the app keeps 8 MB of it and reads it
+// whole, so a long list from one server must not cost the others their rows.
+func TestJudgeBounded(t *testing.T) {
+	now := testNow
+	f := goodFile(now)
+	f.Sites = []monitor.StatusSite{{Name: "magaza", State: "running"}}
+	for i := range 3 * domainsMax {
+		f.Sites[0].Domains = append(f.Sites[0].Domains, fmt.Sprintf("site-%d.example", i))
+	}
+	s := bounded(judge(server{Code: "a", Bucket: "footops-a"}, asFetched(f, now.Add(-time.Minute)), asFetched(goodBeat(now), now), now))
+	data, _ := json.Marshal(s)
+	if len(data) > rowMax || len(s.Sites) != 1 || len(s.Sites[0].Domains) != domainsMax || !strings.Contains(texts(s), "ilk 1000 alan adı") {
+		t.Errorf("%d bytes, %d domains:\n%s", len(data), len(s.Sites[0].Domains), texts(s))
+	}
+	big := judge(server{Code: "a", Bucket: "footops-a"}, asFetched(goodFile(now), now.Add(-time.Minute)), asFetched(goodBeat(now), now), now)
+	big.Sites[0].Name = strings.Repeat("x", rowMax)
+	if b := bounded(big); b.Color != red || len(b.Sites) != 0 || !strings.Contains(texts(b), "gösterilemiyor") {
+		t.Errorf("oversized row kept: %s", texts(b))
 	}
 }

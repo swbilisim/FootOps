@@ -311,7 +311,13 @@ func (e *env) run(ctx context.Context, args []string) int {
 		}
 		e.event(ev)
 	} else {
-		fmt.Fprintf(e.errw, "✗ %v\n", err)
+		// An error may carry a release folder's or an archive's words: none of their
+		// escape sequences, turned-around names or line breaks reaches the Terminal.
+		lines := strings.Split(err.Error(), "\n")
+		for i, l := range lines {
+			lines[i] = clean(l)
+		}
+		fmt.Fprintf(e.errw, "✗ %s\n", strings.Join(lines, "\n"))
 	}
 	return 1
 }

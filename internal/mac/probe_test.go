@@ -168,12 +168,13 @@ func TestProbe(t *testing.T) {
 		}
 		lines = append(lines, m)
 	}
-	if len(lines) != 14 || string(lines[0]["event"]) != `"start"` || string(lines[0]["total"]) != "12" ||
-		string(lines[1]["event"]) != `"progress"` || string(lines[13]["event"]) != `"result"` {
+	// acik.example is listed by h1 and by a: visited for each (targets).
+	if len(lines) != 15 || string(lines[0]["event"]) != `"start"` || string(lines[0]["total"]) != "13" ||
+		string(lines[1]["event"]) != `"progress"` || string(lines[14]["event"]) != `"result"` {
 		t.Fatalf("events:\n%s", out)
 	}
 	var run ProbeRun
-	data, _ := json.Marshal(lines[13])
+	data, _ := json.Marshal(lines[14])
 	if err := json.Unmarshal(data, &run); err != nil {
 		t.Fatal(err)
 	}
@@ -208,8 +209,8 @@ func TestProbe(t *testing.T) {
 	if got["acik.example"].CertExpires.IsZero() || got["acik.example"].Server != "h1" || got["acik.example"].Site != "magaza" {
 		t.Errorf("acik: %+v", got["acik.example"])
 	}
-	if run.Total != 12 || run.Open != 6 || len(run.Skipped) != 1 || run.Skipped[0].Label != "parkta" || run.Skipped[0].Domains[0] != "eski.example" ||
-		len(run.Notes) != 3 || !strings.Contains(run.Notes[0], "A: durum dosyası okunamadı") ||
+	if run.Total != 13 || run.Open != 7 || len(run.Skipped) != 1 || run.Skipped[0].Label != "parkta" || run.Skipped[0].Domains[0] != "eski.example" ||
+		len(run.Notes) != 4 || !strings.Contains(run.Notes[3], "acik.example (H1, A)") || !strings.Contains(run.Notes[0], "A: durum dosyası okunamadı") ||
 		!strings.Contains(run.Notes[1], "B: durum dosyasında site listesi yok (footops.json okunamadı); alan adları nöbetçinin listesinden") ||
 		run.Notes[2] != "alan adına benzemediği için yoklanmadı: 10.0.0.1/admin?x=, localhost:8443" {
 		t.Errorf("run: %+v", run)
@@ -275,5 +276,38 @@ func TestProbeEmptyAndStopped(t *testing.T) {
 	if !strings.HasSuffix(text, `{"event":"error","message":"durduruldu"}`+"\n") || strings.Contains(text, "canceled") ||
 		strings.Contains(text, `"domain":"yavas.example"`) || strings.Contains(text, `"event":"result"`) {
 		t.Errorf("stopped:\n%s", text)
+	}
+}
+
+// One server's status file cannot take another server's domain: a domain is visited
+// for each server that lists it, under that server's own watcher view, and the overlap
+// is named.
+func TestTargetsPerServer(t *testing.T) {
+	row := func(code, name, site string) ServerStatus {
+		return ServerStatus{Code: code, Name: name, File: &monitor.StatusFile{},
+			Sites: []SiteStatus{{Name: site, State: "running", Domains: []DomainStatus{{Name: "magaza.example", Watcher: "ok"}}}}}
+	}
+	list, _, notes := targets(Status{Servers: []ServerStatus{row("a", "A", "taklit"), row("h1", "H1", "magaza")}}, nil)
+	if len(list) != 2 || list[0].Server != "a" || list[1].Server != "h1" || list[1].Site != "magaza" {
+		t.Fatalf("%+v", list)
+	}
+	if !strings.Contains(strings.Join(notes, "\n"), "magaza.example (A, H1)") {
+		t.Errorf("notes %q", notes)
+	}
+}
+
+// The address actually dialed is checked, after DNS: a name a server lists that points
+// into the Mac's own network is not visited.
+func TestProbePublicAddr(t *testing.T) {
+	for _, a := range []string{"127.0.0.1:443", "10.1.2.3:443", "172.16.0.1:443", "192.168.1.5:443", "169.254.1.1:443",
+		"100.64.0.1:443", "0.1.2.3:443", "[::1]:443", "[fd00::1]:443", "[fe80::1]:443", "[::ffff:127.0.0.1]:443"} {
+		if publicAddr("tcp", a, nil) == nil {
+			t.Errorf("%s visited", a)
+		}
+	}
+	for _, a := range []string{"1.1.1.1:443", "[2606:4700::1111]:443"} {
+		if err := publicAddr("tcp", a, nil); err != nil {
+			t.Errorf("%s refused: %v", a, err)
+		}
 	}
 }

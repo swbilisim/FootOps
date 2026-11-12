@@ -416,8 +416,9 @@ func TestBackupOpen(t *testing.T) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
-	if l, err := os.Readlink(filepath.Join(target, "files/alt/bag")); err != nil || l != "../a.txt" {
-		t.Errorf("link: %q %v", l, err)
+	// The server's tree comes out defanged: its link is not restored (defang).
+	if _, err := os.Lstat(filepath.Join(target, "files/alt/bag")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("link restored: %v", err)
 	}
 	for _, name := range []string{"db.archive", "env", "footops.json"} {
 		if fi, err := os.Stat(filepath.Join(target, name)); err != nil || fi.Mode().Perm() != 0o600 {

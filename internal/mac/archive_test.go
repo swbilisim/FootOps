@@ -803,3 +803,30 @@ func TestDefaultLoadNames(t *testing.T) {
 		}
 	}
 }
+
+// An archive's words reach the Terminal clean: a member name that turns text around or
+// carries a C1 control (CleanName stops C0 only) in the error line, and escape sequences
+// in the archive's own file name, are printed as question marks.
+func TestArchiveWordsPrintedClean(t *testing.T) {
+	e, out, errb, dir := archiveEnv(t)
+	var b bytes.Buffer
+	tw := tar.NewWriter(&b)
+	tw.WriteHeader(&tar.Header{Name: "rapor\u202etxt.exe\u009b2J", Typeflag: tar.TypeSymlink, Linkname: "hedef", Mode: 0o777, ModTime: archiveTime})
+	tw.Close()
+	p := filepath.Join(dir, "uye.tar")
+	os.WriteFile(p, b.Bytes(), 0o644)
+	if runArchive(e, out, errb, "dogrula", p) == 0 || bytes.Contains(errb.Bytes(), []byte("\u202e")) || bytes.Contains(errb.Bytes(), []byte("\u009b")) {
+		t.Errorf("member name raw: %+q", errb.String())
+	}
+	b.Reset()
+	tw = tar.NewWriter(&b)
+	tw.WriteHeader(&tar.Header{Name: "sayfa.html", Typeflag: tar.TypeReg, Mode: 0o644, Size: 3, ModTime: archiveTime})
+	tw.Write([]byte("<p>"))
+	tw.Close()
+	p = filepath.Join(dir, "site\x1b]0;baska\x07.tar")
+	os.WriteFile(p, b.Bytes(), 0o644)
+	runArchive(e, out, errb, "dogrula", p)
+	if bytes.ContainsAny(out.Bytes(), "\x1b\x07") || bytes.ContainsAny(errb.Bytes(), "\x1b\x07") {
+		t.Errorf("file name raw: %q %q", out.String(), errb.String())
+	}
+}

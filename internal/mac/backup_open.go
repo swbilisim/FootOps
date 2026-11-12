@@ -318,6 +318,18 @@ func (e *env) openBackup(ctx context.Context, req openReq, jsonOut bool) (err er
 		if err != nil {
 			return fmt.Errorf("dosyalar açılamadı: %w", err)
 		}
+		// The server wrote the tree: its links, special files, execute bits and extended
+		// attributes do not come along, and the files are quarantined.
+		removed, failed, err := defang(filepath.Join(target, "files"))
+		if err != nil {
+			return fmt.Errorf("açılan dosyalar güvenli hâle getirilemedi: %w", err)
+		}
+		if removed > 0 {
+			warns = append(warns, fmt.Sprintf("%d bağlantı ya da özel dosya açılmadı (yedekte vardı)", removed))
+		}
+		if failed > 0 {
+			warns = append(warns, fmt.Sprintf("%d dosyanın izni ya da karantinası ayarlanamadı: açmadan önce bak", failed))
+		}
 		// Counted on the disk: restic's own count takes the folders in.
 		files, size := folderSize(filepath.Join(target, "files"))
 		p := res.Parts[partFiles]

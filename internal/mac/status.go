@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -32,6 +33,14 @@ const (
 	memFull  = 90
 	// fileMax is the most read of either file (the agent's are ~1.5 KB).
 	fileMax = 1 << 20
+)
+
+// One server's part of durum's answer is bounded: FootOps.app keeps 8 MB of it all
+// (Core.outputMax) and decodes it whole, so one bucket must not cost the other servers
+// their rows.
+const (
+	domainsMax = 1000      // domains shown of one server, its sites together
+	rowMax     = 256 << 10 // one server's row as written
 )
 
 // Colours, from the best: green (all is well), gray (nothing known: R2 out of reach, a
@@ -203,7 +212,7 @@ func (e *env) collect(ctx context.Context) Status {
 	now := e.now()
 	out.Color = green
 	for i, s := range list {
-		ss := judge(s, files[i][0], files[i][1], now)
+		ss := bounded(judge(s, files[i][0], files[i][1], now))
 		out.Color = worse(out.Color, ss.Color)
 		out.Servers = append(out.Servers, ss)
 	}
@@ -236,10 +245,59 @@ func decode[T any](f fetched, ok func(*T) bool) (*T, error) {
 		return nil, f.err
 	}
 	var v T
-	if json.Unmarshal(f.data, &v) != nil || !ok(&v) {
+	if json.Unmarshal(f.data, &v) != nil || !ok(&v) || !saneTimes(reflect.ValueOf(&v)) {
 		return nil, errFormat
 	}
 	return &v, nil
+}
+
+// saneTime is t in UTC, and whether it is zero or within the years the app reads.
+func saneTime(t time.Time) (time.Time, bool) {
+	if t.IsZero() {
+		return t, true
+	}
+	u := t.UTC()
+	return u, u.Year() >= 1970 && u.Year() <= 9999
+}
+
+// saneTimes brings every time in v (a server's decoded file) to UTC and reports whether
+// each is a time the answer can carry: a server chooses its own zone and year, and one
+// Go cannot encode (a zone hour of 24) or the app cannot read must cost that server its
+// row, not every server the answer.
+func saneTimes(v reflect.Value) bool {
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Interface:
+		return v.IsNil() || saneTimes(v.Elem())
+	case reflect.Struct:
+		if v.Type() == reflect.TypeFor[time.Time]() {
+			u, ok := saneTime(v.Interface().(time.Time))
+			if v.CanSet() {
+				v.Set(reflect.ValueOf(u))
+			}
+			return ok
+		}
+		for i := range v.NumField() {
+			if f := v.Field(i); f.CanSet() && !saneTimes(f) {
+				return false
+			}
+		}
+	case reflect.Slice, reflect.Array:
+		for i := range v.Len() {
+			if !saneTimes(v.Index(i)) {
+				return false
+			}
+		}
+	case reflect.Map:
+		for _, k := range v.MapKeys() {
+			e := reflect.New(v.Type().Elem()).Elem()
+			e.Set(v.MapIndex(k))
+			if !saneTimes(e) {
+				return false
+			}
+			v.SetMapIndex(k, e)
+		}
+	}
+	return true
 }
 
 // judge puts a server's two files together into what the menu shows.
@@ -262,9 +320,8 @@ func judge(srv server, sf, wf fetched, now time.Time) ServerStatus {
 		shown := *file
 		shown.FootOps = clip(clean(shown.FootOps), 40)
 		s.File, s.FileAt = &shown, sf.at
-		if n := clip(clean(file.Server), 64); n != "" && srv.Name == "" {
-			s.Name = n
-		}
+		// The name stays the Mac's (its settings, else the code in capitals): a server
+		// naming itself could pass for another in the menu and the import targets.
 		at := sf.at
 		if at.IsZero() {
 			at = file.Time
@@ -319,6 +376,7 @@ func judge(srv server, sf, wf fetched, now time.Time) ServerStatus {
 
 	// The sites, with the watcher's view of their domains.
 	byState := map[string][]string{}
+	domainsShown := 0
 	if file != nil {
 		if file.SitesError != "" && !s.Silent {
 			add(yellow, "Site listesi okunamadı: %s", clip(clean(file.SitesError), 200))
@@ -356,6 +414,9 @@ func judge(srv server, sf, wf fetched, now time.Time) ServerStatus {
 				ss.Color = gray
 			}
 			for _, name := range site.Domains {
+				if domainsShown++; domainsShown > domainsMax {
+					break
+				}
 				ds := domainStatus(name, seen, s.Watcher != nil && !s.WatcherStale)
 				switch ds.Watcher {
 				case "down":
@@ -366,6 +427,9 @@ func judge(srv server, sf, wf fetched, now time.Time) ServerStatus {
 				ss.Domains = append(ss.Domains, ds)
 			}
 			s.Sites = append(s.Sites, ss)
+		}
+		if domainsShown > domainsMax {
+			add(yellow, "Durum dosyası %d'den çok alan adı listeliyor: ilk %d alan adı gösteriliyor", domainsMax, domainsMax)
 		}
 	}
 	if names := byState["missing"]; len(names) > 0 {
@@ -393,7 +457,7 @@ func judge(srv server, sf, wf fetched, now time.Time) ServerStatus {
 			if d.OK {
 				continue
 			}
-			text := clean(d.Name)
+			text := clip(clean(d.Name), 253)
 			if r := d.Reason; r != "" {
 				text += " (" + clip(clean(r), 120)
 				if !d.Since.IsZero() {
@@ -463,6 +527,17 @@ func domainStatus(name string, seen map[string]monitor.WatcherDomain, fresh bool
 		ds.Code, ds.Reason, ds.Since = clip(clean(d.Code), 16), clip(clean(d.Reason), 200), d.Since
 	}
 	return ds
+}
+
+// bounded keeps a server's row within rowMax; a larger one, or one that cannot be
+// written, says so in a small row of its own instead of what it holds.
+func bounded(s ServerStatus) ServerStatus {
+	if data, err := json.Marshal(s); err == nil && len(data) <= rowMax {
+		return s
+	}
+	return ServerStatus{Code: s.Code, Name: s.Name, Bucket: s.Bucket, Panel: s.Panel, SSH: s.SSH, Color: red,
+		Sites: []SiteStatus{}, FileError: "durum dosyası gösterilemiyor (çok büyük ya da bozuk)",
+		Problems: []Problem{{Color: red, Text: "Durum ya da nöbetçi dosyası gösterilemiyor (çok büyük ya da bozuk): sunucuya bakılmalı"}}}
 }
 
 // status is footops-mac durum.
