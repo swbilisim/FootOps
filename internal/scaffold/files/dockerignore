@@ -1,0 +1,28 @@
+# İmaja girmeyecek dosyalar. Sırlar (.env*) dışarıda kalır[[if .PublicEnv]]; yalnız .env.production
+# (herkese açık değerler, ör. NEXT_PUBLIC_*) derlemeye girer[[end]].
+.git
+.github
+Dockerfile
+.dockerignore
+node_modules
+.next
+.DS_Store
+npm-debug.log*
+*.pem
+*.key
+.env*
+[[- if .PublicEnv]]
+!.env.production
+[[- end]]
+[[- with .DataIgnore]]
+# Yüklemeler imaja değil sunucudaki kalıcı klasöre
+[[.]]
+[[- end]]
+[[- with .BuildDir]]
+[[.]]
+[[- end]]
+[[- if .Plain]]
+# Yayınlanacak klasörde olmaması gerekenler
+.gitignore
+README*
+[[- end]]

@@ -193,7 +193,7 @@ func (s Spec) Validate(env map[string]string) error {
 	if s.MaxBodyMB < 0 || s.MaxBodyMB > DefaultBodyMB {
 		add("en büyük istek 1-%d MB arasında olmalı", DefaultBodyMB)
 	}
-	if s.DataMount != "" && (!reMount.MatchString(s.DataMount) || strings.Contains(s.DataMount, "..") || s.DataMount == "/") {
+	if s.DataMount != "" && !ValidMount(s.DataMount) {
 		add("kalıcı klasör yolu mutlak bir yol olmalı (örn. /app/uploads)")
 	}
 	if s.DataURL != "" && !ValidDataURL(s.DataURL) {
@@ -275,6 +275,12 @@ func Extend(expires string, months int, now time.Time) string {
 // ValidImage accepts an image reference such as ghcr.io/user/site:main.
 func ValidImage(ref string) bool {
 	return reImage.MatchString(ref) && !strings.Contains(ref, "..")
+}
+
+// ValidMount accepts a persistent folder's path in the container: absolute, not "/",
+// without "..".
+func ValidMount(p string) bool {
+	return reMount.MatchString(p) && !strings.Contains(p, "..") && p != "/"
 }
 
 // ValidDataURL accepts a path like /uploads or /media/files (no "." or ".." parts).

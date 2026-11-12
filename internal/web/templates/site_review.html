@@ -1,5 +1,6 @@
 {{template "top" .}}
 {{$s := .Data.S}}
+<div class="with-help">
 <div class="form-page">
 <a class="crumb" href="/sites">{{icon "back"}}Siteler</a>
 <div class="page-head">
@@ -58,5 +59,17 @@
   <a class="btn" href="/sites">Vazgeç</a>
 </form>
 <p class="hint">Oluşturma bir adımda başarısız olursa yapılanların hepsi geri alınır.</p>
+</div>
+<aside class="help" aria-label="Yardım">
+  <h2>Oluştur'dan sonra</h2>
+  <dl>
+    <dt>Panel ne yapar?</dt>
+    <dd>Klasörü, Docker ağını{{if $s.Database}}, veritabanını{{end}} ve container'ı açar, uygulamanın porta cevap vermesini bekler, sonra Caddy'ye ekler. Adımları canlı izlersin; bir adım başarısız olursa yapılanların hepsi geri alınır.</dd>
+    <dt>"Uygulama cevap vermedi" uyarısı</dt>
+    <dd>Site yine kurulur ama açılmaz. Genelde port yanlıştır ya da uygulama yalnız <span class="mono">localhost</span>'u dinliyordur (Next.js'te <span class="mono">HOSTNAME=0.0.0.0</span>). Site sayfasındaki <strong>Loglar</strong> nedenini gösterir; düzeltip Düzenle ya da Yeniden dağıt.</dd>
+    <dt>Sonra</dt>
+    <dd>Site sayfasında <strong>Sıradaki adımlar</strong>: {{if or $s.Database $s.DataMount}}veriyi getir (İçe aktar), {{end}}Cloudflare'de DNS, kontrol. DNS açılana kadar site yalnız bu sunucuda hazır bekler.</dd>
+  </dl>
+</aside>
 </div>
 {{template "bottom" .}}

@@ -87,6 +87,28 @@ func TestParseImageInspect(t *testing.T) {
 	}
 }
 
+// The label an image names its persistent folder with (Projeni hazırla's Dockerfiles)
+// comes before its VOLUMEs, and only as a path a site could mount.
+func TestDataDirLabel(t *testing.T) {
+	inspect := func(label string) string {
+		b, _ := json.Marshal(label)
+		return `[{"Id":"sha256:1","Os":"linux","Architecture":"amd64","Config":{"Volumes":{"/data":{}},"Labels":{"` + DataDirLabel + `":` + string(b) + `,"other":"x"}}}]`
+	}
+	info, err := parseImageInspect(inspect("/app/public/uploads"), "x")
+	if err != nil || info.DataLabel != "/app/public/uploads" || info.SuggestMount() != "/app/public/uploads" {
+		t.Errorf("label: %+v %v", info, err)
+	}
+	for _, bad := range []string{"", "/", "app/x", "/app/../etc", "/app/x y", "/app/$X", "/app/x\nRUN", `/app/"x`, "/" + strings.Repeat("a", 300)} {
+		info, err := parseImageInspect(inspect(bad), "x")
+		if err != nil || info.DataLabel != "" || info.SuggestMount() != "/data" {
+			t.Errorf("label %q: %q, suggest %q, %v", bad, info.DataLabel, info.SuggestMount(), err)
+		}
+	}
+	if (ImageInfo{}).SuggestMount() != "" {
+		t.Error("suggestion without a label or volume")
+	}
+}
+
 func TestSuggestPort(t *testing.T) {
 	for _, c := range []struct {
 		ports []int

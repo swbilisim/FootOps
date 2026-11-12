@@ -643,3 +643,23 @@ table.db-diff td.mono { overflow-wrap: anywhere; }
   table.responsive.db-docs td.db-preview::before { content: none; }
   table.responsive.db-diff td.mono { text-align: right; }
 }
+
+/* R1: project files, help column */
+.segmented.wrap { flex-wrap: wrap; max-width: 100%; }
+.file-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 18px 0 6px; font-size: .88rem; font-weight: 500; overflow-wrap: anywhere; }
+.file-head .btn { flex: none; }
+pre.select { user-select: all; }
+pre.doc.short.select { max-height: 50vh; }
+.with-help { display: grid; gap: 24px; align-items: start; }
+.with-help > .form-page { min-width: 0; }
+@media (min-width: 1280px) { .with-help { grid-template-columns: minmax(0, 780px) minmax(240px, 300px); } }
+.help { padding: 16px 18px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); font-size: .84rem; color: var(--text-2); min-width: 0; overflow-wrap: anywhere; }
+.help h2 { font-size: .95rem; margin: 0 0 10px; color: var(--text); }
+.help dl { margin: 0; }
+.help dt { margin-top: 12px; font-weight: 600; color: var(--text); }
+.help dt:first-child { margin-top: 0; }
+.help dd { margin: 3px 0 0; }
+.help p { margin: 8px 0 0; }
+.next-steps { margin-bottom: 20px; }
+.next-steps .steps { margin: 0; }
+.next-steps .steps li .i { width: 15px; height: 15px; vertical-align: -2px; }

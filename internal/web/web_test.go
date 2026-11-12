@@ -68,7 +68,8 @@ type fakeAgent struct {
 	exported  int
 	removedUp []string
 	backups   []agent.FilesBackup
-	dataSite  bool // the site has a data directory
+	dataSite  bool      // the site has a data directory
+	siteBorn  time.Time // the site's creation (its "next steps" card)
 	dataURL   string
 	fm        fakeFM  // the file manager (files_test.go)
 	mig       fakeMig // moving sites (migrate_test.go)
@@ -130,7 +131,7 @@ func (f *fakeAgent) Sites(context.Context) ([]agent.SiteStatus, error) {
 	st := agent.SiteStatus{Spec: sites.Spec{Name: "enisparta", Group: "musteri", Domains: []string{"enisparta.com"},
 		Image: "ghcr.io/x/enisparta:main", Port: 3000, MemoryMB: 256, EnvKeys: []string{"NODE_ENV"}, Database: f.dbSite,
 		DataMount: map[bool]string{true: "/app/uploads", false: ""}[f.dataSite], DataURL: f.dataURL,
-		Expires: f.pk.expires, Parked: f.pk.parked}}
+		Expires: f.pk.expires, Parked: f.pk.parked, CreatedAt: f.siteBorn}}
 	for _, c := range f.pk.containers {
 		if c.Name == "enisparta" {
 			st.Container = &c

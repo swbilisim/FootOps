@@ -175,6 +175,11 @@ func (s *Server) site(w http.ResponseWriter, r *http.Request) {
 	if !lightRefresh(r) {
 		certs, _ := s.agent.Certs(r.Context())
 		data["DNS"] = dnsRecords(st.Spec.Domains, certs, firstOf(srv.IPv4))
+		if left := nextStepsFor - s.now().Sub(st.Spec.CreatedAt); left > 0 && !st.Spec.CreatedAt.IsZero() && st.Spec.Parked == nil {
+			_, missing := sites.CertFor(st.Spec.Domains, certs)
+			data["Next"] = nextSteps{Data: st.Spec.Database || st.Spec.DataMount != "", NoCert: missing,
+				Days: int(left.Hours()/24) + 1}
+		}
 		if bst, err := s.agent.BackupStatus(r.Context()); err == nil {
 			data["Backup"] = siteBackupSummary{Configured: bst.Configured, Ready: bst.Configured && !bst.Settings.Confirmed.IsZero(),
 				Row: backupRowOf(bst, st)}
@@ -182,6 +187,17 @@ func (s *Server) site(w http.ResponseWriter, r *http.Request) {
 	}
 	s.render(w, r, "site", data)
 }
+
+// nextSteps is the card a new site's page opens with (Faz R1): what is left before
+// visitors see it. It shows for nextStepsFor after the site was created; nothing is
+// stored, and the same sections stay further down the page.
+type nextSteps struct {
+	Data   bool     // a database or a persistent folder to fill
+	NoCert []string // domains no certificate covers yet
+	Days   int      // days the card still shows
+}
+
+const nextStepsFor = 7 * 24 * time.Hour
 
 // findSite looks the site up via the agent; it writes a 404 if there is none.
 func (s *Server) findSite(w http.ResponseWriter, r *http.Request) (agent.SiteStatus, bool) {

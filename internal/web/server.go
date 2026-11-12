@@ -228,6 +228,8 @@ func (s *Server) Handler(via string) http.Handler {
 	mux.Handle("POST /sites/new", s.requireSession(s.siteNewImage))
 	mux.Handle("GET /sites/new/form", s.requireSession(s.siteNewForm))
 	mux.Handle("POST /sites/new/form", s.requireSession(s.siteNewReview))
+	mux.Handle("GET /sites/new/project", s.requireSession(s.projectPage))
+	mux.Handle("GET /sites/new/project/zip", s.requireSession(s.projectZip))
 	mux.Handle("GET /sites/new/review/{id}", s.requireSession(s.siteNewReviewPage))
 	mux.Handle("POST /sites/new/review/{id}", s.requireSession(s.siteNewCreate))
 	mux.Handle("GET /sites/{name}/move", s.requireSession(s.siteMoveForm))

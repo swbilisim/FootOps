@@ -1,5 +1,6 @@
 {{template "top" .}}
 {{$f := .Data.F}}
+<div class="with-help">
 <div class="form-page">
 <a class="crumb" href="/sites/new?tpl={{$f.Template}}&amp;image={{$f.Image}}">{{icon "back"}}İmaj</a>
 <div class="page-head">
@@ -89,5 +90,31 @@
     <a class="btn" href="/sites">Vazgeç</a>
   </div>
 </form>
+</div>
+<aside class="help" aria-label="Yardım">
+  <h2>Alanlar</h2>
+  <dl>
+    <dt>Proje adı</dt>
+    <dd>GitHub reposu ve imajla aynı ad iyi olur. Container, veritabanı ve veritabanı kullanıcısı da bu adı alır; sonra değişmez.</dd>
+    <dt>Grup</dt>
+    <dd>Sunucudaki klasör düzeni: <span class="mono">/srv/&lt;grup&gt;/&lt;proje&gt;</span>. Ör. müşterinin adı ya da <span class="mono">kisisel</span>. Sonra site sayfasından değiştirilebilir.</dd>
+    <dt>Alan adları</dt>
+    <dd>Genelde iki satır: <span class="mono">ornek.com</span> ve <span class="mono">www.ornek.com</span>. Her biri için Cloudflare Origin sertifikası <a href="/certs">Sertifikalar</a>'da olmalı. DNS'i site oluşunca açarsın; o zamana kadar ziyaretçiler görmez.</dd>
+    <dt>Uygulama portu</dt>
+    <dd>Uygulamanın container içinde dinlediği port: Next.js ve Node genelde 3000, statik site (nginx) 8080. İmaj kontrolü imajın bildirdiğini yazar.</dd>
+    <dt>Bellek sınırı</dt>
+    <dd>Bir Next.js sitesi çoğunlukla 150-400 MB kullanır; 512 iyi bir başlangıç. Aşarsa container yeniden başlar; site sayfasındaki grafiğe bakıp Düzenle'den artırırsın.</dd>
+    <dt>En büyük istek</dt>
+    <dd>Bir istekle gönderilebilecek en büyük veri. Dosya yüklemeyen sitede 2-5 MB; görsel ya da belge yükleniyorsa en büyük dosyaya göre (en çok 100).</dd>
+    <dt>Kalıcı klasör</dt>
+    <dd>Container her dağıtımda yeniden oluşur; uygulamanın yazdığı dosyalar yalnız bu klasörde kalır. Yükleme yapan sitede uygulamanın yazdığı yol (ör. <span class="mono">/app/uploads</span>); yoksa boş. Next.js çalışırken <span class="mono">public/</span>'e yazılanı yeniden başlayana kadar sunmaz: dosyaları bir route sunmalı. <a href="/sites/new/project">Projeni hazırla</a>'nın Dockerfile'ı bu yolu imaja yazar, kontrol buraya doldurur.</dd>
+    <dt>Veritabanı</dt>
+    <dd>İşaretlenirse sunucudaki MongoDB'de bu siteye özel veritabanı ve kullanıcı açılır; bağlantı adresi uygulamaya, yazdığın değişkenle verilir. Ad koddakiyle aynı olmalı (ör. kod <span class="mono">process.env.MONGODB_URI</span> okuyorsa <span class="mono">MONGODB_URI</span>). Veriyi site oluşunca <strong>İçe aktar</strong> ile getirirsin.</dd>
+    <dt>Ortam değişkenleri</dt>
+    <dd>Sırlar ve sunucu ayarları (<span class="mono">JWT_SECRET</span>, API anahtarları, SMTP). <strong>.env dosyasından ekle</strong> dosyayı tarayıcıda okur. Oradaki veritabanı satırı (<span class="mono">…localhost</span>) kullanılmaz; panel sunucudakini koyar.</dd>
+    <dt><span class="mono">NEXT_PUBLIC_*</span></dt>
+    <dd>Derleme sırasında koda gömülür; burada değiştirilemez. Projedeki <span class="mono">.env.production</span> dosyasına yazılır, değişince yeniden derlenir.</dd>
+  </dl>
+</aside>
 </div>
 {{template "bottom" .}}

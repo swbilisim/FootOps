@@ -1,4 +1,5 @@
 {{template "top" .}}
+<div class="with-help">
 <div class="form-page">
 <a class="crumb" href="/sites">{{icon "back"}}Siteler</a>
 <div class="page-head">
@@ -7,6 +8,7 @@
     <p class="sub">1 / 3 · İmaj. Önce uygulamanın Docker imajını kontrol edelim: indirilebiliyor mu, hangi portu dinliyor, nereye dosya yazıyor.</p>
   </div>
 </div>
+<div class="notice info">{{icon "info"}}<div><strong>İmajın yok mu?</strong> Projen henüz Docker imajı olarak derlenmiyorsa önce <a href="/sites/new/project?kind={{.Data.Tpl}}">Projeni hazırla</a>: projene konacak üç dosya ve GitHub'a gönderme adımları.</div></div>
 {{template "problems" .Data.Problems}}
 <form method="post" action="/sites/new" class="stack">
   <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
@@ -37,5 +39,19 @@
   </div>
   <p class="hint">Kontrol imajı bu sunucuya indirir (siteyi oluştururken zaten indirilecekti) ve içine bakar; birkaç saniye ile birkaç dakika sürer.</p>
 </form>
+</div>
+<aside class="help" aria-label="Yardım">
+  <h2>Bu adımda</h2>
+  <dl>
+    <dt>İmaj nedir?</dt>
+    <dd>Uygulamanın derlenmiş, çalışmaya hazır hâli. GitHub Actions her gönderimde derleyip GHCR'ye koyar; sunucu oradan indirir. Sunucuda derleme yapılmaz.</dd>
+    <dt>Adı nasıl yazılır?</dt>
+    <dd><span class="mono">ghcr.io/&lt;hesap&gt;/&lt;proje&gt;:main</span>, hep küçük harf. <span class="mono">:main</span> her gönderimde güncellenir; <span class="mono">:sha-abc1234</span> belli bir sürümdür (geri dönmek için).</dd>
+    <dt>Özel repo</dt>
+    <dd>Özel repodan çıkan imaj da özeldir: sunucunun <a href="/registries">İmaj girişleri</a>'nde GHCR girişi olmalı (yalnız <span class="mono">read:packages</span> yetkili bir token). Herkese açık imaj için gerekmez.</dd>
+    <dt>Kontrol neye bakar?</dt>
+    <dd>İmaj iniyor mu, bu sunucunun mimarisi için mi (<span class="mono">linux/amd64</span>), hangi portu bildiriyor, hangi kullanıcıyla çalışıyor, kalıcı klasör öneriyor mu. Sonraki form buna göre dolar.</dd>
+  </dl>
+</aside>
 </div>
 {{template "bottom" .}}

@@ -288,7 +288,7 @@ type alertSummary struct {
 var navOf = map[string]string{
 	"dashboard": "server", "container": "server", "logs": "server", "restart": "server", "check": "server", "update": "server",
 	"sites": "sites", "site": "sites", "site_new": "sites", "site_edit": "sites", "site_confirm": "sites", "site_unpark": "sites", "job": "sites",
-	"site_form": "sites", "site_review": "sites", "site_move": "sites", "site_dns": "sites", "registries": "sites", "registry_remove": "sites",
+	"site_form": "sites", "site_review": "sites", "project": "sites", "site_move": "sites", "site_dns": "sites", "registries": "sites", "registry_remove": "sites",
 	"import": "sites", "import_preview": "sites", "restore_confirm": "sites",
 	"files": "sites", "files_rename": "sites", "files_move": "sites", "files_trash": "sites", "files_unpack": "sites",
 	"trash": "sites", "trash_empty": "sites", "migrate": "sites", "sources": "sources", "source_confirm": "sources",
@@ -443,6 +443,7 @@ var funcs = template.FuncMap{
 		}
 		return fmt.Sprintf("%d sa %d dk", h, m)
 	},
+	"imageAuthErr": agent.IsImageAccessMessage,
 	"since": func(t time.Time) string {
 		if t.IsZero() {
 			return "-"

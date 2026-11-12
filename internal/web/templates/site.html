@@ -22,6 +22,18 @@
   </div>
 </div>
 
+{{with .Data.Next}}
+<div class="section-head" id="sonraki"><h2>Sıradaki adımlar</h2></div>
+<div class="card next-steps">
+  <ol class="steps">
+    {{if .Data}}<li><strong>Veriyi getir:</strong> bilgisayarındaki veritabanından bir arşiv: Mac'te FootOps.app → Arşivler → <strong>Arşiv oluştur</strong>, ya da <span class="mono">mongodump --archive=yedek.gz --gzip --db &lt;yerel-ad&gt;</span>. Sonra <a href="/sites/{{$s.Name}}/import">İçe aktar…</a>: önce önizleme, onaydan sonra yüklenir.</li>{{end}}
+    <li><strong>Sertifika:</strong> {{with .NoCert}}<span class="badge warn">eksik</span> {{range $i, $d := .}}{{if $i}}, {{end}}<span class="mono">{{$d}}</span>{{end}} için Origin sertifikası yok: Cloudflare → alan adı → SSL/TLS → Origin Server → Create Certificate → <a href="/certs">Sertifikalar</a>'a yapıştır.{{else}}<span class="badge ok">tamam</span> alan adlarının hepsi için Origin sertifikası yüklü.{{end}}</li>
+    <li><strong>DNS:</strong> Cloudflare'de aşağıdaki <a href="#dns">kayıtları</a> ekle (proxy açık) ve SSL/TLS'i Full (strict) yap.</li>
+    <li><strong>Kontrol:</strong> <a href="/sites/{{$s.Name}}/dns">DNS'i kontrol et</a>; her alan adı ✓ olunca siteyi tarayıcıda aç ve giriş, form gibi temel işleri bir kez dene.</li>
+  </ol>
+  <p class="hint">Bu kart site oluşturulduktan sonraki 7 gün görünür ({{.Days}} gün kaldı); aynı bölümler sayfanın aşağısında da var.</p>
+</div>
+{{end}}
 {{with $s.Parked}}<div class="notice warn">{{icon "pause"}}<div><strong>Bu site parkta</strong> ({{datefmt .At}} tarihinden beri{{with .By}}, {{.}}{{end}}): container durdu, alan adları ziyaretçilere bakım sayfası gösteriyor (HTTP 503). Veri ve yedekler yerinde. Geri açmak için <a href="/sites/{{$s.Name}}/unpark">Yayına al</a>; düzenleme, yeniden dağıtma ve grup değiştirme o zamana kadar kapalı.</div></div>{{end}}
 {{if $s.Parked}}{{with .Data.S.Container}}{{if eq .State "running"}}<div class="notice bad">{{icon "alert"}}<div><strong>Park yarım kalmış:</strong> site parkta ama container'ı hâlâ çalışıyor (durdurulamadı ya da agent o sırada yeniden başladı). Agent açılınca kendisi durdurur; şimdi durdurmak için <a href="/sites/{{$s.Name}}/park">Parkı tamamla</a>.</div></div>{{end}}{{end}}{{end}}
 {{with .Data.S.Container}}{{template "facts" .}}{{else}}{{if not $s.Parked}}<div class="notice bad">{{icon "alert"}}<div>Bu sitenin container'ı yok. Yeniden dağıtmak container'ı tekrar oluşturur.</div></div>{{end}}{{end}}

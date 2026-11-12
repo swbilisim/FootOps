@@ -1,0 +1,138 @@
+{{template "top" .}}
+{{$f := .Data.F}}
+<div class="form-page">
+<a class="crumb" href="/sites/new">{{icon "back"}}Yeni site</a>
+<div class="page-head">
+  <div>
+    <h1>Projeni hazırla</h1>
+    <p class="sub">Panel siteni bir Docker imajından çalıştırır. Bu sayfa projene konacak üç dosyayı üretir: <span class="mono">Dockerfile</span>, <span class="mono">.dockerignore</span> ve GitHub Actions workflow'u. Kodu GitHub'a her gönderdiğinde imaj kendiliğinden derlenir; sunucu oradan çeker.</p>
+  </div>
+</div>
+
+<ol class="steps">
+  <li><strong>Dosyaları üret</strong>, projenin köküne koy (aşağıda).</li>
+  <li><strong>GitHub'a gönder:</strong> Actions imajı 3-5 dakikada derler.</li>
+  <li><strong>Yeni site:</strong> imaj adıyla siteyi kur; sonra veri ve DNS.</li>
+</ol>
+
+<div class="segmented wrap" role="group" aria-label="Proje türü">{{range .Data.Kinds}}<a href="{{.URL}}"{{if .Selected}} aria-current="true"{{end}}>{{.Label}}</a>{{end}}</div>
+
+{{template "problems" .Data.Problems}}
+<form method="get" action="/sites/new/project#dosyalar" class="stack mt">
+  <input type="hidden" name="kind" value="{{$f.Kind}}">
+  <input type="hidden" name="go" value="1">
+  <fieldset>
+    <legend>{{.Data.KindLabel}} projesi</legend>
+    <div class="row">
+      <label class="field"><span>GitHub hesabı</span>
+        <input name="owner" value="{{$f.Owner}}" required pattern="[A-Za-z0-9][A-Za-z0-9\-]{0,38}" placeholder="ornek-kullanici" autocapitalize="off" spellcheck="false">
+        <span class="hint">Repo bu hesapta açılır (kişisel hesabın ya da bir kuruluş). İmaj: ghcr.io/&lt;hesap&gt;/&lt;proje&gt;</span>
+      </label>
+      <label class="field"><span>Proje adı</span>
+        <input name="name" value="{{$f.Name}}" required pattern="[a-z][a-z0-9\-]{1,30}[a-z0-9]" placeholder="kahve-dukkani" autocapitalize="off" spellcheck="false">
+        <span class="hint">küçük harf, rakam, tire. GitHub reposu, imaj ve paneldeki site aynı adı alır.</span>
+      </label>
+    </div>
+    <div class="row">
+      <label class="field"><span>Paket yöneticisi</span>
+        <select name="pm">
+          <option value="npm"{{if eq $f.PM "npm"}} selected{{end}}>npm (package-lock.json)</option>
+          <option value="pnpm"{{if eq $f.PM "pnpm"}} selected{{end}}>pnpm (pnpm-lock.yaml)</option>
+        </select>
+        <span class="hint">{{if eq $f.Kind "static"}}yalnız derleme varsa kullanılır. {{end}}Projedeki lock dosyasına göre seç; repoda olmalı.</span>
+      </label>
+      {{if ne $f.Kind "static"}}
+      <label class="field"><span>Port</span>
+        <input name="port" value="{{$f.Port}}" inputmode="numeric" required>
+        <span class="hint">uygulamanın container'da dinlediği port; genelde 3000</span>
+      </label>
+      {{end}}
+    </div>
+    {{if eq $f.Kind "node"}}
+    <label class="field"><span>Başlatma dosyası</span>
+      <input name="start" value="{{$f.Start}}" placeholder="server.js" class="mono" autocapitalize="off" spellcheck="false">
+      <span class="hint">node'un çalıştıracağı dosya, proje köküne göre (ör. server.js, src/index.js). Boşsa server.js.</span>
+    </label>
+    {{end}}
+    {{if ne $f.Kind "static"}}
+    <label class="field"><span>Yükleme klasörü (isteğe bağlı)</span>
+      <input name="data" value="{{$f.Data}}" placeholder="/app/uploads" class="mono" autocapitalize="off" spellcheck="false">
+      <span class="hint">Site dosya yüklüyorsa (görsel, belge) uygulamanın yazdığı klasör; container'da proje /app'tedir. Sunucuda kalıcı klasör buraya bağlanır, yeniden dağıtımda dosyalar kaybolmaz. Dosya yüklemiyorsa boş bırak: uygulama hiçbir yere yazamaz.</span>
+    </label>
+    {{else}}
+    <label class="field"><span>Derleme çıktısı (isteğe bağlı)</span>
+      <input name="build" value="{{$f.Build}}" placeholder="dist" class="mono" autocapitalize="off" spellcheck="false">
+      <span class="hint">Site derleniyorsa (<span class="mono">npm run build</span>) çıktının klasörü: Vite ve Astro <span class="mono">dist</span>, Next.js statik dışa aktarma <span class="mono">out</span>, Create React App <span class="mono">build</span>. Boşsa proje klasörü olduğu gibi yayınlanır (içinde <span class="mono">index.html</span> olmalı).</span>
+    </label>
+    {{end}}
+  </fieldset>
+  <div class="form-actions">
+    <button type="submit" class="primary">{{icon "file"}}Dosyaları üret</button>
+    <a class="btn" href="/sites/new">Vazgeç</a>
+  </div>
+</form>
+
+{{with .Data.Files}}
+{{$in := $.Data.In}}
+<div class="section-head" id="dosyalar"><h2>1. Dosyaları projene koy</h2><a class="btn sm primary" href="{{$.Data.ZipURL}}" download>{{icon "download"}}Zip indir</a></div>
+<p class="muted small">Zip'i projenin kök klasörüne aç (<span class="mono">package.json</span>'ın yanına) ya da her dosyayı aynı adla oluşturup içine yapıştır. Aynı adda bir dosyan varsa önce ona bak: bunlar onun yerine geçer.</p>
+{{range $i, $file := .}}
+<div class="file-head"><span class="mono">{{.Path}}</span><button type="button" class="btn sm" data-copy="dosya-{{$i}}" hidden>{{icon "file"}}<span data-copy-label>Kopyala</span></button></div>
+<pre class="doc short select" id="dosya-{{$i}}">{{.Body}}</pre>
+{{end}}
+
+<div class="section-head"><h2>2. Projeyi kontrol et</h2></div>
+<div class="card">
+<ul class="steps">
+  {{if eq $in.Kind "nextjs"}}
+  <li><span class="mono">next.config</span> dosyasında <span class="mono">output: 'standalone'</span> olmalı (başka ayarlar kalır).</li>
+  <li>Proje kökünde <span class="mono">public/</span> klasörü olmalı; yoksa boş bir tane aç: <span class="mono">mkdir public &amp;&amp; touch public/.gitkeep</span></li>
+  <li>Derleme sırasında veritabanı yok: derlenirken veritabanını okuyan sayfaya <span class="mono">export const dynamic = 'force-dynamic'</span> ekle.</li>
+  {{else if eq $in.Kind "node"}}
+  <li>Uygulama <span class="mono">process.env.PORT</span>'u dinlemeli ve tüm adreslere bağlanmalı: <span class="mono">app.listen(process.env.PORT)</span> yeter; <span class="mono">'localhost'</span> ya da <span class="mono">'127.0.0.1'</span> verme.</li>
+  <li>Çalışırken gereken paketler <span class="mono">dependencies</span>'te olmalı: <span class="mono">devDependencies</span> imaja kurulmaz. TypeScript projesinde derlenmiş <span class="mono">.js</span> dosyasını başlat (Dockerfile'a derleme adımı gerekir).</li>
+  <li>Sağlık kontrolü <span class="mono">/</span> adresine bakar: uygulamanda <span class="mono">/</span> yoksa (yalnız API) Dockerfile'daki <span class="mono">HEALTHCHECK</span> satırında var olan bir yolu yaz.</li>
+  {{else}}
+  {{if $in.BuildDir}}<li><span class="mono">npm run build</span> çıktıyı <span class="mono">{{$in.BuildDir}}/</span> klasörüne yazmalı.</li>
+  {{else}}<li>Proje kökünde <span class="mono">index.html</span> olmalı; klasördeki her şey herkese açık yayınlanır (<span class="mono">.dockerignore</span>'dakiler hariç).</li>{{end}}
+  <li>Tek sayfalı uygulamada (React Router gibi) ana sayfa dışındaki adresler doğrudan açılınca 404 verir; böyle bir site için Node.js türünü seç ya da nginx ayarı ekle.</li>
+  {{end}}
+  {{if ne $in.Kind "static"}}
+  <li>Veritabanı adresi koddan değil ortam değişkeninden gelmeli (ör. <span class="mono">process.env.MONGODB_URI</span>); kodda <span class="mono">mongodb://localhost…</span> yazmasın. Değişkenin adını panelde de seçeceksin.</li>
+  <li>Sırlar (<span class="mono">JWT_SECRET</span>, API anahtarları, SMTP) <span class="mono">.env.local</span>'de kalır, repoya ve imaja girmez; site oluşturulurken panele <strong>.env dosyasından ekle</strong> ile verilir.</li>
+  {{end}}
+  {{if $.Data.PublicEnv}}<li>Derlemede koda gömülen değerler (<span class="mono">NEXT_PUBLIC_*</span>, <span class="mono">VITE_*</span>) <span class="mono">.env.production</span> dosyasına yazılır ve repoya girer. Yalnız herkese açık değerler: tarayıcıda zaten görünürler. Panelden değiştirilemezler.</li>{{end}}
+  {{if $in.DataDir}}<li>Uygulama yüklenen dosyaları <span class="mono">{{$in.DataDir}}</span> klasörüne yazmalı. İmaj bu yolu bildirir; Yeni site formunda kalıcı klasör kendiliğinden dolar.</li>
+  {{if eq $in.Kind "nextjs"}}<li><strong>Yüklenen dosyaları bir route sunmalı:</strong> Next.js, çalışırken <span class="mono">public/</span> altına yazılan dosyayı sunucu yeniden başlayana kadar göstermez (404). Dosyaları ör. <span class="mono">app/uploads/[...yol]/route.ts</span> diskten okuyup döndürsün: yol klasörün dışına çıkamasın (<span class="mono">..</span>), yalnız izin verilen uzantılar (jpg, png, webp, pdf) sunulsun.</li>{{end}}{{end}}
+  {{if or (ne $in.Kind "static") $in.BuildDir}}<li>Lock dosyası (<span class="mono">{{if eq $in.PM "pnpm"}}pnpm-lock.yaml{{else}}package-lock.json{{end}}</span>) repoda ve <span class="mono">package.json</span> ile uyumlu olmalı. Yerelde <span class="mono">{{if eq $in.PM "pnpm"}}pnpm{{else}}npm{{end}} run build</span> geçmeli: hata veriyorsa Actions'ta da verir.</li>{{end}}
+  <li><span class="mono">.gitignore</span>'da <span class="mono">node_modules</span>, <span class="mono">.env*</span>{{if eq $in.Kind "nextjs"}}, <span class="mono">.next</span>{{end}} olmalı{{if $.Data.PublicEnv}}; <span class="mono">.env.production</span> repoya girecekse altına <span class="mono">!.env.production</span> ekle{{end}}.</li>
+</ul>
+</div>
+
+<div class="section-head"><h2>3. GitHub'a gönder</h2></div>
+<p class="muted small">Projenin klasöründe, Terminal'de. <a href="https://cli.github.com" rel="noopener noreferrer" target="_blank">GitHub CLI</a> (<span class="mono">gh</span>) bir kez kurulup <span class="mono">gh auth login</span> ile giriş yapılmış olmalı.</p>
+<div class="file-head"><span>Repo yoksa</span><button type="button" class="btn sm" data-copy="komut-yeni" hidden>{{icon "file"}}<span data-copy-label>Kopyala</span></button></div>
+<pre class="cmd" id="komut-yeni">git init -b main
+git add .
+git status
+git commit -m "İlk sürüm"
+gh repo create {{$in.Owner}}/{{$in.Name}} --private --source . --push
+gh run watch</pre>
+<p class="hint"><span class="mono">git status</span>'ta <span class="mono">.env.local</span>, <span class="mono">node_modules</span>{{if eq $in.Kind "nextjs"}}, <span class="mono">.next</span>{{end}} listede olmamalı. Son bir bakış: <span class="mono">git ls-files | grep -i env</span>{{if $.Data.PublicEnv}} yalnız <span class="mono">.env.production</span> (varsa) göstermeli{{else}} boş olmalı{{end}}.</p>
+<div class="file-head"><span>Repo zaten varsa</span><button type="button" class="btn sm" data-copy="komut-var" hidden>{{icon "file"}}<span data-copy-label>Kopyala</span></button></div>
+<pre class="cmd" id="komut-var">git add Dockerfile .dockerignore .github/workflows/docker.yml
+git commit -m "FootOps: Docker imajı"
+git push
+gh run watch</pre>
+<p class="hint">Repo GitHub'da <strong>{{$in.Owner}}</strong> hesabında ve varsayılan dalı <span class="mono">main</span> olmalı. Actions kırmızı biterse: <span class="mono">gh run view --log-failed</span>.</p>
+
+<div class="section-head"><h2>4. Siteyi kur</h2></div>
+<div class="notice ok">{{icon "check"}}<div>Actions yeşil bitince imajın hazır: <span class="mono">{{$.Data.Image}}</span><br>Her <span class="mono">main</span> gönderiminde <span class="mono">:main</span> güncellenir (sunucu bunu çeker) ve <span class="mono">:sha-&lt;kısa commit&gt;</span> etiketi eklenir (geri dönmek için).</div></div>
+<p class="muted small">Repo özelse imaj da özeldir: sunucunun GHCR girişi olmalı (<a href="/registries">İmaj girişleri</a>; token'ın sahibi bu pakete erişebilen bir hesap olmalı).</p>
+<div class="form-actions">
+  <a class="btn primary" href="{{$.Data.NewSiteURL}}">{{icon "plus"}}Bu imajla yeni site</a>
+  <a class="btn" href="/registries">{{icon "key"}}İmaj girişleri</a>
+</div>
+{{end}}
+</div>
+{{template "bottom" .}}

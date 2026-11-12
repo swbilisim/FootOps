@@ -13,6 +13,7 @@
 <script src="/static/live.js" defer></script>
 {{if .Data.Upload}}<script src="/static/upload.js" defer></script>{{end}}
 {{if .Data.EnvFile}}<script src="/static/envfile.js" defer></script>{{end}}
+{{if .Data.Copy}}<script src="/static/copy.js" defer></script>{{end}}
 </head>
 <body class="{{if .Session.ID}}app{{else}}bare{{end}}">
 {{sprite}}

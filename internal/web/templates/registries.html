@@ -47,8 +47,13 @@
   </div>
   <label class="field"><span>Token</span>
     <input type="password" name="token" required autocomplete="new-password" class="mono" spellcheck="false">
-    <span class="hint">GitHub → Settings → Developer settings → Personal access tokens (classic) → yalnız <strong>read:packages</strong>. Bitiş tarihini GitHub'dan okuruz, yaklaşınca uyarırız. Aynı kayıt defterine yeniden giriş eskisinin yerine geçer.</span>
+    <span class="hint">Yalnız <strong>read:packages</strong> yetkili bir GitHub token'ı (classic). Bitiş tarihini GitHub'dan okuruz, bitmeye 14 gün kala uyarırız. Aynı kayıt defterine yeniden giriş eskisinin yerine geçer.</span>
   </label>
+  <ol class="steps">
+    <li><a href="{{.Data.TokenURL}}" rel="noopener noreferrer" target="_blank">{{icon "external"}}GitHub'da token oluştur</a>: sayfa <strong>read:packages</strong> seçili ve adı yazılı açılır. Yalnız <strong>Expiration</strong>'ı seç (ör. 1 yıl), en altta <strong>Generate token</strong>.</li>
+    <li>Token'ı kopyala (GitHub bir daha göstermez), buraya yapıştır; kullanıcı adı token'ı oluşturduğun GitHub hesabı.</li>
+    <li>Token'ın sahibi imajlara erişebilmeli: imaj kendi hesabındaysa sen, bir kuruluşun reposundaysa o kuruluşun üyesi. Herkese açık imajlar için giriş gerekmez.</li>
+  </ol>
   <div class="form-actions">
     <button type="submit" class="primary">{{icon "key"}}Giriş yap ve kaydet</button>
   </div>

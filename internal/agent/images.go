@@ -32,7 +32,13 @@ type ImageInfo struct {
 	Volumes     []string `json:"volumes,omitempty"`
 	EnvPort     string   `json:"env_port,omitempty"`
 	EnvHostname string   `json:"env_hostname,omitempty"`
+	// DataLabel is the persistent folder the image names in its DataDirLabel, if that
+	// is a valid path (the panel's "Projeni hazırla" Dockerfiles write it).
+	DataLabel string `json:"data_label,omitempty"`
 }
+
+// DataDirLabel names where the app writes the files that must outlive its container.
+const DataDirLabel = "footops.data-dir"
 
 // Bounds on what an image's metadata can put into a job's result.
 const (
@@ -57,8 +63,12 @@ func (i ImageInfo) SuggestPort() int {
 	return 0
 }
 
-// SuggestMount is the image's only VOLUME, the natural place for uploads.
+// SuggestMount is the folder the image names in its label, else its only VOLUME: the
+// natural place for uploads.
 func (i ImageInfo) SuggestMount() string {
+	if i.DataLabel != "" {
+		return i.DataLabel
+	}
 	if len(i.Volumes) == 1 {
 		return i.Volumes[0]
 	}
@@ -79,6 +89,7 @@ type imageInspect struct {
 		ExposedPorts map[string]struct{} `json:"ExposedPorts"`
 		Env          []string            `json:"Env"`
 		Volumes      map[string]struct{} `json:"Volumes"`
+		Labels       map[string]string   `json:"Labels"`
 	} `json:"Config"`
 }
 
@@ -119,6 +130,11 @@ func parseImageInspect(out, image string) (ImageInfo, error) {
 	if len(info.Volumes) > maxInfoList {
 		info.Volumes = info.Volumes[:maxInfoList]
 	}
+	// The label is the image author's word, like the rest: kept only if it is a path a
+	// site could mount, and then only as the form's suggestion.
+	if v := in.Config.Labels[DataDirLabel]; len(v) <= maxInfoText && sites.ValidMount(v) {
+		info.DataLabel = v
+	}
 	for _, kv := range in.Config.Env {
 		switch k, v, _ := strings.Cut(kv, "="); k {
 		case "PORT":
@@ -138,6 +154,12 @@ var (
 	errImageNotFound = errors.New("imaj ya da etiketi bulunamadı: adı ve etiketi doğru mu (ör. …:main)?")
 	errImageNetwork  = errors.New("kayıt defterine ulaşılamadı (ağ ya da kayıt defteri sorunu); biraz sonra tekrar dene")
 )
+
+// IsImageAccessMessage reports whether a job's error says the image could not be
+// reached for a login or a name: the panel then explains registry logins.
+func IsImageAccessMessage(msg string) bool {
+	return strings.HasPrefix(msg, errImageAuth.Error()) || strings.HasPrefix(msg, errImageNotFound.Error())
+}
 
 func explainPull(err error) error {
 	if err == nil {
@@ -237,6 +259,9 @@ func (o *SiteOps) CheckImage(ctx context.Context, image string, t *Task) (ImageI
 		t.Step(fmt.Sprintf("✓ Port önerisi: %d (%s)", p, from))
 	} else {
 		t.Step("ℹ İmaj bir port bildirmiyor (EXPOSE yok); uygulamanın dinlediği portu formda yaz")
+	}
+	if info.DataLabel != "" {
+		t.Step("✓ Kalıcı klasör önerisi: " + info.DataLabel + " (imajın " + DataDirLabel + " etiketi)")
 	}
 	if len(info.Volumes) > 0 {
 		t.Step("ℹ İmajın veri klasörleri (VOLUME): " + strings.Join(info.Volumes, ", "))

@@ -17,7 +17,7 @@ func (s *Server) registries(w http.ResponseWriter, r *http.Request) {
 func (s *Server) renderRegistries(w http.ResponseWriter, r *http.Request, status int, f registryForm, problems []string) {
 	list, err := s.agent.Registries(r.Context())
 	s.renderStatus(w, r, status, "registries", map[string]any{"Title": "İmaj girişleri", "List": list, "Err": errString(err),
-		"F": f, "Problems": problems, "Now": s.now()})
+		"F": f, "Problems": problems, "Now": s.now(), "TokenURL": s.tokenURL()})
 }
 
 // registryLogin hands the token to the agent; it is not kept here, not even to show the

@@ -5,6 +5,7 @@
     <p class="sub">{{len .Data.Sites}} site</p>
   </div>
   <div class="page-actions">
+    <a class="btn" href="/sites/new/project">{{icon "file"}}Projeni hazırla</a>
     <a class="btn" href="/registries">{{icon "key"}}İmaj girişleri</a>
     <a class="btn" href="/sources">{{icon "swap"}}Kaynak sunucular</a>
     {{with .Data.Removed}}<a class="btn" href="/removed">{{icon "trash"}}Kaldırılanlar ({{.}})</a>{{end}}
@@ -37,7 +38,7 @@
   <p>Bir site eklemek üç adım:</p>
   <ol>
     <li>Alan adının Cloudflare Origin sertifikasını <a href="/certs">Sertifikalar</a> sayfasından yükle.</li>
-    <li>Sitenin Docker imajını GitHub Actions ile GHCR'ye gönder.</li>
+    <li>Sitenin Docker imajını GitHub Actions ile GHCR'ye gönder: gereken dosyalar <a href="/sites/new/project">Projeni hazırla</a>'da.</li>
     <li>Buradan siteyi oluştur; panel container'ı, ağı, Caddy'yi ve istersen veritabanını hazırlar.</li>
   </ol>
   <div><a class="btn primary" href="/sites/new">{{icon "plus"}}Yeni site</a></div>
