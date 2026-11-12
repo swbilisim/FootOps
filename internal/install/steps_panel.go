@@ -5,10 +5,13 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/swbilisim/FootOps/internal/agent"
@@ -265,7 +268,7 @@ func (s panelAccountStep) Apply(ctx context.Context) error {
 		return err
 	}
 	acct := auth.Account{Username: s.user, PasswordHash: hash, TOTPSecret: secret, RecoveryCodes: hashes}
-	if err := saveAccount(ctx, s.h, acct); err != nil {
+	if err := saveAccount(s.h, acct); err != nil {
 		return err
 	}
 	s.notes.Add("Panel girişi — kullanıcı: %s  şifre: %s", s.user, pw)
@@ -275,17 +278,23 @@ func (s panelAccountStep) Apply(ctx context.Context) error {
 
 // saveAccount writes the account file and hands it to the panel user, which needs to
 // update it (failed-login counter, used codes).
-func saveAccount(ctx context.Context, h Host, a auth.Account) error {
+func saveAccount(h Host, a auth.Account) error {
 	// The directory belongs to the panel user (panel-config creates it); creating it
 	// here as root would give it the wrong owner.
-	if !h.Exists(config.WebStateDir) {
+	fi, err := os.Stat(h.Path(config.WebStateDir))
+	if errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("%s yok; önce kurulumu tamamla (sudo footops install)", config.WebStateDir)
 	}
-	if err := auth.NewStore(h.Path(config.AuthPath)).Save(a); err != nil {
+	if err != nil {
 		return err
 	}
-	_, err := h.Run.Run(ctx, "chown", panelUser+":"+panelUser, config.AuthPath)
-	return err
+	// The file takes the directory's owner while it is still root's own: the panel user
+	// can swap the directory's entries, so a chown by path could be led elsewhere.
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("%s: sahibi okunamadı", config.WebStateDir)
+	}
+	return auth.NewStore(h.Path(config.AuthPath)).SaveOwned(a, int(st.Uid), int(st.Gid))
 }
 
 // ---- systemd services ----
@@ -448,16 +457,57 @@ func (s panelServicesStep) Apply(ctx context.Context) error {
 
 // ---- recovery commands (run as root over SSH) ----
 
+// pauseWeb stops footops-web, when it runs, while root rewrites the panel's account, and
+// returns what starts it again. The web process saves the whole account on every login
+// attempt, so one in flight could write the old account back over the new; and the
+// sessions the old credentials opened live only in its memory (web/session.go), so the
+// stop ends them. A failed stop does not block the reset: the new credentials matter more.
+// The pause is kept short (no prompt inside it), and what would end the command — Ctrl+C,
+// a dropped SSH session, an output nobody reads any more — is held off until the panel
+// runs again: an interrupted command runs no defer.
+func pauseWeb(ctx context.Context, h Host, p *Prompter) (resume func()) {
+	if !serviceActive(ctx, h, "footops-web") {
+		return func() {}
+	}
+	held := make(chan os.Signal, 1)
+	signal.Notify(held, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGPIPE)
+	p.Say("Panel birkaç saniye duruyor...")
+	if _, err := h.Run.Run(ctx, "systemctl", "stop", "footops-web"); err != nil {
+		signal.Stop(held)
+		p.Say("⚠ Panel durdurulamadı (%v). Bitince sudo systemctl restart footops-web çalıştır (açık oturumlar kapanır) ve yeni bilgilerle girişi dene.", err)
+		return func() {}
+	}
+	return func() {
+		defer signal.Stop(held)
+		if _, err := h.Run.Run(context.WithoutCancel(ctx), "systemctl", "start", "footops-web"); err != nil {
+			p.Say("⚠ Panel yeniden başlatılamadı (%v): sudo systemctl start footops-web", err)
+			return
+		}
+		p.Say("Panel yeniden başladı; açık oturumların hepsi kapandı.")
+	}
+}
+
 // ResetPassword gives the panel account a new password and lifts any lockout. If there is
 // no account yet, it creates one, including 2FA enrolment.
 func ResetPassword(ctx context.Context, h Host, p *Prompter) error {
 	if os.Geteuid() != 0 {
 		return errors.New("root olarak çalıştırılmalı: sudo footops reset-password")
 	}
+	return resetPassword(ctx, h, p)
+}
+
+func resetPassword(ctx context.Context, h Host, p *Prompter) error {
 	store := auth.NewStore(h.Path(config.AuthPath))
-	acct, err := store.Load()
+	_, err := store.Load()
 	if errors.Is(err, auth.ErrNoAccount) {
-		return createAccount(ctx, h, p)
+		if err := createAccount(ctx, h, p); err != nil {
+			return err
+		}
+		// Sessions outlive a lost account file: they end now. No login writes while
+		// there is no account, so the panel can run during enrolment.
+		resume := pauseWeb(ctx, h, p)
+		resume()
+		return nil
 	}
 	if err != nil {
 		return err
@@ -466,16 +516,26 @@ func ResetPassword(ctx context.Context, h Host, p *Prompter) error {
 	if err != nil {
 		return err
 	}
-	if acct.PasswordHash, err = auth.HashPassword(pw); err != nil {
+	hash, err := auth.HashPassword(pw)
+	if err != nil {
 		return err
 	}
+	// Read again with the panel stopped: the save starts from the latest account and no
+	// login can write over it.
+	resume := pauseWeb(ctx, h, p)
+	defer resume()
+	acct, err := store.Load()
+	if err != nil {
+		return err
+	}
+	acct.PasswordHash = hash
 	acct.FailedLogins, acct.LockedUntil = 0, time.Time{}
-	if err := saveAccount(ctx, h, acct); err != nil {
+	if err := saveAccount(h, acct); err != nil {
 		return err
 	}
 	recordReset(h, "auth.reset-password")
 	p.Say("Yeni panel şifresi (%s): %s", acct.Username, pw)
-	p.Say("Vaultwarden'a kaydet; bir daha gösterilmeyecek. Açık oturumlar etkilenmez.")
+	p.Say("Vaultwarden'a kaydet; bir daha gösterilmeyecek.")
 	return nil
 }
 
@@ -485,6 +545,10 @@ func Reset2FA(ctx context.Context, h Host, p *Prompter) error {
 	if os.Geteuid() != 0 {
 		return errors.New("root olarak çalıştırılmalı: sudo footops reset-2fa")
 	}
+	return reset2FA(ctx, h, p)
+}
+
+func reset2FA(ctx context.Context, h Host, p *Prompter) error {
 	store := auth.NewStore(h.Path(config.AuthPath))
 	acct, err := store.Load()
 	if err != nil {
@@ -501,9 +565,16 @@ func Reset2FA(ctx context.Context, h Host, p *Prompter) error {
 	if err != nil {
 		return err
 	}
+	// The panel stays up during enrolment; the account is read again with it stopped,
+	// so the save starts from the latest state and no login can write over it.
+	resume := pauseWeb(ctx, h, p)
+	defer resume()
+	if acct, err = store.Load(); err != nil {
+		return err
+	}
 	acct.TOTPSecret, acct.LastTOTPStep, acct.RecoveryCodes = secret, 0, hashes
 	acct.FailedLogins, acct.LockedUntil = 0, time.Time{}
-	if err := saveAccount(ctx, h, acct); err != nil {
+	if err := saveAccount(h, acct); err != nil {
 		return err
 	}
 	recordReset(h, "auth.reset-2fa")

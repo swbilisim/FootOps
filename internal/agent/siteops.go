@@ -339,6 +339,10 @@ func (o *SiteOps) CreateWith(ctx context.Context, spec sites.Spec, env map[strin
 // agent stopped in the middle of making it (Create's own undo never ran): none of it is
 // worth keeping, the backup it came from is still there.
 func (o *SiteOps) discard(ctx context.Context, s sites.Spec) error {
+	// The spec comes from a backup: only /srv/<group>/<name> is ever taken away.
+	if !sites.ValidGroup(s.Group) || !sites.ValidName(s.Name) {
+		return fmt.Errorf("geçersiz site tanımı (grup %q, ad %q)", s.Group, s.Name)
+	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.init()

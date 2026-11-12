@@ -30,6 +30,7 @@ func TestValidate(t *testing.T) {
 	cases := map[string]func(*Spec, map[string]string){
 		"bad name":         func(s *Spec, _ map[string]string) { s.Name = "En Isparta" },
 		"reserved name":    func(s *Spec, _ map[string]string) { s.Name = "mongo" },
+		"compose service":  func(s *Spec, _ map[string]string) { s.Name = "app" },
 		"footops prefix":   func(s *Spec, _ map[string]string) { s.Name = "footops-x" },
 		"bad group":        func(s *Spec, _ map[string]string) { s.Group = "_removed" },
 		"reserved group":   func(s *Spec, _ map[string]string) { s.Group = "core" },
@@ -248,7 +249,8 @@ func TestStoreListGroupFromDirectory(t *testing.T) {
 }
 
 func TestCheckGroup(t *testing.T) {
-	for _, g := range []string{"musteri", "kisisel", "posmerkezi", "yeni-grup", "a1b", "x2026"} {
+	// app names no site (ValidName), but a group of that name keeps its sites listed.
+	for _, g := range []string{"musteri", "kisisel", "posmerkezi", "yeni-grup", "a1b", "x2026", "app"} {
 		if err := CheckGroup(g); err != nil {
 			t.Errorf("%q: %v", g, err)
 		}

@@ -963,6 +963,11 @@ func (r *Recovery) definition(ctx context.Context, t *Task, env *resticEnv, sp r
 	if spec.Database {
 		delete(env2, spec.DBVar)
 	}
+	// Checked before anything is done with it (the check making the site does too): the
+	// cleanup of a half-made site works from the definition's group and name.
+	if err := spec.Validate(env2); err != nil {
+		return sites.Spec{}, nil, fmt.Errorf("yedekteki tanım geçersiz: %w", err)
+	}
 	return spec, env2, nil
 }
 

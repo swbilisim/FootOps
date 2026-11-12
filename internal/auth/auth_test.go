@@ -198,3 +198,24 @@ func TestLoginWithoutAccount(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+// The file is handed over before it takes the account's name: a refused hand-over leaves
+// the account as it was.
+func TestSaveOwned(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root may give a file to anyone")
+	}
+	s, _, _, _ := newAccountStore(t)
+	if err := s.SaveOwned(Account{Username: "furkan"}, os.Getuid(), os.Getgid()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveOwned(Account{Username: "someone"}, 0, 0); err == nil {
+		t.Fatal("file given to root")
+	}
+	if a, err := s.Load(); err != nil || a.Username != "furkan" {
+		t.Errorf("account = %+v, %v", a, err)
+	}
+	if ents, _ := os.ReadDir(filepath.Dir(s.path)); len(ents) != 1 {
+		t.Errorf("left behind: %v", ents)
+	}
+}

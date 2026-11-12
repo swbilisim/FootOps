@@ -338,8 +338,8 @@ optionally `kova-<server>`.
 |---|---|
 | `footops install` | Prepare the server and install FootOps (interactive, root); also recovers a server from its backups |
 | `footops go-live` | Make a server recovered from backups the live one (root) |
-| `footops reset-password` | New panel password, lifts a lockout (root over SSH) |
-| `footops reset-2fa` | Enrol a new authenticator, new recovery codes (root over SSH) |
+| `footops reset-password` | New panel password, lifts a lockout, ends open panel sessions (root over SSH) |
+| `footops reset-2fa` | Enrol a new authenticator, new recovery codes, ends open panel sessions (root over SSH) |
 | `footops rotate-mongo-root` | New MongoDB root password; verified before the secret file is replaced (root) |
 | `footops agent` / `footops web` | The services (started by systemd) |
 | `footops doctor` | Basic checks (more to come) |

@@ -1,13 +1,17 @@
 package install
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -119,8 +123,9 @@ func TestPanelAccount(t *testing.T) {
 	if acct.Username != "furkan" || acct.TOTPSecret != shown || len(acct.RecoveryCodes) != 10 {
 		t.Errorf("account = %+v", acct)
 	}
-	if !f.ran("chown footops:footops " + config.AuthPath) {
-		t.Error("account file not handed to the panel user")
+	// Handed over through the file's descriptor, not by a chown of its path.
+	if f.ran("chown") || owner(t, h.Path(config.AuthPath)) != owner(t, h.Path(config.WebStateDir)) {
+		t.Errorf("account file not handed to the directory's owner: %q", f.cmds())
 	}
 	lines := notes.Lines()
 	if len(lines) != 2 {
@@ -135,6 +140,235 @@ func TestPanelAccount(t *testing.T) {
 	}
 	if done, _ := s.Check(ctx); !done {
 		t.Error("not done after apply")
+	}
+}
+
+func owner(t *testing.T, p string) string {
+	t.Helper()
+	fi, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := fi.Sys().(*syscall.Stat_t)
+	return fmt.Sprintf("%d:%d", st.Uid, st.Gid)
+}
+
+// resetHost has a running footops-web and an account; it keeps the account as the stop
+// and the start of footops-web find it. Before it exits, the web finishes a login it had
+// in flight, with a recovery code: it writes back the account as it read it before the
+// reset, less that code. stopErr makes the stop fail.
+func resetHost(t *testing.T, stopErr error) (Host, *fakeRunner, map[string]auth.Account, auth.Account) {
+	t.Helper()
+	var root string
+	seen := map[string]auth.Account{}
+	var old auth.Account
+	h, f := newTestHost(t, func(cmd string) (string, error) {
+		store := auth.NewStore(filepath.Join(root, config.AuthPath))
+		switch cmd {
+		case "systemctl is-active footops-web":
+			return "active\n", nil
+		case "systemctl stop footops-web", "systemctl start footops-web":
+			if cmd == "systemctl stop footops-web" && stopErr != nil {
+				return "", stopErr
+			}
+			a, err := store.Load()
+			if err != nil {
+				return "", err
+			}
+			seen[cmd] = a
+			if cmd == "systemctl stop footops-web" {
+				inFlight := old
+				inFlight.RecoveryCodes = old.RecoveryCodes[1:]
+				return "", store.Save(inFlight)
+			}
+		}
+		return "", nil
+	})
+	root = h.Root
+	os.MkdirAll(h.Path(config.WebStateDir), 0o700)
+	secret, _ := auth.NewTOTPSecret()
+	hash, _ := auth.HashPassword("old-password-123")
+	_, hashes, _ := auth.NewRecoveryCodes(3)
+	old = auth.Account{Username: "furkan", PasswordHash: hash, TOTPSecret: secret, RecoveryCodes: hashes}
+	if err := auth.NewStore(h.Path(config.AuthPath)).Save(old); err != nil {
+		t.Fatal(err)
+	}
+	return h, f, seen, old
+}
+
+// stopThenStart checks that the panel was stopped before the new account was saved and
+// started after it (the sessions the old credentials opened are gone), and returns the
+// account the panel starts with.
+func stopThenStart(t *testing.T, f *fakeRunner, seen map[string]auth.Account, old auth.Account) auth.Account {
+	t.Helper()
+	cmds := strings.Join(f.cmds(), "\n")
+	stop, start := strings.Index(cmds, "systemctl stop footops-web"), strings.Index(cmds, "systemctl start footops-web")
+	if stop < 0 || start < stop {
+		t.Fatalf("panel not stopped and started again around the save: %q", f.cmds())
+	}
+	if before := seen["systemctl stop footops-web"]; before.PasswordHash != old.PasswordHash || before.TOTPSecret != old.TOTPSecret {
+		t.Error("the account was saved before the panel stopped: a login in flight could write the old one back")
+	}
+	return seen["systemctl start footops-web"]
+}
+
+func TestResetPassword(t *testing.T) {
+	h, f, seen, old := resetHost(t, nil)
+	p, out := prompter("")
+	if err := resetPassword(ctx, h, p); err != nil {
+		t.Fatal(err)
+	}
+	acct := stopThenStart(t, f, seen, old)
+	_, pw, _ := strings.Cut(out.String(), "Yeni panel şifresi (furkan): ")
+	pw, _, _ = strings.Cut(pw, "\n")
+	if ok, _ := auth.VerifyPassword(acct.PasswordHash, pw); !ok {
+		t.Error("reported password does not match the stored hash")
+	}
+	// Read again once the panel stopped: the code the login in flight used stays used.
+	if acct.TOTPSecret != old.TOTPSecret || len(acct.RecoveryCodes) != 2 {
+		t.Errorf("2FA = %q, %d codes", acct.TOTPSecret, len(acct.RecoveryCodes))
+	}
+	if !strings.Contains(out.String(), "açık oturumların hepsi kapandı") {
+		t.Errorf("output:\n%s", out)
+	}
+}
+
+// operator answers on the terminal as a person does: first (unless empty) to the first
+// question, then, reading the secret off the screen, a current code; enrolled is set just
+// before that. The returned func ends the session and gives what was on the screen.
+func operator(first string, enrolled *atomic.Bool) (*Prompter, func() string) {
+	outR, outW := io.Pipe()
+	inR, inW := io.Pipe()
+	if first != "" {
+		go fmt.Fprintln(inW, first)
+	}
+	done := make(chan string)
+	go func() {
+		var lines []string
+		sc := bufio.NewScanner(outR)
+		for sc.Scan() {
+			lines = append(lines, sc.Text())
+			if _, s, ok := strings.Cut(sc.Text(), "anahtarı elle gir: "); ok {
+				code, _ := auth.TOTPCode(strings.TrimSpace(s), time.Now())
+				enrolled.Store(true)
+				go fmt.Fprintln(inW, code)
+			}
+		}
+		done <- strings.Join(lines, "\n")
+	}()
+	return NewPrompter(inR, outW, nil), func() string {
+		outW.Close()
+		return <-done
+	}
+}
+
+func TestReset2FA(t *testing.T) {
+	h, f, seen, old := resetHost(t, nil)
+	var enrolled atomic.Bool
+	next := f.handle
+	f.handle = func(cmd string) (string, error) {
+		if cmd == "systemctl stop footops-web" && !enrolled.Load() {
+			t.Error("panel stopped during enrolment: an interrupted command would leave it down")
+		}
+		return next(cmd)
+	}
+	p, screen := operator("", &enrolled)
+	err := reset2FA(ctx, h, p)
+	out := screen()
+	if err != nil {
+		t.Fatal(err)
+	}
+	acct := stopThenStart(t, f, seen, old)
+	if acct.TOTPSecret == old.TOTPSecret || len(acct.RecoveryCodes) != 10 || acct.PasswordHash != old.PasswordHash {
+		t.Errorf("account = %+v", acct)
+	}
+	if !strings.Contains(out, "açık oturumların hepsi kapandı") {
+		t.Errorf("output:\n%s", out)
+	}
+}
+
+// An enrolment cut short keeps the account, and the panel is never stopped.
+func TestReset2FAAborted(t *testing.T) {
+	h, f, _, old := resetHost(t, nil)
+	p, _ := prompter("")
+	if err := reset2FA(ctx, h, p); err == nil {
+		t.Fatal("reset without a confirmed authenticator")
+	}
+	if f.ran("systemctl stop") {
+		t.Errorf("panel stopped: %q", f.cmds())
+	}
+	if acct, _ := auth.NewStore(h.Path(config.AuthPath)).Load(); acct.TOTPSecret != old.TOTPSecret {
+		t.Error("account changed")
+	}
+}
+
+// Without an account file, reset-password makes one, then ends the sessions that outlived
+// the old one.
+func TestResetPasswordWithoutAccount(t *testing.T) {
+	var root string
+	made := false
+	h, f := newTestHost(t, func(cmd string) (string, error) {
+		switch cmd {
+		case "systemctl is-active footops-web":
+			return "active\n", nil
+		case "systemctl stop footops-web":
+			_, err := auth.NewStore(filepath.Join(root, config.AuthPath)).Load()
+			made = err == nil
+		}
+		return "", nil
+	})
+	root = h.Root
+	os.MkdirAll(h.Path(config.WebStateDir), 0o700)
+	var enrolled atomic.Bool
+	p, screen := operator("furkan", &enrolled)
+	err := resetPassword(ctx, h, p)
+	out := screen()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !made || !f.ran("systemctl start footops-web") {
+		t.Errorf("panel not restarted once the account was made: %q", f.cmds())
+	}
+	if acct, err := auth.NewStore(h.Path(config.AuthPath)).Load(); err != nil || acct.Username != "furkan" {
+		t.Errorf("account = %+v, %v", acct, err)
+	}
+}
+
+// Ctrl+C or a dropped SSH session while the panel is stopped is held off: the command
+// still saves and starts the panel again.
+func TestResetHoldsSignalsWhilePanelStopped(t *testing.T) {
+	h, f, _, old := resetHost(t, nil)
+	next := f.handle
+	f.handle = func(cmd string) (string, error) {
+		if cmd == "systemctl stop footops-web" {
+			for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGHUP, syscall.SIGTERM, syscall.SIGQUIT} {
+				syscall.Kill(os.Getpid(), sig)
+			}
+		}
+		return next(cmd)
+	}
+	p, _ := prompter("")
+	if err := resetPassword(ctx, h, p); err != nil {
+		t.Fatal(err)
+	}
+	if acct, _ := auth.NewStore(h.Path(config.AuthPath)).Load(); acct.PasswordHash == old.PasswordHash || !f.ran("systemctl start footops-web") {
+		t.Errorf("reset not finished: %q", f.cmds())
+	}
+}
+
+// A panel that does not stop does not block the reset; the owner is told how to end the
+// open sessions.
+func TestResetPasswordStopFails(t *testing.T) {
+	h, f, _, old := resetHost(t, errExit)
+	p, out := prompter("")
+	if err := resetPassword(ctx, h, p); err != nil {
+		t.Fatal(err)
+	}
+	if acct, _ := auth.NewStore(h.Path(config.AuthPath)).Load(); acct.PasswordHash == old.PasswordHash {
+		t.Error("password not reset")
+	}
+	if f.ran("systemctl start") || !strings.Contains(out.String(), "sudo systemctl restart footops-web") {
+		t.Errorf("commands %q, output:\n%s", f.cmds(), out)
 	}
 }
 

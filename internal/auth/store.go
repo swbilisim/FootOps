@@ -66,10 +66,20 @@ func (s *Store) load() (Account, error) {
 func (s *Store) Save(a Account) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.save(a)
+	return s.save(a, -1, -1)
 }
 
-func (s *Store) save(a Account) error {
+// SaveOwned is Save for root writing into the panel user's folder: the new file is given
+// to uid:gid through its descriptor before it takes the account's name, so the hand-over
+// goes through no path in a folder that user can change.
+func (s *Store) SaveOwned(a Account, uid, gid int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.save(a, uid, gid)
+}
+
+// save writes the account; uid and gid, unless -1, own the file.
+func (s *Store) save(a Account, uid, gid int) error {
 	a.UpdatedAt = time.Now().UTC()
 	b, err := json.MarshalIndent(a, "", "  ")
 	if err != nil {
@@ -88,6 +98,12 @@ func (s *Store) save(a Account) error {
 	if err := tmp.Chmod(0o600); err != nil {
 		tmp.Close()
 		return err
+	}
+	if uid >= 0 || gid >= 0 {
+		if err := tmp.Chown(uid, gid); err != nil {
+			tmp.Close()
+			return err
+		}
 	}
 	if err := tmp.Sync(); err != nil {
 		tmp.Close()
@@ -159,7 +175,7 @@ func (s *Store) Login(username, password, secondFactor string, now time.Time) (L
 			res.LockedUntil = a.LockedUntil
 		}
 	}
-	if err := s.save(a); err != nil {
+	if err := s.save(a, -1, -1); err != nil {
 		return LoginResult{}, err
 	}
 	return res, nil

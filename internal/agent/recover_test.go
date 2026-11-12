@@ -462,6 +462,58 @@ func TestRecoverHalfMadeSite(t *testing.T) {
 	}
 }
 
+// A run after one cut short reads the newest definition of the half-made site: whatever
+// the repository says, its cleanup stays under /srv.
+func TestRecoverHalfMadeStaysUnderSrv(t *testing.T) {
+	e := newY5(t)
+	night := time.Date(2026, 11, 8, 1, 0, 0, 0, time.UTC)
+	st := RecoverState{Job: "Earlier", Repository: "footops-t1", RepoID: repoID(y5Repo), Server: "T1", Started: night,
+		Sites: []RecoverSite{{Name: "legacy", State: recoverStarted}}}
+	if err := e.rec.save(st); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(e.root, "opt/legacy")
+	os.MkdirAll(outside, 0o755)
+	os.WriteFile(filepath.Join(outside, "compose.yaml"), []byte("services: {}\n"), 0o644)
+	spec := specFor("legacy")
+	spec.Group, spec.Domains, spec.Database, spec.DataMount = "../opt", []string{"legacy.enisparta.com"}, false, ""
+	meta, _ := spec.MarshalMeta()
+	e.restic.snaps = append([]y3Snap{{ID: snapID(510), Time: night.Add(6 * time.Hour), Path: "/footops/legacy/def",
+		Tags: []string{"footops", "site=legacy", "part=def", "kind=manual", "run=RUN9"},
+		Def:  map[string]string{"footops.json": string(meta), "compose.yaml": sites.Compose(spec, nil)}}}, e.restic.snaps...)
+	tk, err := e.recover(t, y5Request())
+	if err == nil {
+		t.Fatal("a definition with group ../opt was recovered")
+	}
+	if !strings.Contains(steps(tk), "yedekteki tanım geçersiz") {
+		t.Errorf("steps:\n%s", steps(tk))
+	}
+	if _, err := os.Stat(filepath.Join(outside, "compose.yaml")); err != nil {
+		t.Errorf("a folder outside /srv was taken for the half-made site: %v", err)
+	}
+	for _, c := range e.run.calls {
+		if strings.Contains(c, "/opt/legacy") {
+			t.Errorf("ran %s", c)
+		}
+	}
+}
+
+// discard takes away nothing but /srv/<group>/<name>.
+func TestDiscardStaysUnderSrv(t *testing.T) {
+	e := newOps(t)
+	outside := filepath.Join(e.root, "opt/legacy")
+	os.MkdirAll(outside, 0o755)
+	os.WriteFile(filepath.Join(outside, "compose.yaml"), []byte("services: {}\n"), 0o644)
+	for _, s := range []sites.Spec{{Name: "legacy", Group: "../opt"}, {Name: "../../opt/legacy", Group: "musteri"}, {Name: "legacy", Group: "core"}} {
+		if err := e.ops.discard(context.Background(), s); err == nil {
+			t.Errorf("discarded %q in %q", s.Name, s.Group)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(outside, "compose.yaml")); err != nil || len(e.run.calls) > 0 {
+		t.Errorf("touched outside /srv: %v, %q", err, e.run.calls)
+	}
+}
+
 func TestRecoverAppThatDoesNotAnswer(t *testing.T) {
 	e := newY5(t)
 	e.ops.dial = func(context.Context, string) error { return errors.New("connection refused") }

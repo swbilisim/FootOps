@@ -164,7 +164,7 @@ func (s Spec) Validate(env map[string]string) error {
 
 	if !reName.MatchString(s.Name) {
 		add("proje adı 3-32 karakter: küçük harf, rakam ve tire; harfle başlamalı")
-	} else if reserved[s.Name] || strings.HasPrefix(s.Name, "footops") {
+	} else if !ValidName(s.Name) {
 		add("%q ayrılmış bir ad", s.Name)
 	}
 	if err := CheckGroup(s.Group); err != nil {
@@ -304,6 +304,13 @@ func CheckGroup(g string) error {
 
 // ValidGroup reports whether g can name a group.
 func ValidGroup(g string) bool { return CheckGroup(g) == nil }
+
+// ValidName reports whether n can name a site. Not app: that is every site's service in
+// its compose file (Compose), a name each site's container answers to on its network,
+// where Caddy finds a site by its name. A group may still be called app.
+func ValidName(n string) bool {
+	return reName.MatchString(n) && !reserved[n] && n != "app" && !strings.HasPrefix(n, "footops")
+}
 
 // GroupDir is a group's folder on the host.
 func GroupDir(g string) string { return path.Join(SrvDir, g) }
