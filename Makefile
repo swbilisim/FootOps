@@ -51,7 +51,7 @@ mac-install: mac
 	@if pgrep -xq FootOps; then echo "FootOps kapanmadı: menüden Çık'ı seçip yeniden deneyin" >&2; exit 1; fi
 	rm -rf /Applications/FootOps.app
 	cp -R dist/FootOps.app /Applications/FootOps.app
-	$(LSREGISTER) -u dist/FootOps.app
+	$(LSREGISTER) -u dist/FootOps.app 2>/dev/null || true # -10814: Launch Services never knew this copy
 	rm -rf dist/FootOps.app
 	mkdir -p "$(HOME)/.local/bin"
 	ln -sf /Applications/FootOps.app/Contents/MacOS/footops-mac "$(HOME)/.local/bin/footops-mac"
