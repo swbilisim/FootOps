@@ -223,9 +223,11 @@ public struct CreateResult: Decodable, Sendable, Equatable {
     public var skipped: Int
     public var warnings: [String]
     public var tookMs: Int
+    /// The import page on the panel it was made for (veritabani gonder).
+    public var importURL: String?
 
     public init(path: String, site: String, db: String? = nil, folder: String? = nil, archive: ArchiveInfo? = nil, skipped: Int = 0,
-                warnings: [String] = [], tookMs: Int = 0) {
+                warnings: [String] = [], tookMs: Int = 0, importURL: String? = nil) {
         self.path = path
         self.site = site
         self.db = db
@@ -234,9 +236,13 @@ public struct CreateResult: Decodable, Sendable, Equatable {
         self.skipped = skipped
         self.warnings = warnings
         self.tookMs = tookMs
+        self.importURL = importURL
     }
 
-    enum CodingKeys: String, CodingKey { case path, site, db, folder, archive, skipped, warnings, tookMs }
+    enum CodingKeys: String, CodingKey {
+        case path, site, db, folder, archive, skipped, warnings, tookMs
+        case importURL = "import"
+    }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -248,6 +254,7 @@ public struct CreateResult: Decodable, Sendable, Equatable {
         skipped = try c.or(.skipped, 0)
         warnings = try c.or(.warnings, [])
         tookMs = try c.or(.tookMs, 0)
+        importURL = try c.decodeIfPresent(String.self, forKey: .importURL)
     }
 }
 

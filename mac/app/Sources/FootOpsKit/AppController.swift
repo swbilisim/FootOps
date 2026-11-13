@@ -23,14 +23,17 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
     private var backupsModel: BackupsModel?
     private var archivesWindow: NSWindow?
     private var archivesModel: ArchivesModel?
-    /// What was opened on this Mac: one list for both windows while either is open.
+    private var databasesWindow: NSWindow?
+    private var databasesModel: DatabasesModel?
+    /// What was opened on this Mac: one list for the windows while any of them is open.
     private var openedList: OpenedList?
     /// The recovery line's minute on the pasteboard runs out with the window closed too.
     private let clipboard = RecoveryClipboard()
-    /// The Backups / Archives / Settings window opens at launch (FootOps --yedekler,
-    /// --arsivler, --ayarlar).
+    /// The Backups / Archives / Databases / Settings window opens at launch (FootOps
+    /// --yedekler, --arsivler, --veritabanlari, --ayarlar).
     public var openBackupsAtLaunch = false
     public var openArchivesAtLaunch = false
+    public var openDatabasesAtLaunch = false
     public var openSettingsAtLaunch = false
     /// The archive the Archives window checks at launch (FootOps --arsivler <dosya>).
     public var archiveAtLaunch: String?
@@ -87,6 +90,9 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
         if openArchivesAtLaunch {
             showArchives()
         }
+        if openDatabasesAtLaunch {
+            showDatabases()
+        }
         if openSettingsAtLaunch {
             showSettings()
         }
@@ -94,17 +100,20 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
     }
 
     /// Quitting (the menu's Çık, ⌘Q, make mac-install's SIGTERM) with a backup or an
-    /// archive being opened (or one made): it is stopped and the core given time to
-    /// remove what it began (at most 30 seconds) before the app goes.
+    /// archive being opened (or one made), a database compared or pulled: it is stopped
+    /// and the core given time to remove (or put back) what it began (at most 30
+    /// seconds) before the app goes.
     public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let backups = backupsModel?.isBusy == true ? backupsModel : nil
         let archives = archivesModel?.isBusy == true ? archivesModel : nil
-        guard backups != nil || archives != nil else { return .terminateNow }
+        let databases = databasesModel?.isBusy == true ? databasesModel : nil
+        guard backups != nil || archives != nil || databases != nil else { return .terminateNow }
         log.info("kapanıyor: süren iş durduruluyor")
         Task { @MainActor in
             async let b: Void = backups?.stopAndWait(limit: .seconds(30)) ?? ()
             async let a: Void = archives?.stopAndWait(limit: .seconds(30)) ?? ()
-            _ = await (b, a)
+            async let d: Void = databases?.stopAndWait(limit: .seconds(30)) ?? ()
+            _ = await (b, a, d)
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
@@ -114,6 +123,7 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
         monitor.stop()
         backupsModel?.stop()
         archivesModel?.stop()
+        databasesModel?.stop()
         // A recovery line still on the pasteboard goes with the app.
         clipboard.takeOff()
         log.info("kapandı")
@@ -142,6 +152,10 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
             archives: { [weak self] in
                 self?.menu?.close()
                 self?.showArchives()
+            },
+            databases: { [weak self] in
+                self?.menu?.close()
+                self?.showDatabases()
             },
             settings: { [weak self] in
                 self?.menu?.close()
@@ -308,6 +322,59 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
         }
     }
 
+    // MARK: Databases
+
+    private func showDatabases() {
+        if databasesWindow == nil {
+            let model = DatabasesModel(core: core, opened: sharedOpened(), servers: serverSites())
+            model.onSent = { res in
+                // The panel's import page, and the archive to drag onto it.
+                if let url = res.importURL.flatMap(URL.init(string:)) {
+                    NSWorkspace.shared.open(url)
+                }
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: res.path)])
+            }
+            let actions = DatabasesActions(reveal: { path in
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+            }, open: { url in
+                NSWorkspace.shared.open(url)
+            })
+            let window = NSWindow(contentViewController: NSHostingController(rootView: DatabasesWindow(model: model, actions: actions)))
+            window.title = "FootOps Veritabanları"
+            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+            window.setContentSize(DatabasesWindow.size)
+            window.contentMinSize = NSSize(width: 860, height: 560)
+            window.isReleasedWhenClosed = false
+            window.delegate = self
+            window.center()
+            databasesWindow = window
+            databasesModel = model
+            trackServers()
+            Task { await model.load() }
+        }
+        NSApp.setActivationPolicy(.regular)
+        databasesWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+    }
+
+    /// The Databases window's servers follow the menu's reads while it is open.
+    private func trackServers() {
+        guard let model = databasesModel else { return }
+        let servers = withObservationTracking {
+            serverSites()
+        } onChange: { [weak self] in
+            Task { @MainActor in self?.trackServers() }
+        }
+        model.update(servers: servers)
+    }
+
+    /// Every server and its sites as the menu last read them, with its panel's address.
+    private func serverSites() -> [ServerSites] {
+        (monitor.status?.servers ?? []).map { s in
+            ServerSites(code: s.code, name: s.name, panel: s.panel.flatMap { $0.isEmpty ? nil : $0 }, sites: s.sites.map(\.name).sorted())
+        }
+    }
+
     private func archivesActions(_ model: ArchivesModel) -> ArchivesActions {
         ArchivesActions(
             reveal: { path in
@@ -350,7 +417,11 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
         if window === archivesWindow {
             archivesModel?.stop()
         }
-        guard window === settingsWindow || window === backupsWindow || window === archivesWindow else { return }
+        if window === databasesWindow {
+            // A pull under way stops with it (the core puts back what it began).
+            databasesModel?.stop()
+        }
+        guard window === settingsWindow || window === backupsWindow || window === archivesWindow || window === databasesWindow else { return }
         // Opened seldom, read anew each time: nothing of them is kept once they close
         // (after the close has run its course); the Dock icon goes with the last.
         DispatchQueue.main.async { [weak self] in
@@ -369,13 +440,17 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
                 self.archivesWindow = nil
                 self.archivesModel = nil
             }
-            if self.backupsWindow == nil && self.archivesWindow == nil {
+            if gone(self.databasesWindow) {
+                self.databasesWindow = nil
+                self.databasesModel = nil
+            }
+            if self.backupsWindow == nil && self.archivesWindow == nil && self.databasesWindow == nil {
                 self.openedList = nil
             }
-            if self.settingsWindow == nil && self.backupsWindow == nil && self.archivesWindow == nil {
+            if self.settingsWindow == nil && self.backupsWindow == nil && self.archivesWindow == nil && self.databasesWindow == nil {
                 NSApp.setActivationPolicy(.accessory)
             }
-            if window === self.backupsWindow || window === self.archivesWindow || self.openedList == nil {
+            if window === self.backupsWindow || window === self.archivesWindow || window === self.databasesWindow || self.openedList == nil {
                 self.monitor.refresh() // the menu's reminder of what was opened
             }
         }

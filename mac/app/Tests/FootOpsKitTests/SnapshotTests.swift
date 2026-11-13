@@ -203,6 +203,86 @@ final class SnapshotTests: XCTestCase {
         }
     }
 
+    /// The Databases window in its states: nothing paired yet, a site being chosen,
+    /// compared (differing: a collection counted only, a view left out; and the same),
+    /// being compared, a pull and a send asked about, pulled, sent, failed, no MongoDB.
+    func testDatabases() throws {
+        let t = { (h: Double) in Samples.now.addingTimeInterval(-h * 3600) }
+        let list = DBList(uri: "mongodb://127.0.0.1:27017", databases: [
+            DBEntry(name: "blog_dev", bytes: 1_298_432),
+            DBEntry(name: "dukkan", bytes: 45_178_880, pair: DBPair(server: "a", serverName: "A", site: "yag-dukkani")),
+            DBEntry(name: "eski_proje", missing: true, pair: DBPair(server: "a", serverName: "A", site: "eski-proje")),
+            DBEntry(name: "magaza_dev", bytes: 2_592_768, pair: DBPair(server: "h1", serverName: "H1", site: "magaza")),
+            DBEntry(name: "ornek_sirket", bytes: 1_200_000),
+            DBEntry(name: "magaza_dev_yedek_20261110_1200", bytes: 2_500_000, opened: true),
+        ])
+        let servers = [ServerSites(code: "a", name: "A", panel: "https://panel-a.example", sites: ["etiket", "kasa-pos", "magaza", "yag-dukkani"]),
+                       ServerSites(code: "h1", name: "H1", panel: "https://panel-h1.example", sites: ["blog", "defter", "magaza", "ornek-sirket"])]
+        let urunler = CollectionDiff(name: "urunler", local: 431, server: 431, same: 427, different: 4,
+                                     localNewest: Newest(time: t(30), collection: "urunler", field: "updatedAt"),
+                                     serverNewest: Newest(time: t(52), collection: "urunler", field: "updatedAt"),
+                                     examples: DiffExamples(different: [#"{"$oid": "6a08d947286b694863255add"}"#]))
+        let siparisler = CollectionDiff(name: "siparisler", local: 6_150, server: 6_192, same: 6_150, onlyServer: 42,
+                                        localNewest: Newest(time: t(70), collection: "siparisler", field: "createdAt"),
+                                        serverNewest: Newest(time: t(4), collection: "siparisler", field: "createdAt"))
+        let diff = DBDiff(collections: [
+            CollectionDiff(name: "ayarlar", local: 1, server: 1, same: 1),
+            CollectionDiff(name: "denemeler", local: 12, server: -1, onlyLocal: 12),
+            CollectionDiff(name: "kodlar", local: 40, server: 40, error: "belgeleri tek tek karşılaştırılamadı: _id'leri MongoDB'nin sırasıyla gelmedi (koleksiyonun kendi harf sıralaması ya da karışık _id türleri); yalnız belge sayıları"),
+            siparisler, urunler,
+        ], skipped: ["ucuz_urunler (görünüm, karşılaştırılmaz)"],
+                          local: DiffSide(documents: 6_634, collections: 5, newest: urunler.localNewest),
+                          serverSide: DiffSide(documents: 6_664, collections: 4, newest: siparisler.serverNewest),
+                          same: 6_578, different: 4, onlyLocal: 12, onlyServer: 42, errors: 1, identical: false)
+        let backup = DBBackup(kind: "hourly", time: t(3), bytes: 1_800_000)
+        let compared = DBSyncResult(db: "magaza_dev", server: "h1", serverName: "H1", site: "magaza", backup: backup, diff: diff, tookMs: 9_800)
+        let same = DBSyncResult(db: "magaza_dev", server: "h1", serverName: "H1", site: "magaza", backup: backup, diff: DBDiff(
+            collections: [CollectionDiff(name: "siparisler", local: 6_192, server: 6_192, same: 6_192), CollectionDiff(name: "urunler", local: 431, server: 431, same: 431)],
+            local: DiffSide(documents: 6_623, collections: 2, newest: siparisler.serverNewest), serverSide: DiffSide(documents: 6_623, collections: 2, newest: siparisler.serverNewest),
+            same: 6_623, different: 0, onlyLocal: 0, onlyServer: 0, identical: true), tookMs: 7_100)
+        let pulled = DBSyncResult(db: "magaza_dev", server: "h1", serverName: "H1", site: "magaza", backup: backup, copy: "magaza_dev_yedek_20261110_1200",
+                                  loaded: LoadedDB(name: "magaza_dev", documents: 6_664, replaced: true), tookMs: 6_000)
+        let sent = CreateResult(path: "/Users/kisi/Downloads/magaza-20261110-120000.footops.tar", site: "magaza", db: "magaza_dev", tookMs: 900,
+                                importURL: "https://panel-h1.example/sites/magaza/import")
+        let opened = OpenedView(folders: [], databases: [
+            OpenedDatabase(name: "magaza_dev_yedek_20261110_1200", time: Samples.ago(30), at: Samples.ago(30), bytes: 2_500_000, copy: "magaza_dev"),
+            OpenedDatabase(name: "blog_yedek_20261109_0300", server: "h1", serverName: "H1", site: "blog", time: t(30), at: t(200), bytes: 618_496, old: true),
+        ])
+        let one = ["magaza_dev": compared]
+        let cases: [(String, DatabasesModel)] = [
+            ("databases-unpaired", DatabasesModel(list: list, selected: "ornek_sirket", servers: servers, opened: opened)),
+            ("databases-pairing", DatabasesModel(list: list, selected: "ornek_sirket", pairing: true, pairServer: "h1", pairSite: "ornek-sirket",
+                                                 servers: servers, opened: opened)),
+            ("databases-paired", DatabasesModel(list: list, selected: "magaza_dev", servers: servers, opened: OpenedView())),
+            ("databases-compared", DatabasesModel(list: list, selected: "magaza_dev", compared: one, servers: servers, opened: opened)),
+            ("databases-same", DatabasesModel(list: list, selected: "magaza_dev", compared: ["magaza_dev": same], servers: servers, opened: opened)),
+            ("databases-comparing", DatabasesModel(list: list, selected: "magaza_dev",
+                                                   operation: .running(job: .compare, db: "magaza_dev", part: "compare", done: 5_200, total: 13_298),
+                                                   servers: servers, opened: opened)),
+            ("databases-confirm-pull", DatabasesModel(list: list, selected: "magaza_dev", compared: one, confirm: .pull("magaza_dev"), servers: servers, opened: opened)),
+            ("databases-confirm-send", DatabasesModel(list: list, selected: "magaza_dev", compared: one, confirm: .send("magaza_dev"), servers: servers, opened: opened)),
+            ("databases-confirm-send-nopanel", DatabasesModel(list: list, selected: "magaza_dev", confirm: .send("magaza_dev"),
+                                                              servers: [ServerSites(code: "h1", name: "H1", sites: ["magaza"])], opened: opened)),
+            ("databases-pulling", DatabasesModel(list: list, selected: "magaza_dev",
+                                                 operation: .running(job: .pull, db: "magaza_dev", part: "copy", done: 1_200_000, total: 2_400_000),
+                                                 servers: servers, opened: opened)),
+            ("databases-replacing", DatabasesModel(list: list, selected: "magaza_dev",
+                                                   operation: .running(job: .pull, db: "magaza_dev", part: "load", done: 900_000, total: 1_800_000),
+                                                   servers: servers, opened: opened)),
+            ("databases-pulled", DatabasesModel(list: list, selected: "magaza_dev", operation: .pulled(pulled), servers: servers, opened: opened)),
+            ("databases-sent", DatabasesModel(list: list, selected: "magaza_dev", operation: .sent(db: "magaza_dev", sent), compared: one, servers: servers, opened: opened)),
+            ("databases-failed", DatabasesModel(list: list, selected: "magaza_dev", operation: .failed(db: "magaza_dev", job: .pull,
+                message: "mongorestore başarısız: stream or file does not appear to be a mongodump archive — yereldeki magaza_dev olduğu gibi kaldı"),
+                                                servers: servers, opened: opened)),
+            ("databases-none", DatabasesModel(list: list, servers: servers, opened: opened)),
+            ("databases-nomongo", DatabasesModel(list: DBList(databases: [], mongoError: "Mac'teki MongoDB'ye bağlanılamadı (mongodb://127.0.0.1:27017): çalışıyor mu? brew services start mongodb-community@7.0"),
+                                                 servers: servers, opened: OpenedView())),
+        ]
+        for (name, model) in cases {
+            try drawWindow(name, DatabasesWindow(model: model, actions: .none, now: Samples.now), size: DatabasesWindow.size)
+        }
+    }
+
     /// The four icons on a light and a dark menu bar, in one strip.
     func testIcons() throws {
         let cell = NSSize(width: 44, height: 24)

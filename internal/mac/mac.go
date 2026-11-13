@@ -39,6 +39,8 @@ Kullanım: footops-mac <komut> [--json]
                      (yalnız okur; ayrıntı: footops-mac yedek yardim)
   arsiv <komut>      FootOps arşivleri: doğrula, klasöre / Mac'teki MongoDB'ye aç, Mac'teki MongoDB'den
                      panelin İçe aktar'ına uygun arşiv üret (ayrıntı: footops-mac arsiv yardim)
+  veritabani <komut> Mac'teki veritabanları ve siteler: eşleştir, sitenin son yedeğiyle karşılaştır,
+                     sunucuya gönder (panelin İçe aktar'ı), yerele çek (ayrıntı: footops-mac veritabani yardim)
   ayar               bu Mac'in ayarları: sunucu başına ad, panel adresi, SSH hedefi, kova
   ayar yaz           ayarları stdin'den JSON olarak alır, denetler ve yazar (FootOps.app'in Ayarlar'ı)
   sunucu <komut>     sunucu ekle / dene / şifresini yaz / bu Mac'ten kaldır; R2 erişimi
@@ -86,6 +88,11 @@ type env struct {
 	opened    string
 	tmp       string
 	mongoURI  string
+	// pairs is where a database of the Mac's is paired with a site (veritabanlari.json).
+	pairs string
+	// hold keeps the process from being stopped by a signal from now on: a database is
+	// being replaced (veritabani cek), and a half one would look whole. None in tests.
+	hold func()
 	// terminal: the output is a terminal (a secret is not written there); free the free
 	// room of a folder's disk.
 	terminal func() bool
@@ -134,6 +141,7 @@ func defaultEnv(stdout, stderr io.Writer) *env {
 		client:   client, probeTimeout: probeTimeout, now: time.Now,
 		look: lookTool, backupRoot: defaultBackupRoot, resticCache: filepath.Join(cache, "FootOps", "restic"),
 		downloads: filepath.Join(home, "Downloads"), opened: filepath.Join(dir, "FootOps", "acilanlar.json"), mongoURI: mongoURI,
+		pairs: filepath.Join(dir, "FootOps", "veritabanlari.json"),
 		terminal: func() bool {
 			f, ok := stdout.(*os.File)
 			return ok && term.IsTerminal(int(f.Fd()))
@@ -197,6 +205,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	defer done()
 	e := defaultEnv(stdout, stderr)
 	e.lost = lost
+	e.hold = func() { signal.Ignore(os.Interrupt, syscall.SIGTERM, syscall.SIGHUP) }
 	return e.run(ctx, args)
 }
 
@@ -235,7 +244,7 @@ func (e *env) run(ctx context.Context, args []string) int {
 		switch {
 		case a == "--json":
 			jsonOut = true
-		case strings.HasPrefix(a, "-") && cmd != "yedek" && cmd != "arsiv" && cmd != "yayin": // theirs are their own
+		case strings.HasPrefix(a, "-") && cmd != "yedek" && cmd != "arsiv" && cmd != "veritabani" && cmd != "yayin": // theirs are their own
 			fmt.Fprintf(e.errw, "bilinmeyen seçenek: %s\n\n%s", a, usage)
 			return 2
 		default:
@@ -256,6 +265,8 @@ func (e *env) run(ctx context.Context, args []string) int {
 		err = e.backupCmd(ctx, pos, jsonOut)
 	case "arsiv":
 		err = e.archiveCmd(ctx, pos, jsonOut)
+	case "veritabani":
+		err = e.dbCmd(ctx, pos, jsonOut)
 	case "ayar":
 		err = e.settingsCmd(ctx, pos, jsonOut)
 	case "sunucu":
@@ -286,6 +297,8 @@ func (e *env) run(ctx context.Context, args []string) int {
 			fmt.Fprint(e.errw, backupUsage)
 		case "arsiv":
 			fmt.Fprint(e.errw, archiveUsage)
+		case "veritabani":
+			fmt.Fprint(e.errw, dbUsage)
 		case "sunucu":
 			fmt.Fprint(e.errw, serverUsage)
 		case "yayin":

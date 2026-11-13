@@ -21,11 +21,13 @@ public struct Core: Sendable {
         return bundle.url(forAuxiliaryExecutable: "footops-mac").map(Core.init(executable:))
     }
 
-    /// What a run wrote, and its exit code.
+    /// What a run wrote, and its exit code; stopped: it was stopped from the app (only
+    /// when the run was asked to keep what was written then).
     public struct Output: Sendable {
         public var stdout: Data
         public var stderr: String
         public var status: Int32
+        public var stopped = false
     }
 
     public enum Failure: Error, Equatable, LocalizedError {
@@ -54,12 +56,14 @@ public struct Core: Sendable {
     /// Runs a command, handing each line it writes over as it comes (from a background
     /// thread). Stopped, it has grace to clean up before SIGKILL (opening a backup:
     /// removing half a folder can take a while).
-    public func stream(_ args: [String], timeout: Duration, grace: Duration = .seconds(5),
+    /// keepOnStop: stopped, what it wrote is still the answer (a database pull may finish
+    /// what it began, its result the truth), marked stopped — not Failure.stopped.
+    public func stream(_ args: [String], timeout: Duration, grace: Duration = .seconds(5), keepOnStop: Bool = false,
                        onLine: @escaping @Sendable (Data) -> Void) async throws -> Output {
-        try await execute(args, input: nil, timeout: timeout, grace: grace, onLine: onLine)
+        try await execute(args, input: nil, timeout: timeout, grace: grace, keepOnStop: keepOnStop, onLine: onLine)
     }
 
-    private func execute(_ args: [String], input: Data?, timeout: Duration, grace: Duration,
+    private func execute(_ args: [String], input: Data?, timeout: Duration, grace: Duration, keepOnStop: Bool = false,
                          onLine: (@Sendable (Data) -> Void)?) async throws -> Output {
         _ = Self.brokenPipesIgnored
         let process = Process()
@@ -108,12 +112,14 @@ public struct Core: Sendable {
                     stdout.stop()
                     stderr.stop()
                     run.finished()
+                    let text = String(decoding: stderr.data.prefix(4096), as: UTF8.self)
                     if run.timedOut {
                         cont.resume(throwing: Failure.timedOut(seconds: Int(seconds)))
+                    } else if run.cancelled && keepOnStop {
+                        cont.resume(returning: Output(stdout: stdout.data, stderr: text, status: process.terminationStatus, stopped: true))
                     } else if run.cancelled {
                         cont.resume(throwing: Failure.stopped)
                     } else {
-                        let text = String(decoding: stderr.data.prefix(4096), as: UTF8.self)
                         cont.resume(returning: Output(stdout: stdout.data, stderr: text, status: process.terminationStatus))
                     }
                 }

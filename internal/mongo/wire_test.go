@@ -233,4 +233,27 @@ func TestFirstBatch(t *testing.T) {
 	if _, _, err := FirstBatch(NewBuilder().Int32("ok", 1).MustBuild()); err == nil {
 		t.Fatal("reply without cursor accepted")
 	}
+	// A getMore's: its batch under nextBatch, not firstBatch.
+	more := NewBuilder().StartDoc("cursor").Int64("id", 77).String("ns", "a.b").
+		StartArray("nextBatch").StartDoc("").Int32("x", 3).End().End().End().Int32("ok", 1).MustBuild()
+	docs, id, err = NextBatch(more)
+	if err != nil || len(docs) != 1 || id != 77 {
+		t.Fatalf("next: %d docs, id %d, %v", len(docs), id, err)
+	}
+	if _, _, err := FirstBatch(more); err == nil {
+		t.Fatal("a getMore's reply read as a first batch")
+	}
+	if _, _, err := NextBatch(reply); err == nil {
+		t.Fatal("a first batch read as a getMore's")
+	}
+	cmd := GetMore(77, "b", 500)
+	if v, _ := cmd.Lookup("getMore"); v.Type != TypeInt64 {
+		t.Fatalf("getMore's id must be a long: %v", v.Type)
+	}
+	if v, _ := cmd.Lookup("batchSize"); func() int64 { n, _ := v.Int(); return n }() != 500 {
+		t.Fatal("batchSize")
+	}
+	if _, ok := GetMore(77, "b", 0).Lookup("batchSize"); ok {
+		t.Fatal("batchSize 0 written")
+	}
 }

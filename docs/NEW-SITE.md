@@ -208,6 +208,7 @@ visits it and tells Telegram when it stops answering.
 | Go back to an earlier version | **Düzenle** → image `ghcr.io/<account>/<name>:sha-<short commit>` (e.g. `:sha-abc1234`) → save. The tags are on GitHub, under the repository's Packages. Back to the newest: `:main` again |
 | The site is down | Panel → the site → **Loglar** (Logs); **Yeniden başlat** (Restart) if needed |
 | Look at or fix data | Panel → the site → **Veritabanı** (Database) |
+| The Mac's database against the site's | FootOps.app → **Veritabanları** (Databases): pair it with the site once, then **Karşılaştır** (Compare: the site's latest backup, document by document), **Sunucuya gönder** (Send: an archive for **İçe aktar**) or **Yerele çek** (Pull: the backup in its place, a copy kept first) |
 | Uploaded files | Panel → the site → **Dosyalar** (Files) |
 | Restore a backup | Panel → the site → **Yedekler** (Backups) → a backup → **Aç ve incele** (Open and inspect) first, then **Geri yükle…** (Restore) |
 | Take it offline for a while | **Parka al…** (Park): a maintenance page takes its place, data and backups stay; **Yayına al…** (Bring back) |

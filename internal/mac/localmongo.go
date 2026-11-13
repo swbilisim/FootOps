@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/swbilisim/FootOps/internal/mongo"
@@ -263,6 +264,9 @@ type dumpSource struct {
 	offset, length int64
 	gzip           bool
 	sha256         string
+	// own: a dump of the Mac's own database (a pull's copy, put back): its system
+	// collections (system.js) are its own data and come along; MongoDB's profile does not.
+	own bool
 }
 
 // loadDB loads a database's dump (mongodump --archive) into the Mac's MongoDB as to: its
@@ -303,12 +307,18 @@ func (e *env) loadDB(ctx context.Context, t mongoTarget, src dumpSource, from, t
 		return nil, err
 	}
 	defer done()
-	args := append(conn, "--archive", "--nsInclude="+from+".*", "--nsExclude="+from+".system.*",
-		"--nsFrom="+from+".*", "--nsTo="+to+".*", "--drop")
+	exclude := "--nsExclude=" + from + ".system.*"
+	if src.own {
+		exclude = "--nsExclude=" + from + ".system.profile"
+	}
+	args := append(conn, "--archive", "--nsInclude="+from+".*", exclude, "--nsFrom="+from+".*", "--nsTo="+to+".*", "--drop")
 	if src.gzip {
 		args = append(args, "--gzip")
 	}
 	cmd := exec.CommandContext(ctx, tool, args...)
+	// A process group of its own: the Terminal's ^C reaches footops-mac only, which stops
+	// the tool itself — or, while a database is being replaced, lets it finish.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdin = &countingReader{r: in, total: total, on: onBytes}
 	out := &tail{max: 16 << 10}
 	cmd.Stdout, cmd.Stderr = out, out

@@ -465,7 +465,7 @@ func (r *repo) mask(s string) string {
 func toolWords(stderr, fallback string) string {
 	var fatal, first, last string
 	for _, line := range strings.Split(stderr, "\n") {
-		line = strings.TrimSpace(line)
+		line = reToolTime.ReplaceAllString(strings.TrimSpace(line), "")
 		if line == "" {
 			continue
 		}
@@ -506,6 +506,10 @@ func toolWords(stderr, fallback string) string {
 	}
 	return clip(clean(text), 300)
 }
+
+// reToolTime is the time mongodump and mongorestore put before each line they write
+// ("2026-11-13T13:34:39.869+0300<TAB>").
+var reToolTime = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{4}|Z)\s+`)
 
 // resticMessage is a line of restic's --json output.
 type resticMessage struct {

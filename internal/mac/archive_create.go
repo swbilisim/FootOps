@@ -32,9 +32,11 @@ import (
 // "done dumping db.coll (N documents)" (the agent's reDumped).
 var reDumped = regexp.MustCompile("done dumping `?([^`\\s]+)`? \\((\\d+) documents?\\)")
 
-// createReq is what arsiv olustur is asked.
+// createReq is what arsiv olustur is asked; importTo (veritabani gonder): the server whose
+// panel the archive is for, its import page named in the answer.
 type createReq struct {
 	db, folder, site, target string
+	importTo                 string
 }
 
 func createArgs(args []string) (createReq, error) {
@@ -98,6 +100,9 @@ type CreateResult struct {
 	Skipped  int          `json:"skipped,omitempty"`
 	Warnings []string     `json:"warnings,omitempty"`
 	TookMS   int64        `json:"took_ms"`
+	// Import is the site's import page on the panel it is for (veritabani gonder; none:
+	// the settings have no panel address for that server).
+	Import string `json:"import,omitempty"`
 }
 
 // createArchive is arsiv olustur.
@@ -274,6 +279,17 @@ func (e *env) createArchive(ctx context.Context, req createReq, jsonOut bool) er
 	named = true
 	k.info.Path, k.info.Name = target, filepath.Base(target)
 	res.Archive = &k.info
+	panels := e.panels()
+	if req.importTo != "" {
+		var own []ServerPanel
+		for _, p := range panels {
+			if p.Code == req.importTo {
+				own = append(own, p)
+				res.Import = p.Panel + "/sites/" + res.Site + "/import"
+			}
+		}
+		panels = own
+	}
 	res.TookMS = time.Since(start).Milliseconds()
 	prog.end()
 	if jsonOut {
@@ -283,7 +299,7 @@ func (e *env) createArchive(ctx context.Context, req createReq, jsonOut bool) er
 		}{"result", res})
 		return nil
 	}
-	printCreated(e.out, res, e.panels())
+	printCreated(e.out, res, panels)
 	return nil
 }
 

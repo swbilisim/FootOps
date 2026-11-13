@@ -248,6 +248,15 @@ MongoDB'sindeki bir veritabanından ve sitenin kalıcı klasörü olacak bir kla
 içe aktarması için arşiv hazırlar (yeni bir site: veritabanı Mac'ten) ve seçilen sitenin
 içe aktarma sayfasını tarayıcıda açar.
 
+**Veritabanları** penceresi Mac'in kendi veritabanlarını listeler; her biri bir kez bir
+sunucunun bir sitesiyle eşleştirilir. **Karşılaştır**, sitenin son yedeğini veritabanının
+yanına geçici bir adla yükler ve ikisini `_id` sırasıyla yan yana okur: koleksiyon başına
+aynı, farklı, yalnız Mac'te ve yalnız sunucuda olan belgeler, iki tarafın en yeni kaydı;
+geçici kopya sonra silinir, sunucuya dokunulmaz. **Sunucuya gönder** veritabanından arşiv
+hazırlar ve sitenin içe aktarma sayfasını açar (önizleme ve onay panelde); **Yerele çek**
+yedeği veritabanının yerine koyar, önce oradakinin kopyasını alır, yükleme yarıda kalırsa
+onu geri koyar. Birleştirme yok: hangi tarafın doğru olduğuna sahibi karar verir.
+
 `make mac-install` `FootOps.app`'i derler (SwiftUI, içinde Go çekirdeği `footops-mac`, bu
 Mac için ad hoc imzalı), Uygulamalar'a koyar, `footops-mac`'i `~/.local/bin`'e bağlar ve
 açar; bundan sonra Mac'le birlikte açılır (Ayarlar'dan kapatılır). Çekirdek Terminal'de de
@@ -267,10 +276,15 @@ footops-mac yedek kurtarma h1 | pbcopy     # kurulum için kurtarma satırı
 footops-mac arsiv dogrula x.footops.tar    # arşivi panelin içe aktarması gibi denetle
 footops-mac arsiv ac x.footops.tar --mongo # ~/Downloads/<site>-<zaman>'a, veritabanı MongoDB'ye de
 footops-mac arsiv olustur --db magaza --dosyalar ./uploads   # → ~/Downloads/magaza-<zaman>.footops.tar
+footops-mac veritabani eslestir magaza_dev h1 magaza   # Mac'teki bir veritabanını bir siteyle eşleştir
+footops-mac veritabani karsilastir magaza_dev          # sitenin son yedeğiyle karşılaştır
+footops-mac veritabani gonder magaza_dev               # sitenin içe aktarma sayfası için arşiv
+footops-mac veritabani cek magaza_dev                  # yedek onun yerine (önce kopyası alınır)
 ```
 
 Ayarlar (sır yok) `~/Library/Application Support/FootOps/ayarlar.json`'da; onları
-uygulamanın Ayarlar penceresi `footops-mac ayar yaz` ile yazar. Sırlar Anahtar
+uygulamanın Ayarlar penceresi `footops-mac ayar yaz` ile yazar; eşleştirmeler yanında,
+`veritabanlari.json`'da. Sırlar Anahtar
 Zinciri'nde, servis `footops-yedek`: `r2-hesap` (R2 hesabı), `r2-mac-erisim` ve
 `r2-mac-gizli` (salt okunur anahtar), `restic-<sunucu>` (her deponun şifresi), isteğe bağlı
 `kova-<sunucu>`.

@@ -162,6 +162,8 @@ func testEnv(t *testing.T, r2 *fakeR2, now time.Time) (*env, *bytes.Buffer, *byt
 		keychain: fakeKeychain{items: map[string]string{"r2-hesap": testAccount, "r2-mac-erisim": testKeyID, "r2-mac-gizli": testSecret,
 			"restic-h1": "RepoPassword-h1", "restic-a": "RepoPassword-a", "kova-h1": "footops-h1/kasa", "r2-test-erisim": "x"}},
 		settings: filepath.Join(t.TempDir(), "ayarlar.json"),
+		pairs:    filepath.Join(t.TempDir(), "veritabanlari.json"),
+		opened:   filepath.Join(t.TempDir(), "acilanlar.json"),
 		r2:       func(account string) string { return srv.URL },
 		client:   srv.Client(), probeTimeout: 300 * time.Millisecond, now: func() time.Time { return now }}
 	return e, &out, &errb

@@ -381,9 +381,11 @@ public struct OpenedDatabase: Decodable, Sendable, Equatable, Identifiable {
     public var bytes: Int64
     public var registered: Bool
     public var old: Bool
+    /// A copy of this Mac's database of that name, taken before a pull (veritabani cek).
+    public var copy: String?
 
     public init(name: String, server: String? = nil, serverName: String? = nil, site: String? = nil, archive: String? = nil,
-                time: Date? = nil, at: Date? = nil, bytes: Int64 = 0, registered: Bool = true, old: Bool = false) {
+                time: Date? = nil, at: Date? = nil, bytes: Int64 = 0, registered: Bool = true, old: Bool = false, copy: String? = nil) {
         self.name = name
         self.server = server
         self.serverName = serverName
@@ -394,9 +396,10 @@ public struct OpenedDatabase: Decodable, Sendable, Equatable, Identifiable {
         self.bytes = bytes
         self.registered = registered
         self.old = old
+        self.copy = copy
     }
 
-    enum CodingKeys: String, CodingKey { case name, server, serverName, site, archive, time, at, bytes, registered, old }
+    enum CodingKeys: String, CodingKey { case name, server, serverName, site, archive, time, at, bytes, registered, old, copy }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -410,6 +413,7 @@ public struct OpenedDatabase: Decodable, Sendable, Equatable, Identifiable {
         bytes = try c.or(.bytes, 0)
         registered = try c.or(.registered, false)
         old = try c.or(.old, false)
+        copy = try c.decodeIfPresent(String.self, forKey: .copy)
     }
 }
 

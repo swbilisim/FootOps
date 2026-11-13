@@ -201,6 +201,7 @@ func (f *fixture) env(t *testing.T) (*env, *bytes.Buffer, *bytes.Buffer) {
 		resticCache: filepath.Join(f.tmp, "cache"),
 		downloads:   filepath.Join(f.tmp, "Downloads"),
 		opened:      filepath.Join(f.tmp, "ayarlar", "acilanlar.json"),
+		pairs:       filepath.Join(f.tmp, "ayarlar", "veritabanlari.json"),
 		tmp:         filepath.Join(f.tmp, "gecici"),
 		mongoURI:    mongoURI,
 		terminal:    func() bool { return false },
@@ -858,7 +859,11 @@ func TestToolWords(t *testing.T) {
 		{"created new cache\nFatal: unable to open config file: Stat: Access Denied.\nIs there a repository?\n", "unable to open config file: Stat: Access Denied."},
 		{`{"message_type":"error","error":{"message":"no space left"},"item":"/a"}` + "\n" + `{"message_type":"exit_error","code":1,"message":"Fatal: There were 3 errors"}`,
 			"/a: no space left (There were 3 errors)"},
-		{"2026-11-09T22:00:00 Failed: error connecting to host: connection refused\n", "2026-11-09T22:00:00 Failed: error connecting to host: connection refused"},
+		// mongorestore's: its time before each line, the count after the failure.
+		{"2026-11-13T13:34:39.869+0300\tFailed: stream or file does not appear to be a mongodump archive\n" +
+			"2026-11-13T13:34:39.869+0300\t0 document(s) restored successfully. 0 document(s) failed to restore.\n",
+			"stream or file does not appear to be a mongodump archive"},
+		{"2026-11-09T22:00:00.5Z\tpreparing collections to restore from\n", "preparing collections to restore from"},
 		{"Failed: error connecting to host: connection refused\n", "error connecting to host: connection refused"},
 		{"", "exit status 1"},
 	} {

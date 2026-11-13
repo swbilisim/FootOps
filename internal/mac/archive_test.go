@@ -46,7 +46,8 @@ func archiveEnv(t *testing.T) (*env, *bytes.Buffer, *bytes.Buffer, string) {
 	e := &env{out: &out, errw: &errb, settings: filepath.Join(dir, "ayarlar.json"),
 		now:  func() time.Time { return time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC) },
 		look: lookTool, downloads: filepath.Join(dir, "Downloads"), opened: filepath.Join(dir, "ayarlar", "acilanlar.json"),
-		tmp: filepath.Join(dir, "gecici"), mongoURI: uri, terminal: func() bool { return false }, free: freeRoom}
+		pairs: filepath.Join(dir, "ayarlar", "veritabanlari.json"),
+		tmp:   filepath.Join(dir, "gecici"), mongoURI: uri, terminal: func() bool { return false }, free: freeRoom}
 	if err := os.MkdirAll(e.tmp, 0o700); err != nil {
 		t.Fatal(err)
 	}

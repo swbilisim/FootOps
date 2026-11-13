@@ -48,6 +48,19 @@ public enum Fmt {
         total == 0 ? 0 : Int(min(100 * Double(used) / Double(total), 999).rounded())
     }
 
+    /// A count with a dot between thousands: "6.150" (the same in every table and line).
+    public static func count(_ n: Int64) -> String {
+        let digits = String(n.magnitude)
+        var out = ""
+        for (i, ch) in digits.enumerated() {
+            if i > 0 && (digits.count - i) % 3 == 0 {
+                out.append(".")
+            }
+            out.append(ch)
+        }
+        return (n < 0 ? "-" : "") + out
+    }
+
     /// "665 ms" under a second, "2,8 sn" above.
     public static func duration(ms: Int) -> String {
         ms < 1000 ? "\(ms) ms" : number(Double(ms) / 1000, decimals: 1) + " sn"

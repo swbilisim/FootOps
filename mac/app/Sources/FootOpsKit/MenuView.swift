@@ -5,14 +5,16 @@ public struct MenuActions {
     public var open: (URL) -> Void
     public var backups: () -> Void
     public var archives: () -> Void
+    public var databases: () -> Void
     public var settings: () -> Void
     public var quit: () -> Void
 
     public init(open: @escaping (URL) -> Void, backups: @escaping () -> Void = {}, archives: @escaping () -> Void = {},
-                settings: @escaping () -> Void, quit: @escaping () -> Void) {
+                databases: @escaping () -> Void = {}, settings: @escaping () -> Void, quit: @escaping () -> Void) {
         self.open = open
         self.backups = backups
         self.archives = archives
+        self.databases = databases
         self.settings = settings
         self.quit = quit
     }
@@ -234,11 +236,13 @@ private struct Footer: View {
                     .keyboardShortcut("r", modifiers: .command)
             }
             HStack(spacing: 2) {
+                item("Veritabanları…", "cylinder.split.1x2", "⌘D", actions.databases)
+                    .keyboardShortcut("d", modifiers: .command)
                 item("Ayarlar…", "gearshape", "⌘,", actions.settings)
                     .keyboardShortcut(",", modifiers: .command)
-                item("Çık", nil, "⌘Q", actions.quit)
-                    .keyboardShortcut("q", modifiers: .command)
             }
+            item("Çık", nil, "⌘Q", actions.quit)
+                .keyboardShortcut("q", modifiers: .command)
         }
         .padding(6)
     }

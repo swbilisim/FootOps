@@ -199,6 +199,7 @@ vermeyi bırakınca Telegram'a yazar.
 | Eski bir sürüme dön | **Düzenle** → imaj `ghcr.io/<hesap>/<ad>:sha-<kısa commit>` (ör. `:sha-abc1234`) → kaydet. Etiketler GitHub'da, reponun Packages bölümünde. En yeniye dönmek için yine `:main` |
 | Site çalışmıyor | Panel → site → **Loglar**; gerekirse **Yeniden başlat** |
 | Veriye bak ya da düzelt | Panel → site → **Veritabanı** |
+| Mac'teki veritabanı ile sitedeki | FootOps.app → **Veritabanları**: bir kez siteyle eşleştir, sonra **Karşılaştır** (sitenin son yedeğiyle, belge belge), **Sunucuya gönder** (**İçe aktar** için arşiv) ya da **Yerele çek** (yedek onun yerine, önce kopyası alınır) |
 | Yüklenen dosyalar | Panel → site → **Dosyalar** |
 | Yedekten geri yükle | Panel → site → **Yedekler** → bir yedek → önce **Aç ve incele**, sonra **Geri yükle…** |
 | Bir süre yayından kaldır | **Parka al…**: yerine bir bakım sayfası gelir, veri ve yedekler kalır; geri açmak için **Yayına al…** |

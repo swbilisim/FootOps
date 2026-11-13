@@ -196,7 +196,12 @@ struct OpenedSection: View {
 
     private func dbDetail(_ d: OpenedDatabase) -> String {
         var t = "MongoDB · \(Fmt.bytes(d.bytes))"
-        if d.registered, d.server != nil || d.archive != nil {
+        if d.registered, let of = d.copy {
+            t += " · bu Mac'teki \(of) veritabanının çekmeden önceki kopyası"
+            if let at = d.at {
+                t += " · alındı \(Fmt.ago(at, now: now))"
+            }
+        } else if d.registered, d.server != nil || d.archive != nil {
             t += " · " + origin(server: d.server, serverName: d.serverName, site: d.site, archive: d.archive)
             if let time = d.time {
                 t += ", " + taken(time, archive: d.archive)

@@ -180,7 +180,9 @@ func printOpened(w io.Writer, v OpenedView) {
 		fmt.Fprintln(w, "MONGODB (silmek: footops-mac yedek sil <veritabanı>)")
 		for _, d := range v.Databases {
 			text := fmt.Sprintf("  %s · %s", d.Name, bytesTR(d.Bytes))
-			if d.Registered {
+			if d.Registered && d.Copy != "" {
+				text += fmt.Sprintf(" · bu Mac'teki %s'in kopyası, çekmeden önce alındı %s", d.Copy, ago(d.At, now))
+			} else if d.Registered {
 				text += fmt.Sprintf(" · %s, %s · yüklendi %s", origin(d.Server, d.Site, d.Archive), whenTaken(d.Archive, d.Time, now.Location()), ago(d.At, now))
 			} else {
 				text += " · footops-mac'in listesinde değil"

@@ -61,6 +61,9 @@ type openedEntry struct {
 	At      time.Time `json:"at"`   // when it was opened
 	Partial bool      `json:"partial,omitempty"`
 	Kept    bool      `json:"kept,omitempty"`
+	// Copy: the database is a copy of this Mac's database of that name, taken before a
+	// pull put a backup in its place (veritabani cek).
+	Copy string `json:"copy,omitempty"`
 }
 
 // withOpened reads the list, lets change it (true: write it back) — one footops-mac at a
@@ -306,6 +309,8 @@ type OpenedDatabase struct {
 	Bytes      int64     `json:"bytes"`
 	Registered bool      `json:"registered"`
 	Old        bool      `json:"old,omitempty"`
+	// Copy: a copy of this Mac's database of that name, taken before a pull.
+	Copy string `json:"copy,omitempty"`
 }
 
 // OpenedView is yedek acilanlar's answer. MongoError: the Mac's MongoDB could not be
@@ -404,7 +409,8 @@ func (e *env) openedView(ctx context.Context) (OpenedView, error) {
 			case "database":
 				listed[it.Name] = true
 				v.Databases = append(v.Databases, OpenedDatabase{Name: it.Name, Server: it.Server, ServerName: serverName(it.Server),
-					Site: it.Site, Archive: clean(it.Archive), Time: listTime(it.Time, it.At), At: it.At, Bytes: dbs[it.Name], Registered: true, Old: old})
+					Site: it.Site, Archive: clean(it.Archive), Time: listTime(it.Time, it.At), At: it.At, Bytes: dbs[it.Name], Registered: true, Old: old,
+					Copy: clean(it.Copy)})
 			}
 		}
 		return len(l.Items) != before
@@ -560,6 +566,11 @@ func (e *env) deleteOpened(ctx context.Context, what string, jsonOut bool) error
 		if err != nil {
 			return err
 		}
+		release, err := e.lockDB(what)
+		if err != nil {
+			return err
+		}
+		defer release()
 		dbs, err := t.databases(ctx)
 		if err != nil {
 			return err

@@ -255,6 +255,16 @@ manifest's. The other way, it makes an archive for a panel's import of a databas
 Mac's MongoDB and a folder that is to be the site's persistent one (a new site: its
 database from the Mac), and opens the chosen site's import page in the browser.
 
+Its **Veritabanları** window lists the Mac's own databases, each paired once with a site
+of a server. **Karşılaştır** (Compare) loads the site's latest backup beside the
+database under a temporary name and reads the two side by side in `_id` order: per
+collection the documents the same, different, only on the Mac and only on the server,
+and each side's newest record; the temporary copy is dropped after, and the server is
+not touched. **Sunucuya gönder** (Send) makes an archive of the database and opens the
+site's import page (the preview and the go-ahead are the panel's); **Yerele çek** (Pull)
+puts the backup in the database's place, a copy of what was there taken first and put
+back if the loading fails. There is no merging: which side is right is the owner's call.
+
 `make mac-install` builds `FootOps.app` (SwiftUI, the Go core `footops-mac` inside, signed
 ad hoc for this Mac), puts it in Applications, links `footops-mac` into `~/.local/bin`
 and opens it; from then on it starts with the Mac (its Settings turn that off). The
@@ -274,10 +284,15 @@ footops-mac yedek kurtarma h1 | pbcopy     # the recovery line for the installer
 footops-mac arsiv dogrula x.footops.tar    # check an archive as a panel's import would
 footops-mac arsiv ac x.footops.tar --mongo # into ~/Downloads/<site>-<time>, its database into MongoDB too
 footops-mac arsiv olustur --db magaza --dosyalar ./uploads   # → ~/Downloads/magaza-<time>.footops.tar
+footops-mac veritabani eslestir magaza_dev h1 magaza   # pair a database of the Mac's with a site
+footops-mac veritabani karsilastir magaza_dev          # compare it with the site's latest backup
+footops-mac veritabani gonder magaza_dev               # an archive for the site's import page
+footops-mac veritabani cek magaza_dev                  # the backup in its place (a copy kept first)
 ```
 
 The settings (no secrets) are in `~/Library/Application Support/FootOps/ayarlar.json`,
-written by the app's Settings window through `footops-mac ayar yaz`. The secrets are in
+written by the app's Settings window through `footops-mac ayar yaz`; the pairings beside
+them, in `veritabanlari.json`. The secrets are in
 the Keychain, service `footops-yedek`: `r2-hesap` (the R2 account), `r2-mac-erisim` and
 `r2-mac-gizli` (the read-only key), `restic-<server>` (each repository's password),
 optionally `kova-<server>`.

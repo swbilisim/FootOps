@@ -267,7 +267,22 @@ func appendOK0(d Doc) Doc {
 }
 
 // FirstBatch returns a cursor reply's first batch and the cursor's id (0: exhausted).
-func FirstBatch(reply Doc) ([]Doc, int64, error) {
+func FirstBatch(reply Doc) ([]Doc, int64, error) { return cursorBatch(reply, "firstBatch") }
+
+// NextBatch returns a getMore reply's batch and the cursor's id (0: exhausted).
+func NextBatch(reply Doc) ([]Doc, int64, error) { return cursorBatch(reply, "nextBatch") }
+
+// GetMore is the command asking a cursor of coll for its next batch (batch 0: as much as
+// fits in a reply).
+func GetMore(id int64, coll string, batch int32) Doc {
+	b := NewBuilder().Int64("getMore", id).String("collection", coll)
+	if batch > 0 {
+		b.Int32("batchSize", batch)
+	}
+	return b.MustBuild()
+}
+
+func cursorBatch(reply Doc, key string) ([]Doc, int64, error) {
 	cv, ok := reply.Lookup("cursor")
 	if !ok {
 		return nil, 0, errors.New("MongoDB cevabında cursor yok")
@@ -280,13 +295,13 @@ func FirstBatch(reply Doc) ([]Doc, int64, error) {
 	if v, ok := cur.Lookup("id"); ok {
 		id, _ = v.Int()
 	}
-	bv, ok := cur.Lookup("firstBatch")
+	bv, ok := cur.Lookup(key)
 	if !ok {
-		return nil, id, errors.New("MongoDB cevabında firstBatch yok")
+		return nil, id, errors.New("MongoDB cevabında " + key + " yok")
 	}
 	arr, ok := bv.Doc()
 	if !ok {
-		return nil, id, errors.New("MongoDB cevabında firstBatch yok")
+		return nil, id, errors.New("MongoDB cevabında " + key + " yok")
 	}
 	elems, err := arr.Elems()
 	if err != nil {
