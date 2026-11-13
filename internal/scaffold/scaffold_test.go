@@ -198,6 +198,20 @@ cache-to: type=gha,mode=max`
 	}
 }
 
+// An arm64 server's image is built for arm64, natively on GitHub's arm64 runner; amd64
+// (the default) stays as the live sites' workflow above.
+func TestWorkflowForTheServersArchitecture(t *testing.T) {
+	for arch, want := range map[string][2]string{"": {"ubuntu-latest", "linux/amd64"}, AMD64: {"ubuntu-latest", "linux/amd64"},
+		ARM64: {"ubuntu-24.04-arm", "linux/arm64"}} {
+		in := next()
+		in.Arch = arch
+		wf := render(t, in)[".github/workflows/docker.yml"]
+		if !strings.Contains(wf, "\n    runs-on: "+want[0]+"\n") || !strings.Contains(wf, "\n          platforms: "+want[1]+"\n") {
+			t.Errorf("arch %q:\n%s", arch, wf)
+		}
+	}
+}
+
 // Nothing that would mean something to a shell, a Dockerfile or YAML gets through.
 func TestCheckRefuses(t *testing.T) {
 	bad := []string{"", " ", "a b", "a\nb", "a\rb", `a"b`, "a'b", "a$b", "a`b", "a;b", "a&b", "a|b", "a\\b", "a:b", "a#b",
@@ -221,6 +235,11 @@ func TestCheckRefuses(t *testing.T) {
 		in = Input{Kind: Node, Owner: "o", Name: "api-x", Port: 3000, Start: s + ".js"}
 		if _, p := Check(in); len(p) == 0 {
 			t.Errorf("start %q accepted", in.Start)
+		}
+		in = next()
+		in.Arch = s
+		if _, p := Check(in); len(p) == 0 && s != "" {
+			t.Errorf("architecture %q accepted", s)
 		}
 		// "" and " " mean no build; "/x" is "x" with the slash trimmed.
 		in = Input{Kind: Static, Owner: "o", Name: "web-x", BuildDir: s}
@@ -247,6 +266,13 @@ func TestCheckRefuses(t *testing.T) {
 		in.Owner = o
 		if _, p := Check(in); len(p) == 0 {
 			t.Errorf("owner %q accepted", o)
+		}
+	}
+	for _, arch := range []string{"x86_64", "aarch64", "AMD64", "arm", "386", "linux/amd64"} {
+		in := next()
+		in.Arch = arch
+		if _, p := Check(in); len(p) == 0 {
+			t.Errorf("architecture %q accepted", arch)
 		}
 	}
 	for _, port := range []int{0, 80, 1023, 65536, -1} {
@@ -281,7 +307,7 @@ func TestRenderedValuesArePlain(t *testing.T) {
 		if len(p) > 0 {
 			t.Fatalf("%+v: %v", in, p)
 		}
-		for _, v := range []string{got.Owner, got.Name, got.DataDir, got.Start, got.BuildDir, ImageOf(got.Owner, got.Name)} {
+		for _, v := range []string{got.Owner, got.Name, got.DataDir, got.Start, got.BuildDir, got.Arch, ImageOf(got.Owner, got.Name)} {
 			if !safe.MatchString(v) {
 				t.Errorf("value %q", v)
 			}

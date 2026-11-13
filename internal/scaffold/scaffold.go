@@ -63,7 +63,16 @@ type Input struct {
 	// BuildDir is a static site's build output (dist, out, build); "" publishes the
 	// project folder as it is.
 	BuildDir string
+	// Arch is the server's architecture, which the image is built for: AMD64 ("" too)
+	// or ARM64. The panel sets it from its own build, never from the form.
+	Arch string
 }
+
+// Architectures a server runs on.
+const (
+	AMD64 = "amd64"
+	ARM64 = "arm64"
+)
 
 var (
 	reOwner = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,38}$`)
@@ -88,6 +97,9 @@ func Check(in Input) (Input, []string) {
 	if in.PM == "" {
 		in.PM = NPM
 	}
+	if in.Arch == "" {
+		in.Arch = AMD64
+	}
 	var problems []string
 	add := func(format string, args ...any) { problems = append(problems, fmt.Sprintf(format, args...)) }
 	// "/" alone is a folder, not "none".
@@ -111,6 +123,9 @@ func Check(in Input) (Input, []string) {
 	}
 	if in.PM != NPM && in.PM != PNPM {
 		add("paket yöneticisi npm ya da pnpm olmalı")
+	}
+	if in.Arch != AMD64 && in.Arch != ARM64 {
+		add("sunucunun mimarisi amd64 ya da arm64 olmalı")
 	}
 	switch in.Kind {
 	case Static:
@@ -185,6 +200,7 @@ var templates = sync.OnceValues(func() (*template.Template, error) {
 type view struct {
 	Input
 	Image                      string
+	Platform, Runner           string // what the image is built for, on which GitHub runner
 	Lock, Install, InstallProd string
 	Build                      string
 	PublicEnv, Plain           bool
@@ -192,8 +208,13 @@ type view struct {
 }
 
 func viewOf(in Input) view {
-	v := view{Input: in, Image: ImageOf(in.Owner, in.Name),
+	v := view{Input: in, Image: ImageOf(in.Owner, in.Name), Platform: "linux/" + in.Arch, Runner: "ubuntu-latest",
 		Lock: "package-lock.json", Install: "npm ci", InstallProd: "npm ci --omit=dev && npm cache clean --force", Build: "npm run build"}
+	// An arm64 server's image is built on GitHub's arm64 runner, natively: emulating
+	// arm64 on ubuntu-latest would take a Next.js build many times as long.
+	if in.Arch == ARM64 {
+		v.Runner = "ubuntu-24.04-arm"
+	}
 	if in.PM == PNPM {
 		v.Lock = "pnpm-lock.yaml"
 		v.Install = "corepack enable pnpm && pnpm install --frozen-lockfile"

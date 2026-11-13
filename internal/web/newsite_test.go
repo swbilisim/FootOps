@@ -172,6 +172,11 @@ func TestNewSiteFlow(t *testing.T) {
 	if strings.Contains(body, "s3cr3t") || strings.Contains(body, "localhost:27017") {
 		t.Error("review page shows a value")
 	}
+	// An app that does not answer undoes the creation (only a recovery goes on with a
+	// warning): the help says so.
+	if !strings.Contains(body, "yapılanların hepsi geri alınır ve iş sayfası uygulamanın son log satırlarını gösterir") || strings.Contains(body, "yine kurulur") {
+		t.Error("review help on an app that does not answer")
+	}
 
 	resp, _ = c.do("POST", m[0], url.Values{"csrf": {tok}, "action": {"create"}})
 	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/jobs/job123" {

@@ -535,7 +535,7 @@ func resetPassword(ctx context.Context, h Host, p *Prompter) error {
 	}
 	recordReset(h, "auth.reset-password")
 	p.Say("Yeni panel şifresi (%s): %s", acct.Username, pw)
-	p.Say("Vaultwarden'a kaydet; bir daha gösterilmeyecek.")
+	p.Say("Parola yöneticine kaydet; bir daha gösterilmeyecek.")
 	return nil
 }
 
@@ -673,7 +673,7 @@ func rotateMongoRoot(ctx context.Context, h Host, p *Prompter) error {
 	}
 	recordReset(h, "mongo.rotate-root")
 	p.Say("")
-	p.Say("🔑 Yeni MongoDB root şifresi (bir kez gösteriliyor, Vaultwarden'daki 'H1 MongoDB root' kaydını güncelle):")
+	p.Say("🔑 Yeni MongoDB root şifresi (bir kez gösteriliyor; parola yöneticindeki kaydı güncelle):")
 	p.Say("   %s", pw)
 	p.Say("Sitelerin kendi veritabanı kullanıcıları etkilenmez.")
 	return nil

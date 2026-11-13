@@ -68,4 +68,10 @@ if m and secret:
     os.chmod(login_out, 0o600)
 if code != 0:
     sys.exit("install: exit status %d (see install.log)" % code)
+# The end lists what the panel still needs (Faz R3); the admin user has no default (it
+# was the author's name).
+if "Sıradaki adımlar" not in full:
+    sys.exit("install: the end does not list the next steps (see install.log)")
+if "Kullanıcı adı [" in full:
+    sys.exit("install: the admin user has a default")
 print("install: ok")

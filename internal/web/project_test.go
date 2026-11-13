@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -44,6 +45,10 @@ func TestProjectPage(t *testing.T) {
 		"gh repo create Ornek/kahve-dukkani --private --source . --push", "ghcr.io/ornek/kahve-dukkani:main",
 		`href="/sites/new?image=ghcr.io%2Fornek%2Fkahve-dukkani%3Amain&tpl=nextjs"`,
 		"output: 'standalone'", "!.env.production",
+		// built for the server the panel runs on, never for what a form says
+		"platforms: linux/" + runtime.GOARCH,
+		// unpacked where it belongs: a double-click makes a folder and hides the dot files
+		"unzip ~/Downloads/kahve-dukkani-footops.zip",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("page misses %q", want)

@@ -161,7 +161,25 @@ func Main(ctx context.Context, o Options) error {
 	}
 	fmt.Fprintln(o.Out, "\nKurulum tamamlandı: güvenlik ayarları, Docker, Caddy, MongoDB ve panel hazır.")
 	printConnectionInfo(ctx, o, a)
+	printNextSteps(o.Prompt)
 	return nil
+}
+
+// InstallDoc is the installation guide the end of an install points to (Turkish, as the
+// installer and the panel are).
+const InstallDoc = "https://github.com/swbilisim/FootOps/blob/main/docs/INSTALL-TR.md"
+
+// printNextSteps lists what a new server needs before its sites are safe, in the order
+// of the dashboard's Başlarken list, which ticks them off (panel-tasarim §33.3).
+func printNextSteps(p *Prompter) {
+	p.Say("")
+	p.Say("Sıradaki adımlar (panelde; ana sayfadaki Başlarken listesi de gösterir):")
+	p.Say("  1. Sertifikalar: alan adının Cloudflare Origin sertifikası.")
+	p.Say("  2. Siteler → İmaj girişleri: imajların özelse GitHub token'ı (read:packages).")
+	p.Say("  3. Siteler → Projeni hazırla, sonra Yeni site: ilk site.")
+	p.Say("  4. Yedekleme: yalnız bu sunucuya ayrılmış bir S3 kovası (ör. Cloudflare R2).")
+	p.Say("  5. Bildirimler: Telegram botu (isteğe bağlı).")
+	p.Say("Adım adım: %s", InstallDoc)
 }
 
 // printSecrets shows secrets generated during this run. It writes to the terminal only,

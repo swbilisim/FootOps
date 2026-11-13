@@ -74,7 +74,7 @@ func Collect(p *Prompter, f Facts) (Answers, error) {
 
 	p.Say("")
 	p.Say("Yönetici kullanıcı: root ile SSH girişi kapatılacak, sunucuya bu kullanıcıyla gireceksin.")
-	if a.AdminUser, err = p.Ask("Kullanıcı adı", "furkan", ValidateUser); err != nil {
+	if a.AdminUser, err = p.Ask("Kullanıcı adı", "", ValidateUser); err != nil {
 		return a, err
 	}
 	if a.SSHKeys, err = askKeys(p, f.RootSSHKeys); err != nil {
@@ -246,7 +246,7 @@ func askSudo(p *Prompter, user string) (SudoMode, string, error) {
 	if !ask {
 		return SudoNoPassword, "", nil
 	}
-	pw, err := p.NewPassword("sudo şifresi (en az 12 karakter, Vaultwarden'a kaydet)", ValidateSudoPassword)
+	pw, err := p.NewPassword("sudo şifresi (en az 12 karakter, parola yöneticine kaydet)", ValidateSudoPassword)
 	if err != nil {
 		return "", "", err
 	}
@@ -320,7 +320,7 @@ func Summary(a Answers) string {
 		}
 	}
 	b.WriteString("\nYapılacaklar: paket güncellemeleri, swap, saat dilimi, otomatik güvenlik güncellemeleri,\n")
-	b.WriteString("yönetici kullanıcı, güvenlik duvarı (22/80/443), fail2ban, SSH sertleştirme (onayınla),\n")
+	b.WriteString("yönetici kullanıcı, güvenlik duvarı (22/443), fail2ban, SSH sertleştirme (onayınla),\n")
 	if a.Recover != nil {
 		b.WriteString("Docker, Caddy, MongoDB, panel; sonra yedekten sunucu ayarları (panel girişi + 2FA dahil) ve siteler.\n")
 	} else {

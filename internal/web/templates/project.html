@@ -75,7 +75,7 @@
 {{with .Data.Files}}
 {{$in := $.Data.In}}
 <div class="section-head" id="dosyalar"><h2>1. Dosyaları projene koy</h2><a class="btn sm primary" href="{{$.Data.ZipURL}}" download>{{icon "download"}}Zip indir</a></div>
-<p class="muted small">Zip'i projenin kök klasörüne aç (<span class="mono">package.json</span>'ın yanına) ya da her dosyayı aynı adla oluşturup içine yapıştır. Aynı adda bir dosyan varsa önce ona bak: bunlar onun yerine geçer.</p>
+<p class="muted small">Zip'i projenin kök klasörüne (<span class="mono">package.json</span>'ın yanına) aç: Terminal'de projenin klasöründe <span class="mono">unzip ~/Downloads/{{$in.Name}}-footops.zip</span>. Çift tıklamak zip'i yeni bir klasöre açar; macOS ayrıca adı noktayla başlayan <span class="mono">.dockerignore</span> ve <span class="mono">.github</span>'ı gizler. Ya da her dosyayı aynı adla oluşturup içine yapıştır. Aynı adda bir dosyan varsa önce ona bak: bunlar onun yerine geçer.</p>
 {{range $i, $file := .}}
 <div class="file-head"><span class="mono">{{.Path}}</span><button type="button" class="btn sm" data-copy="dosya-{{$i}}" hidden>{{icon "file"}}<span data-copy-label>Kopyala</span></button></div>
 <pre class="doc short select" id="dosya-{{$i}}">{{.Body}}</pre>

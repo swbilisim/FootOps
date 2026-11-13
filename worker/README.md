@@ -1,5 +1,7 @@
 # FootOps outside watcher (`footops-nobetci`)
 
+**English** · [Türkçe](README-TR.md)
+
 A Cloudflare Worker that watches FootOps servers from outside, the way a visitor would.
 FootOps tells its Telegram chat about what goes wrong inside a server (backups, disk,
 certificates, MongoDB…); it cannot say that the server itself is gone, or that a site no

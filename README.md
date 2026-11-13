@@ -1,13 +1,26 @@
 # FootOps
 
+**English** · [Türkçe](README-TR.md)
+
 Lightweight, security-first self-hosted server panel written in Go.
 
 One command turns a fresh Ubuntu server into a hardened Docker host (swap, SSH hardening,
-firewall, Docker, Caddy, MongoDB) and installs a small web panel for adding, deploying and
-monitoring sites.
+firewall, Docker, Caddy, MongoDB) and installs a small web panel for adding, deploying,
+backing up and monitoring sites.
 
-> **Status:** early development. The installer and panel work end to end in tests and
-> run on a first production server; expect changes.
+> **Status:** runs the author's production servers since October 2026; expect changes.
+> The installer and the panel speak Turkish.
+
+## Getting started
+
+1. **[Install FootOps](docs/INSTALL.md)** on a fresh Ubuntu 22.04 or 24.04 server:
+   Cloudflare Tunnel and Access, downloading and verifying a signed release, the
+   installer's questions, the first steps in the panel.
+2. **[Publish a site](docs/NEW-SITE.md):** the panel's **Projeni hazırla** (Prepare your
+   project) gives your project a Dockerfile and a GitHub Actions workflow; GitHub builds the
+   image, the panel runs it.
+
+The guides give each Turkish name in the panel with its meaning.
 
 ## Design in short
 
@@ -16,100 +29,25 @@ monitoring sites.
 - **Never exposed to the internet.** The panel listens on `127.0.0.1` only and is reached through Cloudflare Tunnel + Cloudflare Access, then its own password + TOTP login. An SSH tunnel is the break-glass path.
 - **Privilege separation.** `footops-web` (the UI) runs unprivileged and can only ask `footops-agent` to perform a fixed set of validated actions. A bug in the UI cannot be turned into arbitrary root commands.
 - **No ports per app.** Only Caddy listens, on 443 (sites are https only behind Cloudflare). Apps join per-project Docker networks and are reached by container name, so there is no port table to maintain. Caddy passes the visitor's address in `X-Real-IP` (from Cloudflare's `CF-Connecting-IP`, never from what the visitor sends) and caps request bodies at 100 MiB, Cloudflare's own limit on the Free and Pro plans.
-- **Files on disk are the source of truth.** Each site lives in `/srv/<group>/<project>/` as a normal `docker-compose.yml` + `.env`. If FootOps is removed, everything keeps running and can be managed by hand.
-- **Pull-based deploys.** GitHub Actions builds images and pushes them to GHCR; FootOps notices new images and deploys them. CI never holds credentials to the server.
-
-## Install
-
-Requires Ubuntu 22.04 or 24.04, root access over SSH with a key.
-
-```bash
-VERSION=v0.1.0   # pick the latest release
-ARCH=amd64       # or arm64
-BASE=https://github.com/swbilisim/FootOps/releases/download/$VERSION
-
-curl -fsSLO "$BASE/footops_linux_$ARCH"
-curl -fsSLO "$BASE/SHA256SUMS"
-sha256sum --ignore-missing -c SHA256SUMS   # must print: footops_linux_<arch>: OK
-
-chmod +x "footops_linux_$ARCH"
-sudo "./footops_linux_$ARCH" install
-```
-
-Do not pipe a script from the internet into a shell; download, verify, then run.
-
-The installer asks its questions in the terminal (never in a browser, so there is no
-unauthenticated setup page) and stops before disabling root/password SSH login until you
-confirm that key-based login for the new admin user works from a second terminal.
-
-At the end it prints the panel URL, the generated panel password, recovery codes and the
-MongoDB root password **once**. Store them in your password manager; they are not kept in
-plain text on the server.
-
-### What the installer does (so far)
-
-| Step | Change |
-|---|---|
-| packages | `ca-certificates curl gnupg ufw fail2ban python3-systemd unattended-upgrades` |
-| upgrade | Installs pending updates, including ones that need new packages (kernel security fixes); never removes packages |
-| hostname | Sets the hostname and tells cloud-init to keep it across reboots |
-| timezone | e.g. `Europe/Istanbul` |
-| swap | Sized from RAM (≤6 GB RAM → 2 GB, more → 4 GB), `vm.swappiness=10` |
-| unattended-upgrades | Automatic security updates, optional reboot at a fixed time |
-| admin-user | Creates the admin user in `sudo`, installs your SSH keys; sudo with password (recommended) or without |
-| firewall | UFW: deny incoming, allow 22/443 (removes the 80 rule earlier versions added) |
-| fail2ban | sshd jail in aggressive mode (counts failed key logins), 5 tries in 10 min → 1 h ban |
-| ssh-hardening | No root login, no passwords, only the admin user — **applied only after you confirm** key login works from a second terminal; the config is validated with `sshd -t`/`sshd -T` and rolled back if invalid or overridden |
-| docker-repo | Docker's official apt repository; the signing key is installed only if its fingerprint is Docker's |
-| docker | Docker Engine + Compose plugin (refuses to replace distribution `docker.io` packages) |
-| docker-daemon | `daemon.json`: rotated `local` logs, `live-restore`, `no-new-privileges`, room for 256 networks; validated with `dockerd --validate` before restart |
-| core-files | `/srv/core`: Caddyfile, `compose.yaml`, MongoDB root password (generated once, never regenerated) |
-| core-stack | Starts Caddy and MongoDB and waits until both are healthy; re-runs only when their config changed |
-
-The security baseline runs first, so root login is closed before the long Docker
-downloads start.
-
-### Core services
-
-| Service | Image | Exposed |
-|---|---|---|
-| Caddy | `caddy:2.11.7-alpine`, all capabilities dropped except binding 443 | 443 |
-| MongoDB | `mongo:7.0.45`, auth on, WiredTiger cache sized from RAM, 60 s to shut down cleanly | `127.0.0.1:27017` only |
-
-Caddy never requests certificates (`auto_https off`): sites use Cloudflare Origin CA
-certificates, so the origin only needs to be trusted by Cloudflare.
-
-MongoDB is reachable from your machine through an SSH tunnel (Robo 3T, Compass):
-SSH to the admin user, then connect to `localhost:27017` as `root` with auth database
-`admin`. The password is shown once at the end of the install and stored in
-`/etc/footops/secrets/mongo.env` (root only).
-
-Every step checks the current state first, so the installer can be re-run at any time:
-completed steps are skipped and an interrupted run continues where it stopped.
-
-- `sudo footops install --dry-run` shows what would change without changing anything.
-- **Ctrl+C** while questions are asked quits immediately. Once the server is being
-  changed, the first Ctrl+C lets the running command (e.g. apt) finish and then stops; a
-  second Ctrl+C quits at once.
-- If the SSH connection drops, the installer keeps going and stops safely at the next
-  question it cannot ask. Details are always in `/var/log/footops-install.log`.
-- Answers (no secrets) are kept in `/etc/footops/install.json` for re-runs.
+- **Files on disk are the source of truth.** Each site lives in `/srv/<group>/<project>/` as a plain Compose file (`compose.yaml`, its environment inside, 0600) next to `footops.json`. If FootOps is removed, everything keeps running and can be managed by hand.
+- **Pull-based deploys.** GitHub Actions builds the image and pushes it to GHCR; the panel's **Yeniden dağıt** (Redeploy) pulls it. CI never holds credentials to the server.
+- **Signed releases.** A server installs only a release whose manifest is signed with a key it trusts, and only a newer one; CI rebuilds every release from its tag and compares the bytes.
 
 ## The panel
 
-After the core stack, the installer creates the `footops` system user (uid 800-899, so
-it never matches the uids container images write files as), installs the binary to
-`/usr/local/bin/footops`, enrols the admin's authenticator app (QR code in the terminal,
-confirmed with a live code) and starts two services:
+The installer creates the `footops` system user (uid 800-899, so it never matches the uids
+container images write files as), installs the binary to `/usr/local/bin/footops`, enrols
+the admin's authenticator app (QR code in the terminal, confirmed with a live code) and
+starts two services:
 
 | Service | Runs as | Can do |
 |---|---|---|
-| `footops-agent` | root | A fixed, validated API on `/run/footops/agent.sock`: overview, metric history, alerts, container logs, restart, sites, audit log. Accepts connections only from root and the `footops` uid, checked with `SO_PEERCRED`. |
+| `footops-agent` | root | A fixed, validated API on `/run/footops/agent.sock`: overview, metric history, alerts, container logs, restart, sites, backups, audit log. Accepts connections only from root and the `footops` uid, checked with `SO_PEERCRED`. |
 | `footops-web` | `footops`, no capabilities, seccomp, `ProtectSystem=strict` | Login and pages. Cannot see `/srv`, secrets, Docker's socket or data, or the audit log; asks the agent for everything. |
 
 Access:
 
-- **SSH tunnel (always):** `ssh -L 7701:127.0.0.1:7701 admin@server`, then
+- **SSH tunnel (always):** `ssh -L 7701:127.0.0.1:7701 <user>@<server-ip>`, then
   `http://localhost:7701`. Only `localhost` host names are answered (DNS-rebinding
   protection).
 - **Cloudflare Tunnel (optional):** `cloudflared` runs in the core stack and forwards the
@@ -122,13 +60,18 @@ Login is username + argon2id password + TOTP (RFC 6238, codes cannot be replayed
 single-use recovery code. Five failed logins lock the account (5 min, doubling); logins
 are also rate-limited per IP and overall. Sessions are server-side, bound to the
 listener and Cloudflare identity, idle-expire after 30 minutes and end after 12 hours.
-Every form has a CSRF token and cross-site requests are refused. The only script is the
-panel's own `live.js` (no inline script or style, no third parties): the
+Every form has a CSRF token and cross-site requests are refused. The only scripts are the
+panel's own small files (live updates, resumable uploads, reading a `.env` file in the
+browser, copy buttons): no inline script or style, no third parties. The
 Content-Security-Policy is `default-src 'none'; script-src 'self'; connect-src 'self';
-style-src 'self'`. Pages work without it and fall back to a plain refresh.
+style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri
+'none'`. Pages work without the scripts and fall back to a plain refresh.
 
 What the panel shows:
 
+- **Getting started:** a new server's home page lists what it still needs (a certificate,
+  an image login, a first site, backups, Telegram), read from its state and linked; the
+  list goes once there are a certificate, a site and backups.
 - **Server and containers:** CPU, RAM, swap, disk, load and per-container CPU, memory
   (against its limit), restarts and health, updating themselves every 10 seconds. A
   container's CPU and memory are read from its cgroup files, as `docker stats` computes
@@ -144,9 +87,15 @@ What the panel shows:
   each chart lists now, average and peak.
 - **Alerts:** disk ≥ 80%, RAM ≥ 90%, swap ≥ 50%, CPU ≥ 90% for 5 minutes, a FootOps
   container that is not running, unhealthy, restarting, OOM-killed or near its memory
-  limit, restarts within 15 minutes, certificates expiring within 30 days. Short spikes
-  (under 30 seconds) are ignored. Alerts show as a count in the menu and a list on the
-  dashboard.
+  limit, restarts within 15 minutes, certificates expiring within 30 days, backups that
+  failed or are late. Short spikes (under 30 seconds) are ignored. Alerts show as a count
+  in the menu and a list on the dashboard.
+- **Check** (*Kontrol*): the server against the FootOps standard — pending updates and
+  reboots, automatic security updates, the clock, open ports, unused images, versions —
+  daily and on request (`footops doctor`).
+- **Updates** (*Güncelleme*): FootOps looks for a new signed release once a day, says what
+  will change and whether sites stop for a moment, and installs it on request; a version
+  that does not come up is rolled back by itself.
 - **Telegram (optional, Bildirimler):** alerts go to a linked chat when they open, get
   worse and clear. In that chat the person who linked it can ask **`/durum`** — CPU,
   load, memory, swap, disk, uptime, the sites, the last backup and the open alerts,
@@ -169,15 +118,24 @@ Every login, logout, restart and recovery command is written to
 
 ## Sites
 
-A site is a container image served under one or more domains. From the panel
-(**Sites → New site**):
+A site is a container image served under one or more domains. How to publish one, step by
+step: [docs/NEW-SITE.md](docs/NEW-SITE.md). In short, from the panel (**Siteler →
+Yeni site**):
 
 1. **Certificates** first: paste a Cloudflare Origin CA certificate and key for the
    zone (`*.example.com` + `example.com`, 15 years). The panel checks that the key
    matches and shows which names it covers.
 2. **New site**: name, group (`/srv/<group>/<name>`), domains, image (e.g. from GHCR),
    app port, memory limit, largest request body, optional persistent directory, optional
-   MongoDB database, environment variables.
+   MongoDB database, environment variables. The image is checked first (it can be pulled,
+   it is built for this server, its port, user and declared upload folder).
+
+**Projeni hazırla** (Prepare your project) writes what a project needs to become such an
+image: a Dockerfile (Next.js, Node.js or a static site; an unprivileged user, the code
+read-only, the upload folder declared in a `footops.data-dir` label), a `.dockerignore`
+that keeps `.env*` out, and a GitHub Actions workflow that builds the image for the
+server's architecture and pushes it to GHCR. The templates are in
+[`internal/scaffold/files`](internal/scaffold/files).
 
 **Groups** are the folders under `/srv` (`core` is FootOps's own): the form offers the
 ones there and takes a new name too, which makes the group's folder (root-only, `0700`).
@@ -205,14 +163,22 @@ undoes everything if any step fails:
 | check | an HTTPS request through Caddy must reach the app |
 
 **Edit** changes domains, image, port, memory limit, the largest request body, the
-persistent directory and environment variables. Current values are never sent to the browser: variables are added,
-replaced or removed by name, and the audit log records only names. The database variable
-stays managed by FootOps. If the site does not come back with the new settings, the old
-files are restored and the old container is started again.
+persistent directory and environment variables. Current values are never sent to the
+browser: variables are added, replaced or removed by name, and the audit log records only
+names. The database variable stays managed by FootOps. If the site does not come back
+with the new settings, the old files are restored and the old container is started again.
 
 **Redeploy** pulls the image again and recreates the container if it changed.
 **Remove** (confirmed by typing the name) takes the site offline and moves its files to
 `/srv/<group>/_removed/`; the database is kept.
+
+A site's data can be moved without SSH: **İçe aktar** (Import) takes a FootOps archive, a
+`mongodump` archive or a zip / tar.gz of files, checks it (type, checksums, paths, links,
+decompression bombs; the database loaded into a temporary one and counted) and shows a
+preview; only after a confirmation does it copy what will change and apply it.
+**Dışa aktar** (Export) writes the site's database and files into a FootOps archive. The
+site's database can be browsed and edited (with undo), its persistent folder managed in a
+file manager.
 
 ### End date and parking
 
@@ -241,35 +207,14 @@ server (A record, proxied) and use SSL mode **Full (strict)**.
 The agent re-attaches Caddy and MongoDB to every site network every 10 seconds, so
 recreating the core containers heals itself.
 
-## Recovering a server from its backups
+## Backups
 
-Backups go to the server's own S3 bucket with restic (encrypted on the server). When a
-server is lost, a new one is installed from them:
-
-1. `sudo ./footops install` and answer **yes** to "Bu sunucu bir yedekten mi kurulacak?".
-   Give the old server's code (backups are taken under it), the usual answers, and the
-   repository: a key that can *read* the bucket is enough. On the Mac it is all one line
-   for a single paste: FootOps.app's **Yedekler → Kurtarma satırını kopyala** (onto the
-   pasteboard only, cleared a minute later), or `footops-mac yedek kurtarma h1 | pbcopy`.
-2. After the usual steps (no tunnel, no new panel account: the old one comes back) the
-   agent brings back the server's own part (certificates, the panel's login and 2FA,
-   registry logins, backup settings) and then every site of the newest full backup:
-   definition, a new database user, the database and the files *before* the container
-   first starts, then Caddy and an HTTPS check. Every read is `--no-lock`; nothing is
-   written to the repository. A site that fails is undone and the others go on; running
-   the installer again brings back only what is missing.
-3. The server is now a **rehearsal**: the tunnel's token, the repository's settings and
-   the Telegram bot are kept aside (root only), no repository or bot can be set up, and
-   one firewall rule (`DOCKER-USER`, tagged `footops-prova`) rejects every new
-   connection from the sites' networks to the outside, so an app's mail, payments or
-   marketplace updates do not happen twice while the old server still runs (at boot,
-   `footops-prova.service` puts it in place before Docker starts the sites). Look around
-   through the SSH tunnel and try the sites with `curl -k --resolve <domain>:443:<ip>`.
-4. Once the old server is surely off: `sudo footops go-live` connects the repository
-   again with the old server's write key (it asks for a new one if that key was revoked,
-   and stops to ask if a backup newer than the recovery shows the old server still
-   runs), puts Telegram, the tunnel and Access back, opens the sites to the outside and
-   starts a first backup. Then point the domains' A records at the new address.
+Every night (03:00 by default; busy databases hourly too) each site's database,
+persistent folder and definition (environment variables included) and the server's own
+settings go to an S3 bucket of the server's own (e.g. Cloudflare R2) with restic,
+encrypted on the server; only what changed is uploaded. The panel lists each site's
+backups, opens one to look inside (its database browsable, its files listed), downloads
+it as an archive, and restores its database or files after a copy of what they replace.
 
 Once a month, after a clean night run, one site's newest backup (the sites take turns) is
 restored where it harms nothing and checked: its database into a temporary database,
@@ -277,7 +222,12 @@ compared with what mongodump counted, and a sample of its files against the live
 A failure is an alert (and a Telegram message). **Yedekleme → Şimdi dene** or
 `sudo footops backup trial [site]` runs it at once.
 
-### On a Mac: FootOps.app and `footops-mac`
+A lost server comes back from its backups: the installer recovers the server's settings and
+every site into a **rehearsal** (sites cut off from the outside, so nothing happens twice
+while the old server may still run), and `sudo footops go-live` makes it the live one:
+[docs/INSTALL.md, section 7](docs/INSTALL.md#7-bringing-back-a-lost-server).
+
+## On a Mac: FootOps.app and `footops-mac`
 
 A menu bar app that shows how the servers are without reaching them: each server's
 status file and the outside watcher's heartbeat, read from the buckets with the same
@@ -336,28 +286,36 @@ optionally `kova-<server>`.
 
 | Command | Purpose |
 |---|---|
-| `footops install` | Prepare the server and install FootOps (interactive, root); also recovers a server from its backups |
+| `footops install` | Prepare the server and install FootOps (interactive, root); also recovers a server from its backups. See [docs/INSTALL.md](docs/INSTALL.md) |
 | `footops go-live` | Make a server recovered from backups the live one (root) |
+| `footops self-update` | Download, verify and install the latest release (`--check` only looks); the panel's **Güncelleme** page does the same |
+| `footops doctor` | Check this server against the FootOps standard (the panel's **Kontrol** page) |
 | `footops reset-password` | New panel password, lifts a lockout, ends open panel sessions (root over SSH) |
 | `footops reset-2fa` | Enrol a new authenticator, new recovery codes, ends open panel sessions (root over SSH) |
 | `footops rotate-mongo-root` | New MongoDB root password; verified before the secret file is replaced (root) |
 | `footops agent` / `footops web` | The services (started by systemd) |
-| `footops doctor` | Basic checks (more to come) |
-| `footops self-update` | Not implemented yet |
 | `footops version` | Print version |
 
 ## Development
 
 ```bash
-make check   # go vet + tests
-make build   # local binary
-make linux   # dist/footops_linux_{amd64,arm64} + SHA256SUMS
-make mac     # dist/FootOps.app (on a Mac: Swift and Go); swift test --package-path mac/app
+make check                  # go vet + tests (with the race detector)
+make build                  # local binary
+make linux                  # dist/footops_linux_{amd64,arm64} + SHA256SUMS
+make mac                    # dist/FootOps.app (on a Mac: Swift and Go); swift test --package-path mac/app
+test/integration/run.sh     # a real install in a systemd container with Docker inside, then scenarios
 ```
 
-Releases: push a `vX.Y.Z` tag; the Release workflow builds and publishes binaries.
+**Releases** are built and signed on the maintainer's Mac (`footops-mac yayin yap vX.Y.Z`;
+the private key never leaves its Keychain): a tag and a GitHub release with the two
+binaries, `footops-release.json` (each file's SHA-256 and size, the version, short notes)
+and its ed25519 signature. The **Release check** workflow rebuilds the tag with
+`make release-build` and compares the bytes with the signed manifest, so anyone can tell a
+release is this repository's code. Servers install a release only if its signature is one
+of the keys in [`internal/release/keys.go`](internal/release/keys.go) and it is newer than
+their own.
 
-**Never commit server-specific data** (IPs, domains, customer names, tokens). All of that
+**Never commit server-specific data** (IP addresses, domain names, secrets). All of that
 lives in the server's own configuration under `/etc/footops`.
 
 ## License

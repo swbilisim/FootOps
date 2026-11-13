@@ -112,7 +112,14 @@ func (p *previewAgent) History(_ context.Context, rng, name string) (agent.Histo
 	return h, nil
 }
 
+// previewNew shows a server just installed (Başlarken): no site, certificate or image
+// login; /dev-new?s=1 also takes backups and Telegram back to their first step.
+var previewNew bool
+
 func (p *previewAgent) Sites(context.Context) ([]agent.SiteStatus, error) {
+	if previewNew {
+		return nil, nil
+	}
 	var out []agent.SiteStatus
 	for i := range previewContainers {
 		c := &previewContainers[i]
@@ -357,6 +364,9 @@ func (p *previewAgent) Trash(context.Context, string) ([]datafs.TrashEntry, erro
 }
 
 func (p *previewAgent) Certs(context.Context) ([]sites.Cert, error) {
+	if previewNew {
+		return nil, nil
+	}
 	return []sites.Cert{
 		{ID: "0123456789abcdef", Names: []string{"*.example.com", "example.com"}, Issuer: "CloudFlare Origin SSL Certificate Authority", NotAfter: time.Now().AddDate(15, 0, 0)},
 		{ID: "fedcba9876543210", Names: []string{"*.example.org", "example.org"}, Issuer: "CloudFlare Origin SSL Certificate Authority", NotAfter: time.Now().AddDate(0, 0, 12)},
@@ -518,6 +528,9 @@ var previewSource = agent.SourceView{Source: remote.Source{ID: "kaynak000001", L
 	UsedBy: []string{"magaza"}}
 
 func (p *previewAgent) Registries(context.Context) ([]agent.RegistryLogin, error) {
+	if previewNew {
+		return nil, nil
+	}
 	return []agent.RegistryLogin{
 		{Host: "ghcr.io", User: "ornek", Saved: time.Now().Add(-80 * 24 * time.Hour), Actor: "admin", Expires: time.Now().Add(10 * 24 * time.Hour), Scopes: []string{"read:packages"}},
 		{Host: "registry.example.com:5000", User: "deploy"},
@@ -675,6 +688,12 @@ func TestPreview(t *testing.T) {
 	mux.HandleFunc("/dev-notify", func(w http.ResponseWriter, r *http.Request) {
 		previewNotify = r.URL.Query().Get("s")
 		http.Redirect(w, r, "/notify", http.StatusSeeOther)
+	})
+	// /dev-new?s=1 a server just installed, s=0 back to the usual one.
+	mux.HandleFunc("/dev-new", func(w http.ResponseWriter, r *http.Request) {
+		previewNew = r.URL.Query().Get("s") == "1"
+		previewBackup, previewNotify = map[bool]string{true: "setup", false: "ready"}[previewNew], map[bool]string{true: "none", false: "linked"}[previewNew]
+		http.Redirect(w, r, "/", http.StatusSeeOther)
 	})
 	// /dev-backup?s=setup|key|ready|running|rehearsal|trialfail switches the backup page's state.
 	mux.HandleFunc("/dev-backup", func(w http.ResponseWriter, r *http.Request) {

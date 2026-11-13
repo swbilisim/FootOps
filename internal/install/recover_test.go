@@ -69,16 +69,16 @@ func TestR2Endpoint(t *testing.T) {
 // recoveryInput is the wizard's answers for a recovery up to the repository.
 func recoveryInput(repo ...string) string {
 	lines := []string{
-		"e",  // from a backup
-		"H1", // the old server's code
-		"",   // hostname -> h1
-		"",   // timezone
-		"",   // admin user
-		"e",  // reuse root keys
-		"",   // no extra key
-		"h",  // sudo without password
-		"",   // swap
-		"",   // mongo cache
+		"e",      // from a backup
+		"H1",     // the old server's code
+		"",       // hostname -> h1
+		"",       // timezone
+		"furkan", // admin user (no default)
+		"e",      // reuse root keys
+		"",       // no extra key
+		"h",      // sudo without password
+		"",       // swap
+		"",       // mongo cache
 		"panel-h1.example.com",
 		"", "", // auto reboot, time
 	}

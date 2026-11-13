@@ -174,3 +174,18 @@ func TestSecretsShownEvenWhenRunFails(t *testing.T) {
 		t.Error("secret generated before a failure was never shown")
 	}
 }
+
+// The end of an install says what comes next, in the order of the dashboard's Başlarken
+// list, and where the guide is.
+func TestNextStepsFollowTheDashboard(t *testing.T) {
+	p, out := prompter("")
+	printNextSteps(p)
+	s, last := out.String(), -1
+	for _, want := range []string{"Sertifikalar", "İmaj girişleri", "Projeni hazırla", "Yedekleme", "Bildirimler", InstallDoc} {
+		i := strings.Index(s, want)
+		if i <= last {
+			t.Errorf("%q missing or out of order:\n%s", want, s)
+		}
+		last = i
+	}
+}

@@ -65,8 +65,8 @@
   <dl>
     <dt>Panel ne yapar?</dt>
     <dd>Klasörü, Docker ağını{{if $s.Database}}, veritabanını{{end}} ve container'ı açar, uygulamanın porta cevap vermesini bekler, sonra Caddy'ye ekler. Adımları canlı izlersin; bir adım başarısız olursa yapılanların hepsi geri alınır.</dd>
-    <dt>"Uygulama cevap vermedi" uyarısı</dt>
-    <dd>Site yine kurulur ama açılmaz. Genelde port yanlıştır ya da uygulama yalnız <span class="mono">localhost</span>'u dinliyordur (Next.js'te <span class="mono">HOSTNAME=0.0.0.0</span>). Site sayfasındaki <strong>Loglar</strong> nedenini gösterir; düzeltip Düzenle ya da Yeniden dağıt.</dd>
+    <dt>Uygulama cevap vermezse</dt>
+    <dd>Panel 90 saniye bekler; uygulama porta cevap vermezse kurulum durur, yapılanların hepsi geri alınır ve iş sayfası uygulamanın son log satırlarını gösterir. Genelde port yanlıştır, uygulama yalnız <span class="mono">localhost</span>'u dinliyordur (Next.js'te <span class="mono">HOSTNAME=0.0.0.0</span>) ya da açılırken duruyordur (çoğu zaman eksik bir ortam değişkeni). Düzelt, GitHub'a gönder, siteyi yeniden oluştur.</dd>
     <dt>Sonra</dt>
     <dd>Site sayfasında <strong>Sıradaki adımlar</strong>: {{if or $s.Database $s.DataMount}}veriyi getir (İçe aktar), {{end}}Cloudflare'de DNS, kontrol. DNS açılana kadar site yalnız bu sunucuda hazır bekler.</dd>
   </dl>

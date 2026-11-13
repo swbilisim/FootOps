@@ -81,6 +81,10 @@ type fakeAgent struct {
 	pk        fakePark // end dates and parking (park_test.go)
 	removed   []agent.RemovedSite
 	purges    []string
+	// a new server (Başlarken): no site, the certificates there are, Certs calls
+	noSites   bool
+	certs     []sites.Cert
+	certCalls int
 }
 
 func (f *fakeAgent) Overview(context.Context) (agent.Overview, error) {
@@ -128,6 +132,9 @@ func (f *fakeAgent) RecordAuth(_ context.Context, e agent.AuditEntry) error {
 func (f *fakeAgent) AuditTail(context.Context, int) ([]agent.AuditEntry, error) { return f.audit, nil }
 
 func (f *fakeAgent) Sites(context.Context) ([]agent.SiteStatus, error) {
+	if f.noSites {
+		return nil, nil
+	}
 	st := agent.SiteStatus{Spec: sites.Spec{Name: "enisparta", Group: "musteri", Domains: []string{"enisparta.com"},
 		Image: "ghcr.io/x/enisparta:main", Port: 3000, MemoryMB: 256, EnvKeys: []string{"NODE_ENV"}, Database: f.dbSite,
 		DataMount: map[bool]string{true: "/app/uploads", false: ""}[f.dataSite], DataURL: f.dataURL,
@@ -360,7 +367,12 @@ func (f *fakeAgent) DownloadExport(_ context.Context, site, id string, a agent.A
 	return rec.Result(), nil
 }
 
-func (f *fakeAgent) Certs(context.Context) ([]sites.Cert, error) { return nil, nil }
+func (f *fakeAgent) Certs(context.Context) ([]sites.Cert, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.certCalls++
+	return append([]sites.Cert(nil), f.certs...), nil
+}
 
 func (f *fakeAgent) InstallCert(_ context.Context, c, k string, _ agent.Actor) (sites.Cert, error) {
 	if !strings.Contains(c, "BEGIN CERTIFICATE") {

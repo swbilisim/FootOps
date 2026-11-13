@@ -90,7 +90,8 @@ func TestCollectFullRun(t *testing.T) {
 		"H1",                    // server code
 		"",                      // hostname -> h1
 		"",                      // timezone default
-		"",                      // admin user -> furkan
+		"",                      // admin user: no default (the author's name was one), asked again
+		"furkan",                // admin user
 		"e",                     // reuse root keys
 		keyB,                    // extra key
 		"",                      // end of extra keys
@@ -123,6 +124,9 @@ func TestCollectFullRun(t *testing.T) {
 	if a.Hostname != "h1" || a.AdminUser != "furkan" || a.Timezone != "Europe/Istanbul" {
 		t.Errorf("unexpected identity answers: %+v", a)
 	}
+	if !strings.Contains(out.String(), "küçük harfle başlamalı") {
+		t.Errorf("an empty admin user was not refused:\n%s", out.String())
+	}
 	if len(a.SSHKeys) != 2 {
 		t.Errorf("keys = %d, want 2", len(a.SSHKeys))
 	}
@@ -150,7 +154,7 @@ func TestCollectFullRun(t *testing.T) {
 }
 
 func TestCollectDeclinedAtSummary(t *testing.T) {
-	input := strings.Join([]string{"", "A", "", "", "", keyA, "", "h", "", "", "panel-a.example.com", "h", "h", ""}, "\n") + "\n"
+	input := strings.Join([]string{"", "A", "", "", "ali", keyA, "", "h", "", "", "panel-a.example.com", "h", "h", ""}, "\n") + "\n"
 	p, out := prompter(input)
 	_, err := Collect(p, Facts{RAM: 8 << 30, ZoneinfoOK: func(string) bool { return true }})
 	if !errors.Is(err, ErrAborted) {

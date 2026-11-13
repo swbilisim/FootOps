@@ -29,6 +29,20 @@
 {{end}}
 </section>
 
+{{with .Data.Start}}
+<div class="section-head" id="baslarken"><h2>Başlarken</h2></div>
+<div class="card next-steps">
+  <ol class="steps">
+    <li><strong>Sertifika:</strong> {{if .Cert}}<span class="badge ok">tamam</span>{{else}}<span class="badge warn">yapılacak</span> Cloudflare → alan adı → SSL/TLS → Origin Server → Create Certificate; sertifikayı ve anahtarı <a href="/certs">Sertifikalar</a>'a yapıştır. Bir sertifika alan adını ve bütün alt alan adlarını kapsar.{{end}}</li>
+    <li><strong>İmaj girişi:</strong> {{if .Registry}}<span class="badge ok">tamam</span>{{else}}<span class="badge">isteğe bağlı</span> imajların GitHub'da özelse <a href="/registries">İmaj girişleri</a>'ne yalnız okuma yetkili bir token; herkese açık imajlar için gerekmez.{{end}}</li>
+    <li><strong>İlk site:</strong> {{if .Site}}<span class="badge ok">tamam</span>{{else}}<span class="badge warn">yapılacak</span> <a href="/sites/new/project">Projeni hazırla</a>: projene konacak Dockerfile ve GitHub Actions dosyaları; imajın hazırsa doğrudan <a href="/sites/new">Yeni site</a>.{{end}}</li>
+    <li><strong>Yedekleme:</strong> {{if eq .Backup 2}}<span class="badge ok">tamam</span>{{else if eq .Backup 1}}<span class="badge warn">yarım</span> depo bağlandı; <a href="/backup">Yedekleme</a>'de şifreyi iki ayrı yere kaydedip onayla, yedekler o zaman başlar.{{else}}<span class="badge warn">yapılacak</span> yalnız bu sunucuya ayrılmış bir S3 kovasını (ör. Cloudflare R2) <a href="/backup">Yedekleme</a>'den bağla: siteler her gece şifrelenerek yedeklenir.{{end}}</li>
+    <li><strong>Telegram:</strong> {{if .Telegram}}<span class="badge ok">tamam</span>{{else}}<span class="badge">isteğe bağlı</span> uyarılar ve <span class="mono">/durum</span> telefonuna: <a href="/notify">Bildirimler</a>.{{end}}</li>
+  </ol>
+  <p class="hint">Sertifika, ilk site ve yedekleme tamamlanınca bu liste kaybolur. Adım adım: <a href="https://github.com/swbilisim/FootOps/blob/main/docs/INSTALL-TR.md" rel="noopener noreferrer" target="_blank">kurulum belgesi</a>.</p>
+</div>
+{{end}}
+
 {{with $o.System}}{{if .MemTotal}}
 <section class="stats" aria-label="Anlık durum" data-live-id="cards">
   <div class="card stat">

@@ -5,6 +5,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -51,7 +52,9 @@ func (f projectForm) input() scaffold.Input {
 	if err != nil {
 		port = 0 // Check says what a port must be
 	}
-	return scaffold.Input{Kind: f.Kind, Owner: f.Owner, Name: f.Name, PM: f.PM, Port: port, DataDir: f.Data, Start: f.Start, BuildDir: f.Build}
+	// The image is built for this server's architecture: the panel runs on it.
+	return scaffold.Input{Kind: f.Kind, Owner: f.Owner, Name: f.Name, PM: f.PM, Port: port, DataDir: f.Data, Start: f.Start, BuildDir: f.Build,
+		Arch: runtime.GOARCH}
 }
 
 // query is the form as a URL query, for the kind links and the zip.

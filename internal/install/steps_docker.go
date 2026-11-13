@@ -413,7 +413,7 @@ func (s coreFilesStep) ensureMongoSecret() error {
 		return err
 	}
 	if s.notes != nil {
-		s.notes.Add("MongoDB root şifresi (bir kez gösteriliyor, Vaultwarden'a kaydet): %s", pw)
+		s.notes.Add("MongoDB root şifresi (bir kez gösteriliyor, parola yöneticine kaydet): %s", pw)
 	}
 	return nil
 }

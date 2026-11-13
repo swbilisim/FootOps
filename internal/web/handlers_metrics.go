@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -42,19 +43,65 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	// A parked site's container is stopped on purpose (Faz P1b): said so, not "exited".
 	parked := map[string]bool{}
-	if list, err := s.agent.Sites(r.Context()); err == nil {
-		for _, st := range list {
-			if st.Spec.IsParked() {
-				parked[st.Spec.Container()] = true
-			}
+	list, lerr := s.agent.Sites(r.Context())
+	for _, st := range list {
+		if st.Spec.IsParked() {
+			parked[st.Spec.Container()] = true
 		}
 	}
 	// The check's summary (Faz U1): a failed call only leaves its card empty.
 	doc, _ := s.agent.DoctorStatus(r.Context())
 	upd, uerr := s.agent.UpdateStatus(r.Context(), true)
-	s.render(w, r, "dashboard", map[string]any{"Title": "Sunucu", "O": o, "Err": errString(err), "History": hv,
+	data := map[string]any{"Title": "Sunucu", "O": o, "Err": errString(err), "History": hv,
 		"Live": liveEvery, "Refresh": 15, "Parked": parked, "Check": checkSummaryOf(doc), "Version": version.Version,
-		"Update": upd, "UpdateKnown": uerr == nil})
+		"Update": upd, "UpdateKnown": uerr == nil}
+	if !hv.Skip && lerr == nil {
+		if start := s.gettingStarted(r.Context(), len(list) > 0); start != nil {
+			data["Start"] = start
+		}
+	}
+	s.render(w, r, "dashboard", data)
+}
+
+// startList is the dashboard's Başlarken list (Faz R3, panel-tasarim §33.3): what a new
+// server needs before its sites are safe, read from its state on a full page load;
+// nothing is stored. An image login and Telegram are optional: public images need no
+// login, and a server can do without messages.
+type startList struct {
+	Cert     bool // a certificate is installed
+	Registry bool // an image login is saved
+	Site     bool // a site exists
+	Backup   int  // 0: no repository, 1: connected, its password not yet confirmed, 2: backing up
+	Telegram bool // a chat is linked
+}
+
+// gettingStarted returns the list, or nil once the server has a certificate, a site and
+// a repository it backs up to — or when that cannot be told. A server with sites asks
+// the agent once (its backup status, a file read); the rest only while the list shows.
+func (s *Server) gettingStarted(ctx context.Context, hasSite bool) *startList {
+	bk, err := s.agent.BackupStatus(ctx)
+	if err != nil || bk.Rehearsal { // a rehearsal has no repository on purpose, and has its sites
+		return nil
+	}
+	l := startList{Site: hasSite}
+	if bk.Configured {
+		l.Backup = 1
+		if !bk.Settings.Confirmed.IsZero() {
+			l.Backup = 2
+		}
+	}
+	if l.Site && l.Backup == 2 {
+		return nil // a site means a certificate: none is created, nor its certificate removed, without one
+	}
+	certs, err := s.agent.Certs(ctx)
+	if err != nil {
+		return nil
+	}
+	regs, rerr := s.agent.Registries(ctx)
+	nt, nerr := s.agent.NotifyStatus(ctx)
+	// A site means a certificate (above), whatever the list says.
+	l.Cert, l.Registry, l.Telegram = len(certs) > 0 || l.Site, rerr == nil && len(regs) > 0, nerr == nil && nt.Linked
+	return &l
 }
 
 func serverCharts(sys agent.SystemMetrics, h agent.History) []template.HTML {
