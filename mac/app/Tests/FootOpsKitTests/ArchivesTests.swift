@@ -171,10 +171,13 @@ final class ArchivesTests: XCTestCase {
         m.choose(file: "/tmp/x/sunucu.archive.gz")
         try await until("checked") { m.info?.kind == "mongodump" }
         XCTAssertNil(m.source)
-        let before = runs.count
+        // Only loads count: the database list the make above refreshes in the background
+        // may still be read meanwhile (a slow runner did).
+        let loads = { self.runs.filter { $0.hasPrefix("arsiv mongo") }.count }
+        let before = loads()
         m.loadDatabase()
         try await Task.sleep(for: .milliseconds(100))
-        XCTAssertEqual(runs.count, before, "none chosen, nothing run")
+        XCTAssertEqual(loads(), before, "none chosen, nothing run")
         m.source = "blog"
         m.loadDatabase()
         try await until("loaded") { runs.contains("arsiv mongo /tmp/x/sunucu.archive.gz --kaynak blog --json") }
